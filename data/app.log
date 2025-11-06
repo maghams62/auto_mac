@@ -1,0 +1,604 @@
+2025-11-05 14:27:30,556 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 14:27:30,556 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 14:27:30,593 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 14:27:30,593 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 14:27:30,596 - src.documents.indexer - INFO - Loaded 52 document chunks
+2025-11-05 14:27:30,596 - src.workflow - INFO - Workflow components initialized
+2025-11-05 14:44:03,485 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 14:44:03,485 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 14:44:03,514 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 14:44:03,514 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 14:44:03,517 - src.documents.indexer - INFO - Loaded 52 document chunks
+2025-11-05 14:44:03,517 - src.workflow - INFO - Workflow components initialized
+2025-11-05 14:46:11,037 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 14:46:11,038 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 14:46:11,072 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 14:46:11,072 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 14:46:11,077 - src.documents.indexer - INFO - Loaded 52 document chunks
+2025-11-05 14:46:11,077 - src.workflow - INFO - Workflow components initialized
+2025-11-05 14:47:02,304 - src.workflow - INFO - Executing workflow for: send the verse page of The Night We Met to my email spamstuff062@gmail.com just the screenshot
+2025-11-05 14:47:02,306 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 14:47:02,307 - src.llm.planner - INFO - Parsing intent for: send the verse page of The Night We Met to my email spamstuff062@gmail.com just the screenshot
+2025-11-05 14:47:04,447 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 14:47:04,447 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 14:47:04,447 - src.llm.planner - INFO - Refining search query: The Night We Met
+2025-11-05 14:47:05,304 - src.llm.planner - INFO - Refined query: ("The Night We Met" OR "evening encounter" OR "nocturnal meeting" OR "nighttime rendezvous")
+2025-11-05 14:47:05,305 - src.documents.search - INFO - Searching for: ("The Night We Met" OR "evening encounter" OR "nocturnal meeting" OR "nighttime rendezvous")
+2025-11-05 14:47:05,727 - src.documents.search - INFO - Found 0 results
+2025-11-05 14:47:05,727 - src.documents.search - INFO - Grouped into 0 documents
+2025-11-05 14:58:08,026 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 14:58:08,026 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 14:58:08,053 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 14:58:08,053 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 14:58:08,055 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 14:58:08,056 - src.workflow - INFO - Workflow components initialized
+2025-11-05 14:59:16,003 - src.workflow - INFO - Executing workflow for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 14:59:16,004 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 14:59:16,004 - src.llm.planner - INFO - Parsing intent for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 14:59:18,161 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 14:59:18,162 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 14:59:18,162 - src.llm.planner - INFO - Refining search query: The Night We Met
+2025-11-05 14:59:18,862 - src.llm.planner - INFO - Refined query: ("The Night We Met" OR "Evening Encounter" OR "Twilight Meeting" OR "Dusk Rendezvous")
+2025-11-05 14:59:18,863 - src.documents.search - INFO - Searching for: ("The Night We Met" OR "Evening Encounter" OR "Twilight Meeting" OR "Dusk Rendezvous")
+2025-11-05 14:59:19,312 - src.documents.search - INFO - Found 0 results
+2025-11-05 14:59:19,313 - src.documents.search - INFO - Grouped into 0 documents
+2025-11-05 15:02:05,359 - src.workflow - INFO - Executing workflow for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:02:05,360 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 15:02:05,361 - src.llm.planner - INFO - Parsing intent for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:02:07,075 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 15:02:07,075 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 15:02:07,075 - src.llm.planner - INFO - Refining search query: The Night We Met
+2025-11-05 15:02:08,024 - src.llm.planner - INFO - Refined query: "The Night We Met" OR "evening encounter" OR "nighttime meeting" OR "nocturnal rendezvous"
+2025-11-05 15:02:08,025 - src.documents.search - INFO - Searching for: "The Night We Met" OR "evening encounter" OR "nighttime meeting" OR "nocturnal rendezvous"
+2025-11-05 15:02:08,262 - src.documents.search - INFO - Found 0 results
+2025-11-05 15:02:08,263 - src.documents.search - INFO - Grouped into 0 documents
+2025-11-05 15:03:55,542 - src.workflow - INFO - Executing workflow for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:03:55,544 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 15:03:55,545 - src.llm.planner - INFO - Parsing intent for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:03:56,929 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 15:03:56,929 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 15:03:56,930 - src.llm.planner - INFO - Refining search query: the night we met
+2025-11-05 15:03:57,874 - src.llm.planner - INFO - Refined query: "the night we met" OR "evening encounter" OR "first meeting at night" OR "nocturnal rendezvous"
+2025-11-05 15:03:57,875 - src.documents.search - INFO - Searching for: "the night we met" OR "evening encounter" OR "first meeting at night" OR "nocturnal rendezvous"
+2025-11-05 15:03:58,241 - src.documents.search - INFO - Found 0 results
+2025-11-05 15:03:58,242 - src.documents.search - INFO - Grouped into 0 documents
+2025-11-05 15:06:24,572 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 15:06:24,572 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 15:06:24,664 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 15:06:24,664 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 15:06:24,667 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 15:06:24,667 - src.workflow - INFO - Workflow components initialized
+2025-11-05 15:07:03,629 - src.workflow - INFO - Executing workflow for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:07:03,631 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 15:07:03,631 - src.llm.planner - INFO - Parsing intent for: send the verse page of the night we met to spamstff062@gmail.com
+2025-11-05 15:07:04,763 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 15:07:04,763 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 15:07:04,763 - src.documents.search - INFO - Searching for: the night we met
+2025-11-05 15:07:05,013 - src.documents.search - INFO - Found 0 results
+2025-11-05 15:07:05,014 - src.documents.search - INFO - Grouped into 0 documents
+2025-11-05 16:24:02,356 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:24:02,385 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:24:02,385 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:24:02,387 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:24:02,387 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:40:21,023 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 16:40:21,023 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:40:21,133 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:40:21,133 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:40:21,135 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:40:21,135 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:44:39,216 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 16:44:39,216 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:44:39,316 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:44:39,316 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:44:39,318 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:44:39,318 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:44:41,560 - src.workflow - INFO - Executing workflow for: index
+2025-11-05 16:44:41,561 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 16:44:41,561 - src.llm.planner - INFO - Parsing intent for: index
+2025-11-05 16:44:44,477 - src.llm.planner - INFO - Intent parsed successfully: find_document
+2025-11-05 16:44:55,569 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:44:55,598 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:44:55,598 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:44:55,600 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:44:55,600 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:46:06,267 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:46:06,297 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:46:06,297 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:46:06,298 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:46:06,298 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:47:00,837 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:47:00,868 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:47:00,868 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:47:00,869 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:47:00,869 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:52:41,314 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 16:52:41,315 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:52:41,414 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:52:41,414 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:52:41,416 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:52:41,416 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:52:44,013 - src.workflow - INFO - Executing workflow for: Send me a screenshot of page 3 from the Night We Met document to spamstuff062@gmail.com
+2025-11-05 16:52:44,013 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 16:52:44,014 - src.llm.planner - INFO - Parsing intent for: Send me a screenshot of page 3 from the Night We Met document to spamstuff062@gmail.com
+2025-11-05 16:52:44,957 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 16:52:44,957 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:52:45,032 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:52:45,032 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:52:45,032 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:52:45,032 - src.workflow - INFO - Workflow components initialized
+2025-11-05 16:52:45,779 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 16:52:45,780 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 16:52:45,780 - src.documents.search - INFO - Searching for: Night We Met
+2025-11-05 16:52:47,663 - src.documents.search - INFO - Found 2 results
+2025-11-05 16:52:47,663 - src.documents.search - INFO - Grouped into 1 documents
+2025-11-05 16:52:47,664 - src.workflow - INFO - Step 3: Selecting best document
+2025-11-05 16:52:47,664 - src.workflow - INFO - Step 4: Planning section extraction
+2025-11-05 16:52:47,664 - src.llm.planner - INFO - Planning extraction for section: page 3
+2025-11-05 16:52:58,413 - src.llm.planner - INFO - Extraction plan: page_range
+2025-11-05 16:52:58,414 - src.workflow - INFO - Step 5: Extracting content
+2025-11-05 16:52:59,284 - src.workflow - INFO - Step 5.5: Taking screenshots
+2025-11-05 16:52:59,292 - src.documents.screenshot - INFO - Capturing 1 pages
+2025-11-05 16:52:59,392 - src.documents.screenshot - INFO - Saved screenshot: data/screenshots/The Night We Met_page_3.png
+2025-11-05 16:52:59,392 - src.workflow - INFO - Step 6: Composing email
+2025-11-05 16:52:59,392 - src.llm.planner - INFO - Composing email content
+2025-11-05 16:53:00,769 - src.llm.planner - INFO - Email composed successfully
+2025-11-05 16:53:00,769 - src.workflow - INFO - Step 7: Opening in Mail.app
+2025-11-05 16:53:00,769 - src.automation.mail_composer - INFO - Composing email: Night We Met Document - Page 3 Screenshot
+2025-11-05 16:53:02,805 - src.automation.mail_composer - INFO - Email composed successfully
+2025-11-05 16:53:02,808 - src.workflow - INFO - Workflow completed successfully
+2025-11-05 16:55:07,816 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 16:55:07,846 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 16:55:07,846 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 16:55:07,847 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 16:55:07,847 - src.workflow - INFO - Workflow components initialized
+2025-11-05 17:10:47,368 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 17:10:47,368 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 17:10:47,468 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 17:10:47,469 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 17:10:47,473 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 17:10:47,473 - src.workflow - INFO - Workflow components initialized
+2025-11-05 17:11:32,407 - src.workflow - INFO - Executing workflow for: email me the page with the version of the night we met to spamstuff062@gmail.com
+2025-11-05 17:11:32,409 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 17:11:32,409 - src.llm.planner - INFO - Parsing intent for: email me the page with the version of the night we met to spamstuff062@gmail.com
+2025-11-05 17:11:34,435 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 17:11:34,435 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 17:11:34,435 - src.documents.search - INFO - Searching for: the version of the night we met
+2025-11-05 17:11:34,687 - src.documents.search - INFO - Found 2 results
+2025-11-05 17:11:34,687 - src.documents.search - INFO - Grouped into 1 documents
+2025-11-05 17:11:34,687 - src.workflow - INFO - Step 3: Selecting best document
+2025-11-05 17:11:34,688 - src.workflow - INFO - Step 4: Planning section extraction
+2025-11-05 17:11:34,688 - src.llm.planner - INFO - Planning extraction for section: specific page containing 'the version of the night we met'
+2025-11-05 17:11:38,311 - src.llm.planner - INFO - Extraction plan: keyword_search
+2025-11-05 17:11:38,311 - src.workflow - INFO - Step 5: Extracting content
+2025-11-05 17:11:39,121 - src.workflow - INFO - Step 6: Composing email
+2025-11-05 17:11:39,121 - src.llm.planner - INFO - Composing email content
+2025-11-05 17:11:41,782 - src.llm.planner - INFO - Email composed successfully
+2025-11-05 17:11:41,782 - src.workflow - INFO - Step 7: Opening in Mail.app
+2025-11-05 17:11:41,782 - src.automation.mail_composer - INFO - Composing email: Page with 'The Version of the Night We Met'
+2025-11-05 17:11:43,406 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 17:11:43,406 - src.workflow - INFO - Workflow completed successfully
+2025-11-05 17:19:09,717 - src.workflow - INFO - Executing workflow for: email me the page with the version of the night we met to spamstuff062@gmail.com
+2025-11-05 17:19:09,718 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 17:19:09,719 - src.llm.planner - INFO - Parsing intent for: email me the page with the version of the night we met to spamstuff062@gmail.com
+2025-11-05 17:19:12,843 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 17:19:12,843 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 17:19:12,844 - src.documents.search - INFO - Searching for: the version of the night we met
+2025-11-05 17:19:13,421 - src.documents.search - INFO - Found 2 results
+2025-11-05 17:19:13,422 - src.documents.search - INFO - Grouped into 1 documents
+2025-11-05 17:19:13,422 - src.workflow - INFO - Step 3: Selecting best document
+2025-11-05 17:19:13,422 - src.workflow - INFO - Step 4: Planning section extraction
+2025-11-05 17:19:13,422 - src.llm.planner - INFO - Planning extraction for section: page with the version
+2025-11-05 17:19:17,795 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 17:19:17,795 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 17:19:17,893 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 17:19:17,893 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 17:19:17,897 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 17:19:17,897 - src.workflow - INFO - Workflow components initialized
+2025-11-05 17:19:45,238 - src.workflow - INFO - Executing workflow for: email me the page with the verse of the night we met to spamstuff062@gmail.com
+2025-11-05 17:19:45,240 - src.workflow - INFO - Step 1: Parsing intent
+2025-11-05 17:19:45,240 - src.llm.planner - INFO - Parsing intent for: email me the page with the verse of the night we met to spamstuff062@gmail.com
+2025-11-05 17:19:47,878 - src.llm.planner - INFO - Intent parsed successfully: find_and_email_document
+2025-11-05 17:19:47,878 - src.workflow - INFO - Step 2: Searching documents
+2025-11-05 17:19:47,879 - src.documents.search - INFO - Searching for: the night we met
+2025-11-05 17:19:48,183 - src.documents.search - INFO - Found 2 results
+2025-11-05 17:19:48,183 - src.documents.search - INFO - Grouped into 1 documents
+2025-11-05 17:19:48,184 - src.workflow - INFO - Step 3: Selecting best document
+2025-11-05 17:19:48,184 - src.workflow - INFO - Step 4: Planning section extraction
+2025-11-05 17:19:48,184 - src.llm.planner - INFO - Planning extraction for section: verse
+2025-11-05 17:19:49,358 - src.llm.planner - INFO - Extraction plan: keyword_search
+2025-11-05 17:19:49,358 - src.workflow - INFO - Step 5: Extracting content
+2025-11-05 17:19:50,185 - src.workflow - INFO - Step 6: Composing email
+2025-11-05 17:19:50,186 - src.llm.planner - INFO - Composing email content
+2025-11-05 17:19:52,511 - src.llm.planner - INFO - Email composed successfully
+2025-11-05 17:19:52,511 - src.workflow - INFO - Step 7: Opening in Mail.app
+2025-11-05 17:19:52,512 - src.automation.mail_composer - INFO - Composing email: The Night We Met - Verse
+2025-11-05 17:19:53,798 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 17:19:53,798 - src.workflow - INFO - Workflow completed successfully
+2025-11-05 17:33:00,651 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 17:33:00,691 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 17:33:00,691 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 17:33:00,694 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 17:33:00,694 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:06:42,335 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:06:42,335 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:06:42,367 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:06:42,367 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:06:42,367 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 18:06:42,367 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:06:53,902 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:06:53,902 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:06:53,932 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:06:53,932 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:06:53,933 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 18:06:53,933 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:06:58,015 - src.agent.agent - INFO - Starting agent for request: index
+2025-11-05 18:06:58,081 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:06:58,081 - src.agent.agent - INFO - User request: index
+2025-11-05 18:07:01,358 - src.agent.agent - INFO - Plan created: Index documents for semantic search
+2025-11-05 18:07:01,358 - src.agent.agent - INFO - Steps: 1
+2025-11-05 18:07:01,373 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:07:01,373 - src.agent.agent - INFO - Reasoning: The request 'index' is ambiguous, but if interpreted as a need to perform an indexing operation, it would typically involve preparing documents for semantic search. However, since the available tools do not explicitly include an indexing function, this step assumes a search to identify if 'index' refers to a specific document or content.
+2025-11-05 18:07:01,373 - src.agent.tools - INFO - Tool: search_documents(query='index')
+2025-11-05 18:07:01,374 - src.documents.search - INFO - Searching for: index
+2025-11-05 18:07:01,734 - src.documents.search - INFO - Found 0 results
+2025-11-05 18:07:01,734 - src.agent.agent - INFO - Step 1 result: {'error': True, 'error_type': 'NotFoundError', 'error_message': 'No documents found matching query: index', 'retry_possible': True}
+2025-11-05 18:07:01,749 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:07:01,749 - src.agent.agent - INFO - Final status: partial_success
+2025-11-05 18:08:50,287 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:08:50,288 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:08:50,317 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:08:50,317 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:08:50,317 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 18:08:50,317 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:09:06,164 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:09:06,164 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:09:06,194 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:09:06,194 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:09:06,195 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 18:09:06,195 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:09:08,992 - src.workflow - INFO - Starting document reindexing
+2025-11-05 18:09:08,992 - src.documents.indexer - INFO - Starting indexing for folders: ['/Users/siddharthsuresh/Downloads/mac_auto/test_data', '/Users/siddharthsuresh/Documents', '/Users/siddharthsuresh/Downloads']
+2025-11-05 18:09:19,573 - src.documents.indexer - INFO - Found 203229 documents to index
+2025-11-05 18:09:49,417 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:09:49,417 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:09:49,449 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:09:49,450 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:09:49,453 - src.documents.indexer - INFO - Loaded 32 document chunks
+2025-11-05 18:09:49,453 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:09:54,243 - src.workflow - INFO - Starting document reindexing
+2025-11-05 18:09:54,244 - src.documents.indexer - INFO - Starting indexing for folders: ['/Users/siddharthsuresh/Downloads/mac_auto/test_data']
+2025-11-05 18:09:54,247 - src.documents.indexer - INFO - Found 7 documents to index
+2025-11-05 18:10:09,456 - src.documents.indexer - INFO - Successfully indexed 7 documents
+2025-11-05 18:10:09,457 - src.documents.indexer - INFO - Saving FAISS index
+2025-11-05 18:10:09,463 - src.documents.indexer - INFO - Saved 64 document chunks
+2025-11-05 18:10:57,732 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com
+2025-11-05 18:10:57,824 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:10:57,824 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com
+2025-11-05 18:11:03,103 - src.agent.agent - INFO - Plan created: Find and email the pre-chorus of 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:11:03,103 - src.agent.agent - INFO - Steps: 3
+2025-11-05 18:11:03,113 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:11:03,113 - src.agent.agent - INFO - Reasoning: First, we need to locate the document containing the lyrics of 'The Night We Met'.
+2025-11-05 18:11:03,114 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met lyrics')
+2025-11-05 18:11:03,114 - src.documents.search - INFO - Searching for: The Night We Met lyrics
+2025-11-05 18:11:03,448 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:11:03,448 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:11:03,468 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:11:03,468 - src.agent.agent - INFO - Reasoning: Extract the pre-chorus section from the lyrics document.
+2025-11-05 18:11:03,468 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:11:04,260 - src.agent.agent - INFO - Step 2 result: {'extracted_text': 'The Night We Met\nLord Huron\nArranged by Everything Guitar\nStandard tuning\n= 100\n\ue1d5\nIntro\nEm D G G\nCapo fret 2\n\ue0a3\ue1e7\n\ue262\ue0a4\ue1e7\n\ue050\n\ue088\ue0861\n\ue262\ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue088\ue0832 \ue0a4\n\ue0a4\n\ue0a4\ue1e7\n\ue1e7 \ue1e7\n\ue088\ue0863\n\ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n4\n\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n\ue262\ue0a3\ue1e7\n\ue0a3\ue1e7 \ue0a3\ue1e7\n\ueb78 \ueb78\n3 2 \ueb78\n0 3 0 (0)\n\ue06d 0 2 0 (0)\n0 0 (0)\n0 3 (3)\nEm D C C\nH\n\ue262\ue0a4 \ue0a4 \ue0a3\ue1e7 \ue0a3\ue1e7\n\ue0505 \ue262 \ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue088\ue0836 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue0867 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n8 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue262\ue0a3\ue1e7 \ue241\nH\n\ueb78 \ueb78\n\ueb78 2 3 3 (3)\n0 3 1 (1)\n\ue06d 0 2 0 (0)\n2 0\n3 (3)\n0\nEm D G G\n\ue0a4\n\ue0509\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue088\ue08310\n\ue0a4\n\ue0a4 \ue088\ue08611\n\ue0a4 \ue262\ue0a4 \ue0a4\n12\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n3\n0 0 3 0 0\n\ue06d 0 0 2 0 0 0 0\n0 0 0 0 0\n0 3 3\nEm D C C\n\ue05013\n\ue262\ue0a4\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08314\n\ue0a4\n\ue0a4 \ue0a4 \ue088\ue08615\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 16\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n0 3 1 1 1 1\n\ue06d 0 0 2 0 0 0 0\n2 2 0\n3 3\n0\n1/6\nratiuG\n\nVerse\nEm D G G\nP H\n\ue05017\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08318\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08619\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n20\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H\n0 0\n\ue06d 0 0 0 0 2 0 0 2 4 4 0 0 0\n2 2 2 2 0 0 0 0\n0 0 3 3\nEm D C C\nP\n\ue05021 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08322 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08623\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n24\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n0 1 1 1\n\ue06d 0 0 0 2 0 0 0 0 0 0 0\n2 2 2 0 2\n3 3\n0 0\nEm D G G\nP H H\n\ue05025\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08326\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08627\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\ue0a4\n28\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H H\n\ueb78 0 0\n\ue06d 0 0 0 2 0 0 2 4 4 2 2 4 4 0 0\n2 2 0 0\n0 0 0 3 3\nEm D C C\nP\n\ue05029 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08330 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08631\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n32\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\n3 3\n0 0 0\nPre Chorus\nEm D C C\nP \ue240\n\ue05033 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08334 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08635 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n36\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\n2/6\n\nEm D C C\nP\nP\n\ue05037 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08338 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08639 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n40\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP P\n\ueb78 0 0\n0 0 0 1 1 1\n\ue06d 0 2 0 0 2 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240\n\ue05041 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08342 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08643 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n44\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue240\n\ue240\n\ue05045 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08346 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08647 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n48\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n\ueb78 0 0\n0 0 0 1 1 1 0 0\n\ue06d 0 2 2 2 0 0 0\n2 2 0\n3 3\n0 0 0\nChorus\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05049 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08350\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08651\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n52\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05053\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08354 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08655\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n56\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n3/6\n\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05057 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08358\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08659\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n60\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05061\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08362 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08663\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n64\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nPre Chorus 2\nEm D C C\n\ue240 \ue240\n\ue240 \ue240 \ue240 P \ue240\n\ue05065 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08366 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08667 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 68\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue241 \ue241 \ue0a9 \ue241 \ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP\n\ue240 \ue240 \ue240 \ue240\n\ue05069 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08370 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08671 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 72\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1\n\ue06d 0 0 2 2 2 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP \ue240\n\ue05073 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08374 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08675 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 76\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\n4/6\n\nEm D C C\nP\n\ue240\n\ue05077 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08378 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08679 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 80\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nChorus\nEm D G G\nP\nP\n\ue05081 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08382\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08683\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n84\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05085\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08386 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08687\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 88\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nEm D G G\nP\nP\n\ue05089 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08390\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08691\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n92\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05093\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08394 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08695\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 96\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n5/6\n\nOutro\nEm G C C\n97 \ue08398 \ue08699 \ue0a4 \ue262\ue0a4 \ue0a4 100 \ue0a4 \ue262\ue0a4 \ue0a4\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1 1\n\ue06d 0 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\nEm G C C\n101 \ue083102 \ue086103 \ue0a4 \ue262\ue0a4 \ue0a4 104 \ue0a4 \ue262\ue0a4\ue1e7\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1\n\ue06d 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\n6/6', 'page_numbers': [1], 'word_count': 2523}
+2025-11-05 18:11:04,269 - src.agent.agent - INFO - === EXECUTING STEP 3: compose_email ===
+2025-11-05 18:11:04,269 - src.agent.agent - INFO - Reasoning: Compose and send an email with the extracted pre-chorus to the specified recipient.
+2025-11-05 18:11:04,269 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus of 'The Night We Met'', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:11:04,269 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus of 'The Night We Met'
+2025-11-05 18:11:05,764 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:11:05,764 - src.agent.agent - INFO - Step 3 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:11:05,782 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:11:05,782 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:13:27,592 - src.agent.agent - INFO - Starting agent for request: Find the Night We Met document and send screenshots of pages containing pre-chorus to spamstuff062@gmail.com
+2025-11-05 18:13:27,610 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:13:27,610 - src.agent.agent - INFO - User request: Find the Night We Met document and send screenshots of pages containing pre-chorus to spamstuff062@gmail.com
+2025-11-05 18:13:32,961 - src.agent.agent - INFO - Plan created: Find the 'Night We Met' document and send screenshots of pages containing the pre-chorus to spamstuff062@gmail.com
+2025-11-05 18:13:32,961 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:13:32,975 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:13:32,975 - src.agent.agent - INFO - Reasoning: First, we need to locate the 'Night We Met' document in the indexed collection.
+2025-11-05 18:13:32,975 - src.agent.tools - INFO - Tool: search_documents(query='Night We Met')
+2025-11-05 18:13:32,975 - src.documents.search - INFO - Searching for: Night We Met
+2025-11-05 18:13:33,198 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:13:33,198 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:13:33,211 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:13:33,211 - src.agent.agent - INFO - Reasoning: Identify which pages contain the 'pre-chorus' section.
+2025-11-05 18:13:33,212 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pages containing 'pre-chorus'')
+2025-11-05 18:13:34,121 - src.agent.agent - INFO - Step 2 result: {'error': True, 'error_type': 'ValidationError', 'error_message': 'Invalid page range: containing', 'retry_possible': False}
+2025-11-05 18:13:34,129 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:13:34,129 - src.agent.agent - INFO - Reasoning: Capture screenshots of the pages that contain the 'pre-chorus'.
+2025-11-05 18:13:34,129 - src.agent.agent - ERROR - Error executing step 3: 1 validation error for take_screenshotSchema
+pages
+  value is not a valid list (type=type_error.list)
+2025-11-05 18:13:34,137 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:13:34,137 - src.agent.agent - INFO - Reasoning: Send an email with the screenshots attached to the specified recipient.
+2025-11-05 18:13:34,137 - src.agent.agent - ERROR - Error executing step 4: 1 validation error for compose_emailSchema
+attachments
+  value is not a valid list (type=type_error.list)
+2025-11-05 18:13:34,144 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:13:34,144 - src.agent.agent - INFO - Final status: partial_success
+2025-11-05 18:14:24,488 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:14:24,507 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:14:24,507 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:14:32,938 - src.agent.agent - INFO - Plan created: Find the document containing 'The Night We Met', take a screenshot of the pre-chorus, and email it to spamstuff062@gmail.com
+2025-11-05 18:14:32,938 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:14:32,959 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:14:32,959 - src.agent.agent - INFO - Reasoning: First, we need to locate the document that contains the lyrics to 'The Night We Met'.
+2025-11-05 18:14:32,959 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:14:32,959 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:14:32,959 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:14:33,188 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:14:33,188 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:14:33,205 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:14:33,205 - src.agent.agent - INFO - Reasoning: Extract the specific section of the document that contains the pre-chorus.
+2025-11-05 18:14:33,205 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:14:33,205 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:14:34,025 - src.agent.agent - INFO - Step 2 result: {'extracted_text': 'The Night We Met\nLord Huron\nArranged by Everything Guitar\nStandard tuning\n= 100\n\ue1d5\nIntro\nEm D G G\nCapo fret 2\n\ue0a3\ue1e7\n\ue262\ue0a4\ue1e7\n\ue050\n\ue088\ue0861\n\ue262\ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue088\ue0832 \ue0a4\n\ue0a4\n\ue0a4\ue1e7\n\ue1e7 \ue1e7\n\ue088\ue0863\n\ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n4\n\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n\ue262\ue0a3\ue1e7\n\ue0a3\ue1e7 \ue0a3\ue1e7\n\ueb78 \ueb78\n3 2 \ueb78\n0 3 0 (0)\n\ue06d 0 2 0 (0)\n0 0 (0)\n0 3 (3)\nEm D C C\nH\n\ue262\ue0a4 \ue0a4 \ue0a3\ue1e7 \ue0a3\ue1e7\n\ue0505 \ue262 \ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue088\ue0836 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue0867 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n8 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue262\ue0a3\ue1e7 \ue241\nH\n\ueb78 \ueb78\n\ueb78 2 3 3 (3)\n0 3 1 (1)\n\ue06d 0 2 0 (0)\n2 0\n3 (3)\n0\nEm D G G\n\ue0a4\n\ue0509\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue088\ue08310\n\ue0a4\n\ue0a4 \ue088\ue08611\n\ue0a4 \ue262\ue0a4 \ue0a4\n12\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n3\n0 0 3 0 0\n\ue06d 0 0 2 0 0 0 0\n0 0 0 0 0\n0 3 3\nEm D C C\n\ue05013\n\ue262\ue0a4\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08314\n\ue0a4\n\ue0a4 \ue0a4 \ue088\ue08615\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 16\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n0 3 1 1 1 1\n\ue06d 0 0 2 0 0 0 0\n2 2 0\n3 3\n0\n1/6\nratiuG\n\nVerse\nEm D G G\nP H\n\ue05017\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08318\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08619\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n20\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H\n0 0\n\ue06d 0 0 0 0 2 0 0 2 4 4 0 0 0\n2 2 2 2 0 0 0 0\n0 0 3 3\nEm D C C\nP\n\ue05021 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08322 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08623\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n24\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n0 1 1 1\n\ue06d 0 0 0 2 0 0 0 0 0 0 0\n2 2 2 0 2\n3 3\n0 0\nEm D G G\nP H H\n\ue05025\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08326\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08627\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\ue0a4\n28\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H H\n\ueb78 0 0\n\ue06d 0 0 0 2 0 0 2 4 4 2 2 4 4 0 0\n2 2 0 0\n0 0 0 3 3\nEm D C C\nP\n\ue05029 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08330 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08631\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n32\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\n3 3\n0 0 0\nPre Chorus\nEm D C C\nP \ue240\n\ue05033 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08334 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08635 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n36\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\n2/6\n\nEm D C C\nP\nP\n\ue05037 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08338 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08639 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n40\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP P\n\ueb78 0 0\n0 0 0 1 1 1\n\ue06d 0 2 0 0 2 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240\n\ue05041 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08342 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08643 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n44\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue240\n\ue240\n\ue05045 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08346 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08647 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n48\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n\ueb78 0 0\n0 0 0 1 1 1 0 0\n\ue06d 0 2 2 2 0 0 0\n2 2 0\n3 3\n0 0 0\nChorus\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05049 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08350\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08651\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n52\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05053\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08354 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08655\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n56\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n3/6\n\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05057 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08358\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08659\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n60\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05061\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08362 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08663\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n64\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nPre Chorus 2\nEm D C C\n\ue240 \ue240\n\ue240 \ue240 \ue240 P \ue240\n\ue05065 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08366 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08667 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 68\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue241 \ue241 \ue0a9 \ue241 \ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP\n\ue240 \ue240 \ue240 \ue240\n\ue05069 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08370 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08671 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 72\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1\n\ue06d 0 0 2 2 2 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP \ue240\n\ue05073 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08374 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08675 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 76\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\n4/6\n\nEm D C C\nP\n\ue240\n\ue05077 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08378 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08679 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 80\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nChorus\nEm D G G\nP\nP\n\ue05081 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08382\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08683\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n84\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05085\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08386 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08687\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 88\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nEm D G G\nP\nP\n\ue05089 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08390\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08691\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n92\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05093\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08394 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08695\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 96\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n5/6\n\nOutro\nEm G C C\n97 \ue08398 \ue08699 \ue0a4 \ue262\ue0a4 \ue0a4 100 \ue0a4 \ue262\ue0a4 \ue0a4\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1 1\n\ue06d 0 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\nEm G C C\n101 \ue083102 \ue086103 \ue0a4 \ue262\ue0a4 \ue0a4 104 \ue0a4 \ue262\ue0a4\ue1e7\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1\n\ue06d 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\n6/6', 'page_numbers': [1], 'word_count': 2523}
+2025-11-05 18:14:34,033 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:14:34,033 - src.agent.agent - INFO - Reasoning: Capture a screenshot of the page containing the pre-chorus.
+2025-11-05 18:14:34,033 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': ['$step2.page_number']}
+2025-11-05 18:14:34,033 - src.agent.agent - ERROR - Error executing step 3: 1 validation error for take_screenshotSchema
+pages -> 0
+  value is not a valid integer (type=type_error.integer)
+2025-11-05 18:14:34,040 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:14:34,040 - src.agent.agent - INFO - Reasoning: Send the screenshot of the pre-chorus to the specified email address.
+2025-11-05 18:14:34,040 - src.agent.agent - INFO - Resolved parameters: {'subject': "Pre-Chorus of 'The Night We Met'", 'body': "Attached is the screenshot of the pre-chorus from 'The Night We Met'.", 'recipient': 'spamstuff062@gmail.com', 'attachments': ['$step3.screenshot_path'], 'send': True}
+2025-11-05 18:14:34,040 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus of 'The Night We Met'', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:14:34,040 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus of 'The Night We Met'
+2025-11-05 18:14:34,951 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:14:34,951 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:14:34,963 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:14:34,963 - src.agent.agent - INFO - Final status: partial_success
+2025-11-05 18:15:36,923 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:15:36,940 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:15:36,940 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:15:44,374 - src.agent.agent - INFO - Plan created: Send a screenshot of the pre-chorus section from 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:15:44,376 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:15:44,392 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:15:44,392 - src.agent.agent - INFO - Reasoning: Locate the document containing 'The Night We Met' to find the pre-chorus section.
+2025-11-05 18:15:44,392 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:15:44,393 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:15:44,393 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:15:44,565 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:15:44,565 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:15:44,583 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:15:44,583 - src.agent.agent - INFO - Reasoning: Identify the pages that contain the pre-chorus section.
+2025-11-05 18:15:44,583 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:15:44,583 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:15:45,409 - src.agent.agent - INFO - Step 2 result: {'extracted_text': 'The Night We Met\nLord Huron\nArranged by Everything Guitar\nStandard tuning\n= 100\n\ue1d5\nIntro\nEm D G G\nCapo fret 2\n\ue0a3\ue1e7\n\ue262\ue0a4\ue1e7\n\ue050\n\ue088\ue0861\n\ue262\ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue088\ue0832 \ue0a4\n\ue0a4\n\ue0a4\ue1e7\n\ue1e7 \ue1e7\n\ue088\ue0863\n\ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n4\n\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7 \ue1e7\n\ue262\ue0a3\ue1e7\n\ue0a3\ue1e7 \ue0a3\ue1e7\n\ueb78 \ueb78\n3 2 \ueb78\n0 3 0 (0)\n\ue06d 0 2 0 (0)\n0 0 (0)\n0 3 (3)\nEm D C C\nH\n\ue262\ue0a4 \ue0a4 \ue0a3\ue1e7 \ue0a3\ue1e7\n\ue0505 \ue262 \ue262\ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue088\ue0836 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue0867 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n8 \ue0a3 \ue0a3 \ue0a3\ue1e7 \ue1e7\n\ue1e7\n\ue262\ue0a3\ue1e7 \ue241\nH\n\ueb78 \ueb78\n\ueb78 2 3 3 (3)\n0 3 1 (1)\n\ue06d 0 2 0 (0)\n2 0\n3 (3)\n0\nEm D G G\n\ue0a4\n\ue0509\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue088\ue08310\n\ue0a4\n\ue0a4 \ue088\ue08611\n\ue0a4 \ue262\ue0a4 \ue0a4\n12\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n3\n0 0 3 0 0\n\ue06d 0 0 2 0 0 0 0\n0 0 0 0 0\n0 3 3\nEm D C C\n\ue05013\n\ue262\ue0a4\n\ue0a4 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08314\n\ue0a4\n\ue0a4 \ue0a4 \ue088\ue08615\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 16\n\ue0a4\n\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n0 3 1 1 1 1\n\ue06d 0 0 2 0 0 0 0\n2 2 0\n3 3\n0\n1/6\nratiuG\n\nVerse\nEm D G G\nP H\n\ue05017\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08318\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08619\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n20\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H\n0 0\n\ue06d 0 0 0 0 2 0 0 2 4 4 0 0 0\n2 2 2 2 0 0 0 0\n0 0 3 3\nEm D C C\nP\n\ue05021 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08322 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08623\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n24\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n0 1 1 1\n\ue06d 0 0 0 2 0 0 0 0 0 0 0\n2 2 2 0 2\n3 3\n0 0\nEm D G G\nP H H\n\ue05025\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08326\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08627\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\ue0a4\n28\n\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP H H\n\ueb78 0 0\n\ue06d 0 0 0 2 0 0 2 4 4 2 2 4 4 0 0\n2 2 0 0\n0 0 0 3 3\nEm D C C\nP\n\ue05029 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08330 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08631\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4\n32\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\n3 3\n0 0 0\nPre Chorus\nEm D C C\nP \ue240\n\ue05033 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08334 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08635 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n36\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\n2/6\n\nEm D C C\nP\nP\n\ue05037 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08338 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08639 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n40\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP P\n\ueb78 0 0\n0 0 0 1 1 1\n\ue06d 0 2 0 0 2 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240\n\ue05041 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08342 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08643 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n44\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n0 0\n\ueb78 0 0 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0\n2 2 0\n3 3\n0 0 0\nEm D C C\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue240\n\ue240\n\ue05045 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08346 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08647 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n48\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\nP\n\ueb78 0 0\n0 0 0 1 1 1 0 0\n\ue06d 0 2 2 2 0 0 0\n2 2 0\n3 3\n0 0 0\nChorus\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05049 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08350\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08651\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n52\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05053\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08354 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08655\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n56\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n3/6\n\nEm D G G\n\ue240 P\nP \ue240 \ue240 \ue240 \ue240 \ue240 \ue242 \ue242\n\ue05057 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue242 \ue088\ue08358\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08659\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n60\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue243 \ue243 \ue243 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\n\ue240 \ue240\nP\n\ue240\n\ue05061\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a9\n\ue240 \ue262\ue0a4\n\ue241\n\ue088\ue08362 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08663\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n64\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4\n\ue0a9\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue0a4 \ue0a4 \ue0a4\n\ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nPre Chorus 2\nEm D C C\n\ue240 \ue240\n\ue240 \ue240 \ue240 P \ue240\n\ue05065 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08366 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08667 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 68\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue241 \ue241 \ue0a9 \ue241 \ue241\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP\n\ue240 \ue240 \ue240 \ue240\n\ue05069 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08370 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08671 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 72\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1\n\ue06d 0 0 2 2 2 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nEm D C C\nP \ue240\n\ue05073 \ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08374 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08675 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 76\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n\ueb78 0 0 1 1 1 1 0 0\n\ue06d 0 0 0 2 0 0 0 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\n4/6\n\nEm D C C\nP\n\ue240\n\ue05077 \ue262 \ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue088\ue08378 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08679 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 80\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n\ueb78 0 0\n0 0 0 1 1 1 1 1 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0\n2 2 2 0\nX 3 X 3 X\n0 0 X 0 X X\nChorus\nEm D G G\nP\nP\n\ue05081 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08382\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08683\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n84\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05085\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08386 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08687\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 88\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 0 0\n\ue06d 0 0 2 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\nEm D G G\nP\nP\n\ue05089 \ue262\ue262\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue088\ue08390\ue0a4\n\ue0a4 \ue262\ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4\ue0a4\n\ue088\ue08691\n\ue262\ue0a4 \ue0a4\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n92\n\ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a4 \ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue262\ue0a9 \ue262\ue0a9\n\ueb78 P P\n0 0 0 0\n0 0 3 3 3 0 0 0\n\ue06d 0 0 2 2 2 0 0 0 0 0 0\n0 0 0 0 0\nX X 2 2 X\n0 X 3 X 3 X\nEm D C C\nP\n\ue05093\n\ue262\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue262\ue0a4 \ue088\ue08394 \ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4\n\ue088\ue08695\n\ue262\ue0a4 \ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue0a4 \ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 96\n\ue0a4\n\ue0a4\n\ue0a4\n\ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a9 \ue0a9 \ue0a9\n\ue262\ue0a4 \ue0a4 \ue0a4 \ue0a9 \ue0a4 \ue262\ue0a9 \ue262\ue0a9\nP\n0 0\n0 1 1 1 1 1 1\n\ue06d 0 0 2 0 0 0 0 0 0 0 0\n2 2 0 2\nX 3 X 3 X\n0 X 0 X X\n5/6\n\nOutro\nEm G C C\n97 \ue08398 \ue08699 \ue0a4 \ue262\ue0a4 \ue0a4 100 \ue0a4 \ue262\ue0a4 \ue0a4\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1 1\n\ue06d 0 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\nEm G C C\n101 \ue083102 \ue086103 \ue0a4 \ue262\ue0a4 \ue0a4 104 \ue0a4 \ue262\ue0a4\ue1e7\n\ue050 \ue262\ue0a4 \ue262\ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue088 \ue0a4 \ue0a4 \ue0a4 \ue0a4 \ue0a4\n\ue0a4\n\ue262\ue0a4\nlet ring\n0 0\n1 1 1\n\ue06d 0 0 0 0 0\n2 2 0\n2 2 3 3\n0 3\n6/6', 'page_numbers': [1], 'word_count': 2523}
+2025-11-05 18:15:45,417 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:15:45,418 - src.agent.agent - INFO - Reasoning: Capture screenshots of the pages containing the pre-chorus section.
+2025-11-05 18:15:45,418 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': [1]}
+2025-11-05 18:15:45,418 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', pages=[1])
+2025-11-05 18:15:45,472 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page1_1eghrcl5.png
+2025-11-05 18:15:45,473 - src.agent.agent - INFO - Step 3 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page1_1eghrcl5.png'], 'pages_captured': [1]}
+2025-11-05 18:15:45,481 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:15:45,481 - src.agent.agent - INFO - Reasoning: Send the screenshot to the specified email address.
+2025-11-05 18:15:45,481 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Pre-Chorus from The Night We Met', 'body': "Attached is the screenshot of the pre-chorus section from 'The Night We Met'.", 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page1_1eghrcl5.png'], 'send': True}
+2025-11-05 18:15:45,481 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus from The Night We Met', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:15:45,481 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus from The Night We Met
+2025-11-05 18:15:46,305 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:15:46,312 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:15:46,332 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:15:46,332 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:20:46,983 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:20:47,001 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:20:47,001 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:20:54,028 - src.agent.agent - INFO - Plan created: Send a screenshot of the pre-chorus section from 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:20:54,028 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:20:54,045 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:20:54,045 - src.agent.agent - INFO - Reasoning: Locate the document containing 'The Night We Met' to find the pre-chorus section.
+2025-11-05 18:20:54,045 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:20:54,045 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:20:54,045 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:20:54,281 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:20:54,281 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:20:54,300 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:20:54,300 - src.agent.agent - INFO - Reasoning: Identify the pages that contain the pre-chorus section.
+2025-11-05 18:20:54,300 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:20:54,300 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:20:55,207 - src.agent.tools - INFO - Using semantic search for section: pre-chorus
+2025-11-05 18:20:55,208 - src.documents.search - INFO - Searching for 'pre-chorus' in document: /Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf
+2025-11-05 18:20:55,466 - src.documents.search - INFO - Found 3 pages in document
+2025-11-05 18:20:55,466 - src.agent.tools - INFO - Semantic search found pages: [2, 2, 4]
+2025-11-05 18:20:55,466 - src.agent.tools - INFO - Similarities: ['0.475', '0.475', '0.423']
+2025-11-05 18:20:55,467 - src.agent.agent - INFO - Step 2 result: {'extracted_text': '', 'page_numbers': [2, 2, 4], 'word_count': 0}
+2025-11-05 18:20:55,480 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:20:55,480 - src.agent.agent - INFO - Reasoning: Capture screenshots of the pages containing the pre-chorus section.
+2025-11-05 18:20:55,480 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': [2, 2, 4]}
+2025-11-05 18:20:55,481 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', pages=[2, 2, 4])
+2025-11-05 18:20:55,538 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2__30zu0ea.png
+2025-11-05 18:20:55,585 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_tb7nydxj.png
+2025-11-05 18:20:55,633 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_82o27ioe.png
+2025-11-05 18:20:55,633 - src.agent.agent - INFO - Step 3 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2__30zu0ea.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_tb7nydxj.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_82o27ioe.png'], 'pages_captured': [2, 2, 4]}
+2025-11-05 18:20:55,641 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:20:55,641 - src.agent.agent - INFO - Reasoning: Send the screenshot to the specified email address.
+2025-11-05 18:20:55,641 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Pre-Chorus from The Night We Met', 'body': "Attached is the screenshot of the pre-chorus section from 'The Night We Met'.", 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2__30zu0ea.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_tb7nydxj.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_82o27ioe.png'], 'send': True}
+2025-11-05 18:20:55,641 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus from The Night We Met', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:20:55,641 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus from The Night We Met
+2025-11-05 18:20:56,403 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:20:56,404 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:20:56,435 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:20:56,435 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:21:27,140 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:21:27,158 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:21:27,158 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:21:33,754 - src.agent.agent - INFO - Plan created: Send a screenshot of the pre-chorus section from 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:21:33,754 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:21:33,774 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:21:33,774 - src.agent.agent - INFO - Reasoning: Locate the document containing 'The Night We Met'
+2025-11-05 18:21:33,774 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:21:33,774 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:21:33,774 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:21:33,962 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:21:33,962 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:21:33,979 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:21:33,979 - src.agent.agent - INFO - Reasoning: Identify which pages contain the pre-chorus section
+2025-11-05 18:21:33,979 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:21:33,979 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:21:34,803 - src.agent.tools - INFO - Using semantic search for section: pre-chorus
+2025-11-05 18:21:34,803 - src.documents.search - INFO - Searching for 'pre-chorus' in document: /Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf
+2025-11-05 18:21:35,014 - src.documents.search - INFO - Found 3 pages in document
+2025-11-05 18:21:35,014 - src.agent.tools - INFO - Semantic search found pages: [2, 4, 3]
+2025-11-05 18:21:35,014 - src.agent.tools - INFO - Similarities: ['0.475', '0.423', '0.331']
+2025-11-05 18:21:35,014 - src.agent.agent - INFO - Step 2 result: {'extracted_text': '', 'page_numbers': [2, 4, 3], 'word_count': 0}
+2025-11-05 18:21:35,029 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:21:35,030 - src.agent.agent - INFO - Reasoning: Capture screenshots of pages containing the pre-chorus
+2025-11-05 18:21:35,030 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': [2, 4, 3]}
+2025-11-05 18:21:35,030 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', pages=[2, 4, 3])
+2025-11-05 18:21:35,090 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_a8jepbhk.png
+2025-11-05 18:21:35,135 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_1fh6wnw7.png
+2025-11-05 18:21:35,180 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_quxqaeig.png
+2025-11-05 18:21:35,181 - src.agent.agent - INFO - Step 3 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_a8jepbhk.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_1fh6wnw7.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_quxqaeig.png'], 'pages_captured': [2, 4, 3]}
+2025-11-05 18:21:35,188 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:21:35,188 - src.agent.agent - INFO - Reasoning: Send the screenshot to the specified email address
+2025-11-05 18:21:35,188 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Pre-Chorus from The Night We Met', 'body': 'Attached is a screenshot of the pre-chorus section.', 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_a8jepbhk.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_1fh6wnw7.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_quxqaeig.png'], 'send': True}
+2025-11-05 18:21:35,188 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus from The Night We Met', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:21:35,188 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus from The Night We Met
+2025-11-05 18:21:35,627 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:21:35,627 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:21:35,644 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:21:35,644 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:29:09,347 - __main__ - INFO - Starting Mac Automation Assistant
+2025-11-05 18:29:09,347 - src.workflow - INFO - Initializing workflow components...
+2025-11-05 18:29:09,383 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-05 18:29:09,383 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-05 18:29:09,384 - src.documents.indexer - INFO - Loaded 64 document chunks
+2025-11-05 18:29:09,384 - src.workflow - INFO - Workflow components initialized
+2025-11-05 18:29:11,204 - src.workflow - INFO - Starting document reindexing
+2025-11-05 18:29:11,204 - src.documents.indexer - INFO - Starting indexing for folders: ['/Users/siddharthsuresh/Downloads/mac_auto/test_data']
+2025-11-05 18:29:11,205 - src.documents.indexer - INFO - Found 7 documents to index
+2025-11-05 18:29:23,919 - src.documents.indexer - INFO - Successfully indexed 7 documents
+2025-11-05 18:29:23,919 - src.documents.indexer - INFO - Saving FAISS index
+2025-11-05 18:29:23,928 - src.documents.indexer - INFO - Saved 96 document chunks
+2025-11-05 18:30:03,906 - src.agent.agent - INFO - Starting agent for request: send a screenshot of mockingbird to spamstuff062@gmail.com
+2025-11-05 18:30:03,968 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:30:03,968 - src.agent.agent - INFO - User request: send a screenshot of mockingbird to spamstuff062@gmail.com
+2025-11-05 18:30:08,048 - src.agent.agent - INFO - Plan created: Find the document containing 'Mockingbird' and send a screenshot to spamstuff062@gmail.com
+2025-11-05 18:30:08,049 - src.agent.agent - INFO - Steps: 3
+2025-11-05 18:30:08,068 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:30:08,068 - src.agent.agent - INFO - Reasoning: First, we need to locate the document that contains 'Mockingbird' in the indexed collection.
+2025-11-05 18:30:08,068 - src.agent.agent - INFO - Resolved parameters: {'query': 'Mockingbird'}
+2025-11-05 18:30:08,068 - src.agent.tools - INFO - Tool: search_documents(query='Mockingbird')
+2025-11-05 18:30:08,068 - src.documents.search - INFO - Searching for: Mockingbird
+2025-11-05 18:30:08,230 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:30:08,230 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', 'doc_title': 'Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:30:08,251 - src.agent.agent - INFO - === EXECUTING STEP 2: take_screenshot ===
+2025-11-05 18:30:08,251 - src.agent.agent - INFO - Reasoning: Capture a screenshot of the first page of the document as a representative image.
+2025-11-05 18:30:08,251 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', 'pages': [1]}
+2025-11-05 18:30:08,251 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', pages=[1])
+2025-11-05 18:30:08,866 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page1_n4kkpt7g.png
+2025-11-05 18:30:08,868 - src.agent.agent - INFO - Step 2 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page1_n4kkpt7g.png'], 'pages_captured': [1]}
+2025-11-05 18:30:08,876 - src.agent.agent - INFO - === EXECUTING STEP 3: compose_email ===
+2025-11-05 18:30:08,876 - src.agent.agent - INFO - Reasoning: Send the screenshot via email to the specified recipient.
+2025-11-05 18:30:08,876 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Mockingbird Document Screenshot', 'body': 'Attached is a screenshot of the Mockingbird document.', 'recipient': 'spamstuff062@gmail.com', 'attachments': ['$step2.screenshot_path'], 'send': True}
+2025-11-05 18:30:08,876 - src.agent.tools - INFO - Tool: compose_email(subject='Mockingbird Document Screenshot', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:30:08,876 - src.automation.mail_composer - INFO - Composing email: Mockingbird Document Screenshot
+2025-11-05 18:30:10,386 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:30:10,387 - src.agent.agent - INFO - Step 3 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:30:10,403 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:30:10,403 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:31:00,982 - src.agent.agent - INFO - Starting agent for request: send mockingbird doc to spamstuff062@gmail.com
+2025-11-05 18:31:01,020 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:31:01,020 - src.agent.agent - INFO - User request: send mockingbird doc to spamstuff062@gmail.com
+2025-11-05 18:31:03,543 - src.agent.agent - INFO - Plan created: Find and email the Mockingbird document to spamstuff062@gmail.com
+2025-11-05 18:31:03,544 - src.agent.agent - INFO - Steps: 2
+2025-11-05 18:31:03,564 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:31:03,565 - src.agent.agent - INFO - Reasoning: First, we need to locate the Mockingbird document in the indexed collection
+2025-11-05 18:31:03,565 - src.agent.agent - INFO - Resolved parameters: {'query': 'Mockingbird'}
+2025-11-05 18:31:03,565 - src.agent.tools - INFO - Tool: search_documents(query='Mockingbird')
+2025-11-05 18:31:03,565 - src.documents.search - INFO - Searching for: Mockingbird
+2025-11-05 18:31:03,857 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:31:03,858 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', 'doc_title': 'Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:31:03,878 - src.agent.agent - INFO - === EXECUTING STEP 2: compose_email ===
+2025-11-05 18:31:03,878 - src.agent.agent - INFO - Reasoning: Compose and send an email with the found document attached to the specified recipient
+2025-11-05 18:31:03,878 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Mockingbird Document', 'body': 'Here is the Mockingbird document you requested.', 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/Users/siddharthsuresh/Downloads/mac_auto/test_data/Mockingbird (Eminem) (Peter John Arrangement) - tabs only (1).pdf'], 'send': True}
+2025-11-05 18:31:03,879 - src.agent.tools - INFO - Tool: compose_email(subject='Mockingbird Document', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:31:03,879 - src.automation.mail_composer - INFO - Composing email: Mockingbird Document
+2025-11-05 18:31:04,643 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:31:04,643 - src.agent.agent - INFO - Step 2 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:31:04,659 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:31:04,659 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:38:08,337 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:38:08,356 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:38:08,356 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:38:12,167 - src.agent.agent - INFO - Plan created: Send a screenshot of the pre-chorus section from 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:38:12,167 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:38:12,176 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:38:12,176 - src.agent.agent - INFO - Reasoning: Locate the document containing 'The Night We Met'
+2025-11-05 18:38:12,176 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:38:12,176 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:38:12,176 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:38:12,385 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:38:12,386 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:38:12,395 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:38:12,395 - src.agent.agent - INFO - Reasoning: Identify the pages containing the pre-chorus section
+2025-11-05 18:38:12,395 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:38:12,395 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:38:13,225 - src.agent.tools - INFO - Using semantic search for section: pre-chorus
+2025-11-05 18:38:13,225 - src.documents.search - INFO - Searching for 'pre-chorus' in document: /Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf
+2025-11-05 18:38:13,414 - src.documents.search - INFO - Found 3 pages in document
+2025-11-05 18:38:13,414 - src.agent.tools - INFO - Semantic search found pages: [2, 4, 3]
+2025-11-05 18:38:13,414 - src.agent.tools - INFO - Similarities: ['0.475', '0.423', '0.331']
+2025-11-05 18:38:13,414 - src.agent.agent - INFO - Step 2 result: {'extracted_text': '', 'page_numbers': [2, 4, 3], 'word_count': 0}
+2025-11-05 18:38:13,422 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:38:13,422 - src.agent.agent - INFO - Reasoning: Capture screenshots of the pages with the pre-chorus
+2025-11-05 18:38:13,422 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': [2, 4, 3]}
+2025-11-05 18:38:13,422 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', pages=[2, 4, 3])
+2025-11-05 18:38:13,473 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_mbjpgm00.png
+2025-11-05 18:38:13,520 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_7ffg57cq.png
+2025-11-05 18:38:13,567 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_3iyejcrs.png
+2025-11-05 18:38:13,568 - src.agent.agent - INFO - Step 3 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_mbjpgm00.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_7ffg57cq.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_3iyejcrs.png'], 'pages_captured': [2, 4, 3]}
+2025-11-05 18:38:13,576 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:38:13,576 - src.agent.agent - INFO - Reasoning: Send the screenshot to the specified email address
+2025-11-05 18:38:13,576 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Pre-Chorus from The Night We Met', 'body': 'Attached is the screenshot of the pre-chorus section.', 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_mbjpgm00.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_7ffg57cq.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_3iyejcrs.png'], 'send': True}
+2025-11-05 18:38:13,576 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus from The Night We Met', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:38:13,576 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus from The Night We Met
+2025-11-05 18:38:14,061 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:38:14,062 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:38:14,082 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:38:14,083 - src.agent.agent - INFO - Final status: success
+2025-11-05 18:40:03,505 - src.agent.agent - INFO - Starting agent for request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:40:03,524 - src.agent.agent - INFO - === PLANNING PHASE ===
+2025-11-05 18:40:03,524 - src.agent.agent - INFO - User request: send just the pre-chorus of the night we met to spamstuff062@gmail.com this should take a screenshot and send to the email
+2025-11-05 18:40:08,566 - src.agent.agent - INFO - Plan created: Send a screenshot of the pre-chorus from 'The Night We Met' to spamstuff062@gmail.com
+2025-11-05 18:40:08,566 - src.agent.agent - INFO - Steps: 4
+2025-11-05 18:40:08,584 - src.agent.agent - INFO - === EXECUTING STEP 1: search_documents ===
+2025-11-05 18:40:08,584 - src.agent.agent - INFO - Reasoning: Locate the document containing 'The Night We Met' to find the pre-chorus section.
+2025-11-05 18:40:08,584 - src.agent.agent - INFO - Resolved parameters: {'query': 'The Night We Met'}
+2025-11-05 18:40:08,584 - src.agent.tools - INFO - Tool: search_documents(query='The Night We Met')
+2025-11-05 18:40:08,584 - src.documents.search - INFO - Searching for: The Night We Met
+2025-11-05 18:40:08,848 - src.documents.search - INFO - Found 1 results
+2025-11-05 18:40:08,848 - src.agent.agent - INFO - Step 1 result: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'doc_title': 'The Night We Met.pdf', 'relevance_score': 0.0, 'metadata': {'file_type': 'pdf', 'chunk_count': 1}}
+2025-11-05 18:40:08,868 - src.agent.agent - INFO - === EXECUTING STEP 2: extract_section ===
+2025-11-05 18:40:08,869 - src.agent.agent - INFO - Reasoning: Identify the pages that contain the pre-chorus section.
+2025-11-05 18:40:08,869 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'section': 'pre-chorus'}
+2025-11-05 18:40:08,869 - src.agent.tools - INFO - Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', section='pre-chorus')
+2025-11-05 18:40:09,706 - src.agent.tools - INFO - Using semantic search for section: pre-chorus
+2025-11-05 18:40:09,706 - src.documents.search - INFO - Searching for 'pre-chorus' in document: /Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf
+2025-11-05 18:40:10,033 - src.documents.search - INFO - Found 3 pages in document
+2025-11-05 18:40:10,033 - src.agent.tools - INFO - Semantic search found pages: [2, 4, 3]
+2025-11-05 18:40:10,033 - src.agent.tools - INFO - Similarities: ['0.475', '0.423', '0.331']
+2025-11-05 18:40:10,033 - src.agent.agent - INFO - Step 2 result: {'extracted_text': '', 'page_numbers': [2, 4, 3], 'word_count': 0}
+2025-11-05 18:40:10,052 - src.agent.agent - INFO - === EXECUTING STEP 3: take_screenshot ===
+2025-11-05 18:40:10,052 - src.agent.agent - INFO - Reasoning: Capture screenshots of the pages containing the pre-chorus.
+2025-11-05 18:40:10,053 - src.agent.agent - INFO - Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', 'pages': [2, 4, 3]}
+2025-11-05 18:40:10,053 - src.agent.tools - INFO - Tool: take_screenshot(doc_path='/Users/siddharthsuresh/Downloads/mac_auto/test_data/The Night We Met.pdf', pages=[2, 4, 3])
+2025-11-05 18:40:10,116 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_9tqv3drj.png
+2025-11-05 18:40:10,164 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_95opi4cq.png
+2025-11-05 18:40:10,209 - src.agent.tools - INFO - Screenshot saved: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_iodsvdou.png
+2025-11-05 18:40:10,210 - src.agent.agent - INFO - Step 3 result: {'screenshot_paths': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_9tqv3drj.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_95opi4cq.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_iodsvdou.png'], 'pages_captured': [2, 4, 3]}
+2025-11-05 18:40:10,217 - src.agent.agent - INFO - === EXECUTING STEP 4: compose_email ===
+2025-11-05 18:40:10,217 - src.agent.agent - INFO - Reasoning: Send the screenshot to the specified email address.
+2025-11-05 18:40:10,217 - src.agent.agent - INFO - Resolved parameters: {'subject': 'Pre-Chorus from The Night We Met', 'body': 'Attached is the screenshot of the pre-chorus section.', 'recipient': 'spamstuff062@gmail.com', 'attachments': ['/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page2_9tqv3drj.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page4_95opi4cq.png', '/var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/page3_iodsvdou.png'], 'send': True}
+2025-11-05 18:40:10,218 - src.agent.tools - INFO - Tool: compose_email(subject='Pre-Chorus from The Night We Met', recipient='spamstuff062@gmail.com', send=True)
+2025-11-05 18:40:10,218 - src.automation.mail_composer - INFO - Composing email: Pre-Chorus from The Night We Met
+2025-11-05 18:40:11,125 - src.automation.mail_composer - INFO - Email sent successfully
+2025-11-05 18:40:11,125 - src.agent.agent - INFO - Step 4 result: {'status': 'sent', 'message': 'Email sent successfully'}
+2025-11-05 18:40:11,144 - src.agent.agent - INFO - === FINALIZING ===
+2025-11-05 18:40:11,144 - src.agent.agent - INFO - Final status: success

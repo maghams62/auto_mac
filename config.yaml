@@ -1,0 +1,48 @@
+# Mac Automation Assistant Configuration
+
+# OpenAI API Configuration
+openai:
+  api_key: "${OPENAI_API_KEY}"  # Set in environment variable
+  model: "gpt-4o"  # GPT-4o for all LLM tasks
+  embedding_model: "text-embedding-3-small"
+  temperature: 0.7
+  max_tokens: 2000
+
+# Document Configuration
+documents:
+  # Folders to index (can add multiple paths)
+  folders:
+    - "/Users/siddharthsuresh/Downloads/mac_auto/test_data"
+
+
+  # File types to index
+  supported_types:
+    - ".pdf"
+    - ".docx"
+    - ".txt"
+
+  # Index refresh interval (in seconds, -1 to disable auto-refresh)
+  refresh_interval: 3600
+
+# Search Configuration
+search:
+  # Number of top results to return
+  top_k: 5
+
+  # Similarity threshold (0-1, higher = more strict)
+  similarity_threshold: 0.45
+
+# Email Configuration
+email:
+  default_subject_prefix: "[Auto-generated]"
+  signature: "\n\n---\nSent via Mac Automation Assistant"
+
+# UI Configuration
+ui:
+  mode: "terminal"  # Options: terminal, gui (future)
+  theme: "dark"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "data/app.log"

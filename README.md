@@ -1,0 +1,473 @@
+# Mac Automation Assistant
+
+> AI-powered document search and email automation for macOS
+
+A Mac-native automation tool that uses GPT-4o to interpret natural language instructions and automate tasks on your machine. Similar in spirit to [Air.app](https://tryair.app), this assistant helps you find documents, extract specific sections, and compose emails—all through natural language.
+
+## Features
+
+- **🌐 Two User Interfaces**: Modern ChatGPT-style web UI or classic terminal interface
+- **💬 Natural Language Interface**: Just describe what you want in plain English
+- **🔍 Semantic Document Search**: Uses OpenAI embeddings + FAISS for fast, intelligent document retrieval
+- **🎯 Smart Section Extraction**: GPT-4o understands requests like "just the summary" or "page 10"
+- **📧 Native Mail Integration**: Composes and sends emails directly in macOS Mail.app using AppleScript
+- **📊 Keynote Presentations**: Automatically creates slide decks from document content
+- **📝 Pages Documents**: Generates formatted documents with sections and headings
+- **📄 Multiple File Formats**: Supports PDF, DOCX, and TXT files
+- **🏗️ Modular Architecture**: Clean separation of concerns (LLM planner, search, extraction, mail composer)
+
+## Architecture
+
+```
+┌─────────────────┐
+│   User Input    │
+│  (Natural Lang) │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  GPT-4o Planner │  ← Intent parsing & action planning
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Semantic Search │  ← OpenAI embeddings + FAISS
+│  (Document DB)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│Section Extractor│  ← PDF/DOCX parsing
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Email Composer  │  ← GPT-4o + AppleScript
+│  (Mail.app)     │
+└─────────────────┘
+```
+
+## Installation
+
+### Prerequisites
+
+- macOS (tested on 10.15+)
+- Python 3.8+
+- OpenAI API key
+- macOS Mail.app configured
+
+### Setup
+
+1. **Clone or download this repository**:
+```bash
+cd /path/to/mac_auto
+```
+
+2. **Create a virtual environment**:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+3. **Install dependencies**:
+```bash
+pip install -r requirements.txt
+```
+
+4. **Set up your OpenAI API key**:
+```bash
+# Create .env file
+cp .env.example .env
+
+# Edit .env and add your API key
+# OPENAI_API_KEY=sk-...
+```
+
+Or export directly:
+```bash
+export OPENAI_API_KEY='sk-your-key-here'
+```
+
+5. **Configure document folders**:
+
+Edit `config.yaml` to specify which folders to index:
+```yaml
+documents:
+  folders:
+    - "~/Documents"
+    - "~/Downloads"
+    - "/path/to/your/documents"
+```
+
+6. **Index your documents**:
+```bash
+python main.py
+# Then type: /index
+```
+
+## Usage
+
+The Mac Automation Assistant provides **two interfaces**: a modern web UI and a classic terminal UI. Choose whichever fits your workflow!
+
+---
+
+### 🌐 Option 1: Web UI (Recommended)
+
+**Launch the Web Interface:**
+
+```bash
+python app.py
+```
+
+Then open your browser and navigate to:
+
+```
+http://localhost:7860
+```
+
+**Features:**
+- 💬 ChatGPT-style chat interface
+- 📊 Live system statistics (indexed documents, chunks)
+- 📝 Example queries you can click
+- 🎨 Clean, modern UI with message history
+
+**Example Usage:**
+Just type naturally in the chat box:
+- "Find the document about AI agents and email it to spamstuff062@gmail.com"
+- "Send me a screenshot of page 3 from the Night We Met document"
+- "Find the Tesla document and send just the summary"
+- "Create a Keynote presentation from the Q3 earnings report"
+- "Make a slide deck based on the AI research paper"
+- "Create a Pages document summarizing the Tesla Autopilot document"
+
+**To Stop:**
+Press `Ctrl+C` in the terminal where the app is running, or:
+```bash
+pkill -f "python app.py"
+```
+
+---
+
+### 💻 Option 2: Terminal UI
+
+**Launch the Terminal Interface:**
+
+```bash
+python main.py
+```
+
+**Features:**
+- 🖥️ Classic command-line interface
+- ⚡ Fast and lightweight
+- 🔧 Advanced commands available
+
+**Example Requests:**
+
+```
+"Send me the doc about Tesla Autopilot — just the summary section."
+
+"Find the Q3 earnings report and email page 5 to john@example.com"
+
+"Get me the machine learning paper, introduction section"
+
+"Find the contract with Acme Corp and send me section 3"
+```
+
+**Terminal Commands:**
+
+- `/index` - Reindex all documents in configured folders
+- `/test` - Test system components (Mail.app, OpenAI API, FAISS index)
+- `/help` - Show help message
+- `/quit` - Exit the application
+
+---
+
+### 🔄 Quick Start Workflow
+
+1. **First time setup** - Index your documents:
+   ```bash
+   python main.py
+   # Type: /index
+   ```
+
+2. **Launch the web UI:**
+   ```bash
+   python app.py
+   ```
+
+3. **Open browser** to http://localhost:7860
+
+4. **Start chatting!** Type your requests naturally
+
+---
+
+## How It Works
+
+### 1. Intent Parsing (GPT-4o)
+
+When you type a request like:
+```
+"Send me the Tesla Autopilot doc — just the summary"
+```
+
+GPT-4o parses this into structured parameters:
+```json
+{
+  "intent": "find_and_email_document",
+  "parameters": {
+    "search_query": "Tesla Autopilot",
+    "document_section": "summary",
+    "email_action": {
+      "subject": "Tesla Autopilot Summary",
+      "body_instructions": "Include the summary section"
+    }
+  }
+}
+```
+
+### 2. Semantic Search (FAISS)
+
+- Documents are chunked (by page or size)
+- Each chunk is embedded using OpenAI's `text-embedding-3-small`
+- FAISS index enables fast cosine similarity search
+- Results are ranked by relevance
+
+### 3. Section Extraction
+
+GPT-4o plans how to extract the requested section:
+- **Page ranges**: "page 10" → extract page 10
+- **Keywords**: "summary" → find pages with "summary"
+- **Full document**: Default fallback
+
+### 4. Email Composition
+
+- GPT-4o composes a professional email with the extracted content
+- AppleScript opens a draft in Mail.app
+- Attaches the source document
+- User reviews and sends manually (for safety)
+
+## Configuration
+
+### `config.yaml`
+
+```yaml
+# OpenAI API
+openai:
+  model: "gpt-4o"
+  embedding_model: "text-embedding-3-small"
+
+# Document folders to index
+documents:
+  folders:
+    - "~/Documents"
+    - "~/Downloads"
+  supported_types:
+    - ".pdf"
+    - ".docx"
+    - ".txt"
+
+# Search settings
+search:
+  top_k: 5
+  similarity_threshold: 0.7
+
+# Email settings
+email:
+  signature: "\n\n---\nSent via Mac Automation Assistant"
+```
+
+## Project Structure
+
+```
+mac_auto/
+├── main.py                 # Terminal UI entry point
+├── app.py                  # Web UI entry point (Gradio)
+├── config.yaml            # Configuration file
+├── requirements.txt       # Python dependencies
+├── .env.example          # Environment variables template
+│
+├── src/
+│   ├── llm/              # LLM integration (GPT-4o)
+│   │   ├── planner.py    # Intent parser & action planner
+│   │   └── prompts.py    # Prompt templates
+│   │
+│   ├── documents/        # Document processing
+│   │   ├── indexer.py    # FAISS indexing with embeddings
+│   │   ├── parser.py     # PDF/DOCX/TXT parsing
+│   │   └── search.py     # Semantic search engine
+│   │
+│   ├── automation/       # macOS automation
+│   │   └── mail_composer.py  # AppleScript Mail integration
+│   │
+│   ├── ui/              # User interface
+│   │   └── chat.py      # Terminal chat UI
+│   │
+│   ├── workflow.py      # Workflow orchestrator
+│   └── utils.py         # Config & logging utilities
+│
+└── data/
+    ├── embeddings/      # FAISS index files
+    │   ├── faiss.index
+    │   └── metadata.pkl
+    └── app.log          # Application logs
+```
+
+## Modules
+
+### LLM Planner (`src/llm/planner.py`)
+
+Handles all GPT-4o interactions:
+- `parse_intent()` - Convert natural language to structured actions
+- `plan_section_extraction()` - Determine how to extract sections
+- `compose_email()` - Generate email content
+- `refine_search_query()` - Optimize search queries
+
+### Document Indexer (`src/documents/indexer.py`)
+
+Manages document indexing with FAISS:
+- Crawls configured folders for documents
+- Extracts text from PDF/DOCX/TXT
+- Chunks large documents
+- Generates embeddings via OpenAI
+- Stores in FAISS index for fast retrieval
+
+### Semantic Search (`src/documents/search.py`)
+
+Performs similarity search:
+- Embeds user query
+- Searches FAISS index
+- Ranks results by cosine similarity
+- Groups chunks by document
+
+### Mail Composer (`src/automation/mail_composer.py`)
+
+Native macOS Mail.app integration:
+- Uses AppleScript for Mail.app control
+- Composes email with subject, body, recipient
+- Attaches source document
+- Opens draft for user review
+
+### Workflow Orchestrator (`src/workflow.py`)
+
+Coordinates the complete workflow:
+1. Parse intent (LLM)
+2. Search documents (FAISS)
+3. Plan extraction (LLM)
+4. Extract section (Parser)
+5. Compose email (LLM)
+6. Open in Mail.app (AppleScript)
+
+## Troubleshooting
+
+### "No documents indexed"
+
+Run `/index` command to index your documents:
+```bash
+python main.py
+# Type: /index
+```
+
+### "OpenAI API key not set"
+
+```bash
+export OPENAI_API_KEY='your-key-here'
+```
+
+### "Mail.app integration failed"
+
+- Ensure Mail.app is installed and configured
+- Run `/test` to check Mail.app accessibility
+- macOS may prompt for automation permissions
+
+### "Document not found"
+
+- Check configured folders in `config.yaml`
+- Verify file format is supported (PDF, DOCX, TXT)
+- Run `/index` to refresh the index
+
+## Advanced Usage
+
+### Custom Document Folders
+
+Edit `config.yaml`:
+```yaml
+documents:
+  folders:
+    - "/Users/you/Work/Contracts"
+    - "/Users/you/Research/Papers"
+```
+
+### Adjusting Search Sensitivity
+
+Lower threshold = more results (less strict):
+```yaml
+search:
+  similarity_threshold: 0.6  # Default: 0.7
+```
+
+### Programmatic Usage
+
+```python
+from src.workflow import WorkflowOrchestrator
+from src.utils import load_config
+
+config = load_config()
+orchestrator = WorkflowOrchestrator(config)
+
+result = orchestrator.execute(
+    "Find the Tesla doc and send the summary"
+)
+
+print(result)
+```
+
+## Roadmap
+
+- [x] **Web UI (Gradio)** - ✅ Complete!
+- [x] **Keynote Presentations** - ✅ Complete!
+- [x] **Pages Documents** - ✅ Complete!
+- [x] **Auto-send Emails** - ✅ Complete!
+- [ ] Support for more file formats (Markdown, HTML, Excel)
+- [ ] Custom keyboard shortcut trigger
+- [ ] Multi-document workflows
+- [ ] Slack/Teams integration
+- [ ] Voice input support
+- [ ] Calendar integration
+- [ ] Native macOS app (SwiftUI)
+
+## Security Notes
+
+- **API Keys**: Never commit `.env` file or expose API keys
+- **Email Safety**: Emails are drafted but not auto-sent (requires manual review)
+- **Document Privacy**: All processing happens locally; only embeddings are sent to OpenAI
+- **Permissions**: macOS may prompt for Automation permissions for Mail.app
+
+## Contributing
+
+Contributions welcome! Areas of interest:
+- Additional file format support
+- GUI improvements
+- More automation integrations
+- Performance optimizations
+
+## License
+
+MIT License - see LICENSE file for details
+
+## Acknowledgments
+
+- Inspired by [Air.app](https://tryair.app)
+- Built with OpenAI GPT-4o and embeddings
+- Uses FAISS for vector similarity search
+- macOS automation via AppleScript
+
+## Support
+
+For issues or questions:
+1. Check the Troubleshooting section
+2. Review logs in `data/app.log`
+3. Open an issue on GitHub
+
+---
+
+Built with ❤️ for macOS productivity

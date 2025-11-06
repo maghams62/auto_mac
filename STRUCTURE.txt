@@ -1,0 +1,68 @@
+Mac Automation Assistant - File Structure
+==========================================
+
+mac_auto/
+│
+├── 📄 main.py                          # Application entry point
+├── ⚙️  config.yaml                      # Configuration file
+├── 📦 requirements.txt                 # Python dependencies
+├── 🔐 .env                             # Your API key (configured)
+├── 🚀 run.sh                           # Easy startup script
+├── 🚫 .gitignore                       # Git ignore rules
+├── 📋 .env.example                     # API key template
+│
+├── 📚 Documentation/
+│   ├── README.md                       # Complete guide (500+ lines)
+│   ├── QUICKSTART.md                   # 3-minute setup
+│   ├── SETUP.md                        # Detailed installation
+│   ├── PROJECT_OVERVIEW.md             # Technical deep-dive
+│   └── BUILD_SUMMARY.md                # This build summary
+│
+├── 🧠 src/llm/                         # GPT-4o Integration
+│   ├── __init__.py
+│   ├── planner.py                      # Intent parser & action planner
+│   └── prompts.py                      # Prompt templates
+│
+├── 📄 src/documents/                   # Document Processing
+│   ├── __init__.py
+│   ├── indexer.py                      # FAISS indexing with embeddings
+│   ├── parser.py                       # PDF/DOCX/TXT parsing
+│   └── search.py                       # Semantic search engine
+│
+├── 🤖 src/automation/                  # macOS Automation
+│   ├── __init__.py
+│   └── mail_composer.py                # AppleScript Mail integration
+│
+├── 💬 src/ui/                          # User Interface
+│   ├── __init__.py
+│   └── chat.py                         # Rich terminal UI
+│
+├── 🔧 src/
+│   ├── __init__.py
+│   ├── workflow.py                     # Main orchestrator
+│   └── utils.py                        # Config & logging utilities
+│
+└── 💾 data/                            # Runtime Data (created on first run)
+    ├── embeddings/
+    │   ├── faiss.index                 # FAISS vector index
+    │   └── metadata.pkl                # Document metadata
+    └── app.log                         # Application logs
+
+Legend:
+📄 Core application files
+⚙️  Configuration
+📦 Dependencies
+🔐 Secrets (gitignored)
+🚀 Scripts
+📚 Documentation
+🧠 AI/LLM modules
+📄 Document handling
+🤖 Automation
+💬 User interface
+🔧 Utilities
+💾 Runtime data
+
+Total Files: 20+ Python files + 5 documentation files
+Total Lines: ~2,400 lines of code
+Total Modules: 8 main modules
+Dependencies: 24 packages
