@@ -12,7 +12,7 @@ openai:
 documents:
   # Folders to index (can add multiple paths)
   folders:
-    - "/Users/siddharthsuresh/Downloads/mac_auto/test_data"
+    - "/Users/siddharthsuresh/Downloads/auto_mac/test_docs"
 
 
   # File types to index
@@ -37,10 +37,41 @@ email:
   default_subject_prefix: "[Auto-generated]"
   signature: "\n\n---\nSent via Mac Automation Assistant"
 
+# iMessage Configuration
+imessage:
+  default_phone_number: "+16618572957"  # Default recipient for messages
+
 # UI Configuration
 ui:
   mode: "terminal"  # Options: terminal, gui (future)
   theme: "dark"
+
+# Browser/Web Configuration
+browser:
+  # Whitelist of allowed websites for web scraping/browsing
+  # Only these domains can be accessed by browser automation tools
+  allowed_domains:
+    # Financial data sources
+    - "finance.yahoo.com"
+    - "yahoo.com"
+    - "bloomberg.com"
+    - "marketwatch.com"
+    - "cnbc.com"
+    - "investing.com"
+    - "seekingalpha.com"
+    - "fool.com"
+    - "morningstar.com"
+    - "finviz.com"
+    # Add more finance-related domains as needed
+
+  # Maximum page load timeout (milliseconds)
+  timeout: 30000
+
+  # Run browser in headless mode
+  headless: true
+
+  # When true, every Google search uses a fresh Playwright profile to avoid CAPTCHAs
+  unique_session_search: true
 
 # Logging
 logging:

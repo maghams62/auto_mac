@@ -6,6 +6,7 @@ import subprocess
 import logging
 from typing import Optional, List, Dict, Any
 import json
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class KeynoteComposer:
 
         Args:
             title: Presentation title
-            slides: List of slide dictionaries
+            slides: List of slide dictionaries (can have 'title', 'content', and/or 'image_path')
             output_path: Optional path to save
 
         Returns:
@@ -103,11 +104,14 @@ class KeynoteComposer:
         """
         # Escape strings
         title = self._escape_applescript_string(title)
+        if output_path:
+            output_path = str(Path(output_path).expanduser().resolve())
 
         script_parts = [
             'tell application "Keynote"',
             '    activate',
             '    set newDoc to make new document',
+            '    delay 0.5',
             '    tell newDoc',
         ]
 
@@ -115,7 +119,9 @@ class KeynoteComposer:
         script_parts.extend([
             '        -- Set up title slide',
             '        tell slide 1',
-            f'            set body text of default title item to "{title}"',
+            '            try',
+            f'                set object text of default title item to "{title}"',
+            '            end try',
             '        end tell',
         ])
 
@@ -123,27 +129,48 @@ class KeynoteComposer:
         for i, slide in enumerate(slides, start=2):
             slide_title = self._escape_applescript_string(slide.get('title', f'Slide {i}'))
             slide_content = self._escape_applescript_string(slide.get('content', ''))
+            image_path = slide.get('image_path')
 
             script_parts.extend([
                 f'        -- Add slide {i}',
                 '        set newSlide to make new slide',
                 '        tell newSlide',
-                f'            set body text of default title item to "{slide_title}"',
-                f'            set body text of default body item to "{slide_content}"',
-                '        end tell',
             ])
+
+            # If there's an image, add it; otherwise add text
+            if image_path:
+                escaped_image_path = self._escape_applescript_string(image_path)
+                script_parts.extend([
+                    f'            -- Add image to slide',
+                    f'            set imagePath to POSIX file "{escaped_image_path}"',
+                    '            try',
+                    '                set imgObj to make new image with properties {file:imagePath}',
+                    '                set width of imgObj to 900',
+                    '                set position of imgObj to {62, 120}',
+                    '            on error errMsg',
+                    '                -- If sizing fails, keep Keynote defaults',
+                    '            end try',
+                ])
+            else:
+                script_parts.extend([
+                    '            try',
+                    f'                set object text of default title item to "{slide_title}"',
+                    '            end try',
+                    '            try',
+                    f'                set object text of default body item to "{slide_content}"',
+                    '            end try',
+                ])
+
+            script_parts.append('        end tell')
 
         # Save if path provided
+        script_parts.append('    end tell')
+
         if output_path:
             escaped_path = self._escape_applescript_string(output_path)
-            script_parts.extend([
-                f'        save in POSIX file "{escaped_path}"',
-            ])
+            script_parts.append(f'    save newDoc in POSIX file "{escaped_path}"')
 
-        script_parts.extend([
-            '    end tell',
-            'end tell',
-        ])
+        script_parts.append('end tell')
 
         return '\n'.join(script_parts)
 

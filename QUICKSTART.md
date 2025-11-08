@@ -146,4 +146,36 @@ Check your API key in `.env` file.
 
 ---
 
+## 🆕 NEW: Stock Report System
+
+Create comprehensive stock reports with charts for any company!
+
+### Quick Test:
+```bash
+python test_stock_report_system.py
+```
+
+### Usage Example:
+```python
+from src.agent.report_agent import create_stock_report
+
+# One command creates a full report with chart!
+result = create_stock_report.invoke({"company": "Microsoft"})
+print(f"Report: {result['report_path']}")
+```
+
+**Features:**
+- ✅ Auto-resolves stock tickers (Microsoft → MSFT)
+- ✅ Detects private companies
+- ✅ Captures charts (Mac Stocks + web fallback)
+- ✅ Generates PDF reports with embedded images
+- ✅ AI-powered analysis
+
+**Learn More:**
+- Full docs: [docs/STOCK_REPORT_SYSTEM.md](docs/STOCK_REPORT_SYSTEM.md)
+- Implementation: [IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)
+- Examples: [examples/stock_report_example.py](examples/stock_report_example.py)
+
+---
+
 Need help? Run `/help` in the app or check the full [README.md](README.md)!

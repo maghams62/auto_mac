@@ -10,7 +10,8 @@ import json
 import logging
 from pathlib import Path
 
-from .tools import ALL_TOOLS
+from . import ALL_AGENT_TOOLS
+from .verifier import OutputVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class AgentState(TypedDict):
 
     # Execution
     step_results: Dict[int, Any]  # step_id -> result
+    verification_results: Dict[int, Any]  # step_id -> verification result
     messages: List[Any]  # Conversation history
 
     # Output
@@ -45,6 +47,9 @@ class AutomationAgent:
             model=config.get("openai", {}).get("model", "gpt-4o"),
             temperature=0.0
         )
+
+        # Initialize verifier
+        self.verifier = OutputVerifier(config)
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -77,7 +82,16 @@ class AutomationAgent:
 
         # Add edges
         workflow.set_entry_point("plan")
-        workflow.add_edge("plan", "execute_step")
+
+        # Conditional edge after planning: check if plan failed
+        workflow.add_conditional_edges(
+            "plan",
+            lambda state: "finalize" if state.get("status") == "error" else "execute",
+            {
+                "execute": "execute_step",
+                "finalize": "finalize"
+            }
+        )
 
         # Conditional edge: continue executing or finalize
         workflow.add_conditional_edges(
@@ -105,16 +119,69 @@ class AutomationAgent:
         task_decomp_prompt = self.prompts.get("task_decomposition", "")
         few_shot_examples = self.prompts.get("few_shot_examples", "")
 
+        # CRITICAL: Dynamically generate tool list from actual registered tools
+        # This prevents hallucination by ensuring LLM only knows about real tools
+        # Generate rich tool descriptions with parameters for better planning
+        tool_descriptions = []
+        for i, tool in enumerate(ALL_AGENT_TOOLS):
+            # Get tool schema to extract parameters
+            schema = tool.args_schema.schema() if hasattr(tool, 'args_schema') and tool.args_schema else {}
+            properties = schema.get('properties', {})
+            required_params = schema.get('required', [])
+
+            # Build parameter info
+            param_info = []
+            for param_name, param_spec in properties.items():
+                is_required = param_name in required_params
+                param_type = param_spec.get('type', 'any')
+                param_desc = param_spec.get('description', '')
+                param_marker = "REQUIRED" if is_required else "optional"
+                param_info.append(f"    - {param_name} ({param_marker}, {param_type}): {param_desc}")
+
+            # Format tool entry
+            tool_entry = f"{i+1}. **{tool.name}**\n   Description: {tool.description}"
+            if param_info:
+                tool_entry += "\n   Parameters:\n" + "\n".join(param_info)
+
+            tool_descriptions.append(tool_entry)
+
+        available_tools_list = "\n\n".join(tool_descriptions)
+        logger.info(f"Planning with {len(ALL_AGENT_TOOLS)} available tools")
+
         planning_prompt = f"""
 {system_prompt}
 
 {task_decomp_prompt}
 
+AVAILABLE TOOLS (COMPLETE LIST - DO NOT HALLUCINATE OTHER TOOLS):
+{available_tools_list}
+
 {few_shot_examples}
 
 User Request: "{state['user_request']}"
 
-Decompose this request into executable steps using the available tools.
+CRITICAL REQUIREMENTS:
+1. **Tool Validation**: You may ONLY use tools from the list above. Any tool not listed does NOT exist.
+2. **Capability Assessment**: Before creating a plan, verify you have the necessary tools to complete the request.
+3. **Parameter Accuracy**: Use the exact parameter names and types specified in the tool definitions.
+4. **No Hallucination**: Do not invent tools, parameters, or capabilities that don't exist.
+
+PLANNING GUIDELINES:
+- If the request involves taking screenshots AND creating a presentation, you MUST use "create_keynote_with_images" (NOT "create_keynote")
+- "create_keynote_with_images" accepts "image_paths" parameter (list of screenshot paths)
+- "create_keynote" is ONLY for text-based presentations
+- IMPORTANT: If a step uses "$stepX.field" in parameters, you MUST list X in the "dependencies" array
+- If a step depends on another step's output, list that step ID in "dependencies"
+
+If you CANNOT complete the request with available tools, respond with:
+{{
+  "goal": "Unable to complete request",
+  "steps": [],
+  "complexity": "impossible",
+  "reason": "Explanation of missing capabilities"
+}}
+
+Otherwise, decompose this request into executable steps using ONLY the available tools.
 Respond with ONLY a JSON object in this format:
 
 {{
@@ -131,6 +198,9 @@ Respond with ONLY a JSON object in this format:
   ],
   "complexity": "simple | medium | complex"
 }}
+
+DEPENDENCIES EXAMPLE:
+If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST include [1].
 """
 
         messages = [
@@ -151,6 +221,37 @@ Respond with ONLY a JSON object in this format:
 
             logger.info(f"Plan created: {plan['goal']}")
             logger.info(f"Steps: {len(plan['steps'])}")
+
+            # Check if LLM determined task is impossible
+            if plan.get('complexity') == 'impossible':
+                reason = plan.get('reason', 'Unknown reason')
+                logger.warning(f"Task deemed impossible: {reason}")
+                state["status"] = "error"
+                state["final_result"] = {
+                    "error": True,
+                    "message": f"Cannot complete request: {reason}",
+                    "missing_capabilities": reason
+                }
+                return state
+
+            # CRITICAL VALIDATION: Reject hallucinated tools
+            valid_tool_names = {tool.name for tool in ALL_AGENT_TOOLS}
+            invalid_tools = []
+            for step in plan['steps']:
+                tool_name = step.get('action')
+                if tool_name not in valid_tool_names:
+                    invalid_tools.append(tool_name)
+                    logger.error(f"HALLUCINATED TOOL DETECTED: '{tool_name}' does not exist!")
+
+            if invalid_tools:
+                logger.error(f"Plan contains hallucinated tools: {invalid_tools}")
+                logger.error(f"Valid tools are: {sorted(valid_tool_names)}")
+                state["status"] = "error"
+                state["final_result"] = {
+                    "error": True,
+                    "message": f"Plan validation failed: hallucinated tools {invalid_tools}. Valid tools: {sorted(valid_tool_names)}"
+                }
+                return state
 
             state["goal"] = plan["goal"]
             state["steps"] = plan["steps"]
@@ -175,9 +276,10 @@ Respond with ONLY a JSON object in this format:
         Execution node: Execute current step.
         """
         current_idx = state["current_step"]
-        steps = state["steps"]
+        steps = state.get("steps")
 
-        if current_idx >= len(steps):
+        # Handle case where plan has no steps (impossible task)
+        if not steps or current_idx >= len(steps):
             state["status"] = "completed"
             return state
 
@@ -185,13 +287,34 @@ Respond with ONLY a JSON object in this format:
         logger.info(f"=== EXECUTING STEP {step['id']}: {step['action']} ===")
         logger.info(f"Reasoning: {step['reasoning']}")
 
+        # Check if dependencies succeeded
+        dependencies = step.get("dependencies", [])
+        if dependencies:
+            failed_deps = []
+            for dep_id in dependencies:
+                if dep_id in state["step_results"]:
+                    if state["step_results"][dep_id].get("error", False):
+                        failed_deps.append(dep_id)
+                else:
+                    failed_deps.append(dep_id)
+
+            if failed_deps:
+                logger.warning(f"Step {step['id']} skipped due to failed dependencies: {failed_deps}")
+                state["step_results"][step["id"]] = {
+                    "error": True,
+                    "skipped": True,
+                    "message": f"Skipped due to failed dependencies: {failed_deps}"
+                }
+                state["current_step"] = current_idx + 1
+                return state
+
         # Resolve parameters (handle context variables like $step1.doc_path)
         resolved_params = self._resolve_parameters(step["parameters"], state["step_results"])
         logger.info(f"Resolved parameters: {resolved_params}")
 
         # Get tool
         tool_name = step["action"]
-        tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
+        tool = next((t for t in ALL_AGENT_TOOLS if t.name == tool_name), None)
 
         if not tool:
             logger.error(f"Tool not found: {tool_name}")
@@ -205,6 +328,25 @@ Respond with ONLY a JSON object in this format:
                 result = tool.invoke(resolved_params)
                 logger.info(f"Step {step['id']} result: {result}")
                 state["step_results"][step["id"]] = result
+
+                # Verify output for critical steps (screenshots, attachments, etc.)
+                if self._should_verify_step(step):
+                    verification = self.verifier.verify_step_output(
+                        user_request=state["user_request"],
+                        step=step,
+                        step_result=result,
+                        context={"previous_steps": state["step_results"]}
+                    )
+
+                    if "verification_results" not in state:
+                        state["verification_results"] = {}
+                    state["verification_results"][step["id"]] = verification
+
+                    # Log verification issues
+                    if not verification.get("valid"):
+                        logger.warning(f"Step {step['id']} verification failed!")
+                        logger.warning(f"Issues: {verification.get('issues')}")
+                        logger.warning(f"Suggestions: {verification.get('suggestions')}")
 
             except Exception as e:
                 logger.error(f"Error executing step {step['id']}: {e}")
@@ -224,13 +366,21 @@ Respond with ONLY a JSON object in this format:
         """
         logger.info("=== FINALIZING ===")
 
+        # Handle case where plan has no steps (impossible task already set error)
+        steps = state.get("steps") or []
+
+        # Don't override error status if already set (e.g., from impossible task detection)
+        if state.get("status") == "error":
+            logger.info(f"Final status: error (preserved from planning)")
+            return state
+
         # Gather all results
         summary = {
-            "goal": state["goal"],
-            "steps_executed": len(state["steps"]),
-            "results": state["step_results"],
+            "goal": state.get("goal", ""),
+            "steps_executed": len(steps),
+            "results": state.get("step_results", {}),
             "status": "success" if all(
-                not r.get("error", False) for r in state["step_results"].values()
+                not r.get("error", False) for r in state.get("step_results", {}).values()
             ) else "partial_success"
         }
 
@@ -243,7 +393,8 @@ Respond with ONLY a JSON object in this format:
 
     def _should_continue(self, state: AgentState) -> str:
         """Decide whether to continue executing steps or finalize."""
-        if state["current_step"] >= len(state["steps"]):
+        steps = state.get("steps")
+        if not steps or state["current_step"] >= len(steps):
             return "finalize"
         return "continue"
 
@@ -255,26 +406,52 @@ Respond with ONLY a JSON object in this format:
         """
         Resolve context variables in parameters.
 
-        Example: "$step1.doc_path" -> "/path/to/doc.pdf"
+        Handles both standalone variables and inline interpolation:
+        - "$step1.doc_path" -> "/path/to/doc.pdf"
+        - "Price is $step1.current_price" -> "Price is 225.50"
         """
         resolved = {}
 
         for key, value in params.items():
-            if isinstance(value, str) and value.startswith("$step"):
-                # Parse context variable: $step1.doc_path
-                parts = value[1:].split(".")
-                if len(parts) == 2:
-                    step_ref, field = parts
-                    step_id = int(step_ref.replace("step", ""))
-
-                    if step_id in step_results:
-                        result = step_results[step_id]
-                        resolved[key] = result.get(field, value)
+            if isinstance(value, str):
+                # Check if entire value is a single context variable
+                if value.startswith("$step") and "." in value:
+                    parts = value[1:].split(".")
+                    if len(parts) == 2:
+                        step_ref, field = parts
+                        try:
+                            step_id = int(step_ref.replace("step", ""))
+                            if step_id in step_results:
+                                result = step_results[step_id]
+                                resolved[key] = result.get(field, value)
+                            else:
+                                logger.warning(f"Step {step_id} result not found for {value}")
+                                resolved[key] = value
+                        except ValueError:
+                            resolved[key] = value
                     else:
-                        logger.warning(f"Step {step_id} result not found for {value}")
                         resolved[key] = value
                 else:
-                    resolved[key] = value
+                    # Handle inline variable interpolation using regex
+                    import re
+                    def replace_var(match):
+                        var_name = match.group(0)  # e.g., "$step1.current_price"
+                        parts = var_name[1:].split(".")  # ["step1", "current_price"]
+                        if len(parts) == 2:
+                            step_ref, field = parts
+                            try:
+                                step_id = int(step_ref.replace("step", ""))
+                                if step_id in step_results:
+                                    result = step_results[step_id]
+                                    field_value = result.get(field, var_name)
+                                    # Convert to string representation
+                                    return str(field_value) if field_value is not None else var_name
+                            except (ValueError, KeyError):
+                                pass
+                        return var_name
+
+                    # Replace all $stepN.field patterns
+                    resolved[key] = re.sub(r'\$step\d+\.\w+', replace_var, value)
             elif isinstance(value, list):
                 # Handle lists (e.g., attachments)
                 resolved[key] = [
@@ -286,15 +463,63 @@ Respond with ONLY a JSON object in this format:
         return resolved
 
     def _resolve_single_value(self, value: Any, step_results: Dict[int, Any]) -> Any:
-        """Resolve a single value that might be a context variable."""
-        if isinstance(value, str) and value.startswith("$step"):
-            parts = value[1:].split(".")
-            if len(parts) == 2:
-                step_ref, field = parts
-                step_id = int(step_ref.replace("step", ""))
-                if step_id in step_results:
-                    return step_results[step_id].get(field, value)
+        """
+        Resolve a single value that might be a context variable.
+
+        Handles both standalone variables and inline interpolation.
+        """
+        if isinstance(value, str):
+            # Check if entire value is a single context variable
+            if value.startswith("$step") and "." in value:
+                parts = value[1:].split(".")
+                if len(parts) == 2:
+                    step_ref, field = parts
+                    try:
+                        step_id = int(step_ref.replace("step", ""))
+                        if step_id in step_results:
+                            return step_results[step_id].get(field, value)
+                    except (ValueError, KeyError):
+                        pass
+
+            # Handle inline variable interpolation
+            import re
+            def replace_var(match):
+                var_name = match.group(0)
+                parts = var_name[1:].split(".")
+                if len(parts) == 2:
+                    step_ref, field = parts
+                    try:
+                        step_id = int(step_ref.replace("step", ""))
+                        if step_id in step_results:
+                            result = step_results[step_id]
+                            field_value = result.get(field, var_name)
+                            return str(field_value) if field_value is not None else var_name
+                    except (ValueError, KeyError):
+                        pass
+                return var_name
+
+            return re.sub(r'\$step\d+\.\w+', replace_var, value)
+
         return value
+
+    def _should_verify_step(self, step: Dict[str, Any]) -> bool:
+        """
+        Determine if a step's output should be verified.
+
+        Verify steps that:
+        - Take screenshots (quantitative output)
+        - Extract sections (selection output)
+        - Create files/presentations (content that will be attached)
+        """
+        action = step.get("action", "")
+        verify_actions = [
+            "take_screenshot",
+            "extract_section",
+            "create_keynote_with_images",
+            "create_keynote",
+            "create_pages_doc"
+        ]
+        return action in verify_actions
 
     def run(self, user_request: str) -> Dict[str, Any]:
         """
@@ -315,6 +540,7 @@ Respond with ONLY a JSON object in this format:
             "steps": [],
             "current_step": 0,
             "step_results": {},
+            "verification_results": {},
             "messages": [],
             "final_result": None,
             "status": "planning"

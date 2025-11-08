@@ -25,12 +25,13 @@ pages_composer = PagesComposer(config)
 
 
 @tool
-def search_documents(query: str) -> Dict[str, Any]:
+def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
     """
-    Search for documents using semantic search.
+    Search for documents using semantic search with LLM-determined parameters.
 
     Args:
         query: Natural language search query
+        user_request: Original user request for context (optional)
 
     Returns:
         Dictionary with doc_path, doc_title, relevance_score, and metadata
@@ -38,7 +39,21 @@ def search_documents(query: str) -> Dict[str, Any]:
     logger.info(f"Tool: search_documents(query='{query}')")
 
     try:
-        results = search_engine.search(query, top_k=1)
+        # Use LLM to determine optimal search parameters (NO hardcoded top_k!)
+        from .parameter_resolver import ParameterResolver
+        from ..utils import load_config
+
+        config = load_config()
+        resolver = ParameterResolver(config)
+
+        search_params = resolver.resolve_search_parameters(
+            query=query,
+            context={'user_request': user_request or query, 'previous_steps': []}
+        )
+
+        logger.info(f"LLM-determined search params: {search_params}")
+
+        results = search_engine.search(query, top_k=search_params.get('top_k', 1))
 
         if not results:
             return {
@@ -73,11 +88,11 @@ def search_documents(query: str) -> Dict[str, Any]:
 @tool
 def extract_section(doc_path: str, section: str) -> Dict[str, Any]:
     """
-    Extract specific content from a document.
+    Extract specific content from a document using LLM-based interpretation.
 
     Args:
         doc_path: Path to document
-        section: Section identifier (e.g., 'summary', 'page 5', 'all')
+        section: Section identifier (e.g., 'last page', 'first 3 pages', 'chorus', 'all')
 
     Returns:
         Dictionary with extracted_text, page_numbers, and word_count
@@ -96,125 +111,93 @@ def extract_section(doc_path: str, section: str) -> Dict[str, Any]:
             }
 
         text = parsed_doc.get('content', '')
+        pages = text.split('\f')
 
-        if section.lower() == "all":
-            extracted_text = text
-            page_numbers = list(range(1, len(text.split('\f')) + 1))
-        elif section.lower().startswith("page "):
-            # Extract specific page
-            page_num = int(section.split()[1])
-            pages = text.split('\f')
-            if 0 < page_num <= len(pages):
-                extracted_text = pages[page_num - 1]
-                page_numbers = [page_num]
-            else:
-                return {
-                    "error": True,
-                    "error_type": "ValidationError",
-                    "error_message": f"Page {page_num} not found in document",
-                    "retry_possible": False
-                }
-        elif section.lower().startswith("pages "):
-            # Extract page range or pages containing keyword
-            rest_of_section = section[6:].strip()  # Remove "pages "
+        # Get document info for LLM interpretation
+        import os
+        document_info = {
+            'page_count': len(pages),
+            'title': os.path.basename(doc_path)
+        }
 
-            # Check if it's a page range (e.g., "pages 1-5")
-            if '-' in rest_of_section and rest_of_section.replace('-', '').isdigit():
-                start, end = map(int, rest_of_section.split('-'))
-                pages = text.split('\f')
-                extracted_text = '\f'.join(pages[start-1:end])
-                page_numbers = list(range(start, end + 1))
-            # Check if it's "pages containing 'keyword'"
-            elif rest_of_section.startswith("containing"):
-                # Extract keyword from quotes or after "containing"
-                keyword = rest_of_section.replace("containing", "").strip()
-                keyword = keyword.strip("'\"")  # Remove quotes
+        # Use LLM-based section interpreter (no hardcoded patterns!)
+        from .section_interpreter import SectionInterpreter
+        from ..utils import load_config
 
-                pages = text.split('\f')
-                matching_pages = [
-                    (i + 1, page) for i, page in enumerate(pages)
-                    if keyword.lower() in page.lower()
-                ]
+        config = load_config()
+        interpreter = SectionInterpreter(config)
 
-                if matching_pages:
-                    extracted_text = '\n\n'.join([page for _, page in matching_pages])
-                    page_numbers = [page_num for page_num, _ in matching_pages]
-                else:
-                    # No matches found
-                    extracted_text = text
-                    page_numbers = list(range(1, len(pages) + 1))
-            else:
-                return {
-                    "error": True,
-                    "error_type": "ValidationError",
-                    "error_message": f"Invalid page specification: {rest_of_section}",
-                    "retry_possible": False
-                }
-        else:
-            # Use semantic search to find most relevant pages
-            logger.info(f"Using semantic search for section: {section}")
+        # Let LLM interpret what the user wants
+        interpretation = interpreter.interpret_section_request(
+            section_query=section,
+            document_info=document_info
+        )
+
+        logger.info(f"LLM interpretation: strategy={interpretation.get('strategy')}, reasoning={interpretation.get('reasoning')}")
+
+        # Apply the interpretation
+        result = interpreter.apply_interpretation(
+            interpretation=interpretation,
+            document_pages=pages,
+            search_engine=search_engine
+        )
+
+        # If result indicates we should use semantic search, do it
+        if result.get('use_semantic_search'):
+            search_query = result.get('search_query')
+            logger.info(f"Using semantic search for: {search_query}")
 
             try:
-                # Search for pages semantically matching the section query
+                # Use LLM to determine how many pages to return (NO hardcoded top_k!)
+                from .parameter_resolver import ParameterResolver
+
+                resolver = ParameterResolver(config)
+                page_params = resolver.resolve_page_selection_parameters(
+                    total_pages=len(pages),
+                    user_intent=section,
+                    context={'query': search_query}
+                )
+
+                logger.info(f"LLM-determined page params: max={page_params.get('max_pages')}")
+
                 page_results = search_engine.search_pages_in_document(
-                    query=section,
+                    query=search_query,
                     doc_path=doc_path,
-                    top_k=3  # Get top 3 most relevant pages
+                    top_k=page_params.get('max_pages', 1)
                 )
 
                 if page_results:
-                    # Use the most relevant page(s)
-                    page_numbers = [result['page_number'] for result in page_results]
-                    similarities = [f"{r['similarity']:.3f}" for r in page_results]
+                    page_numbers = [r['page_number'] for r in page_results]
                     logger.info(f"Semantic search found pages: {page_numbers}")
-                    logger.info(f"Similarities: {similarities}")
 
-                    # Extract text from found pages
-                    pages = text.split('\f')
                     extracted_text = '\n\n'.join([
                         pages[page_num - 1] for page_num in page_numbers
                         if 0 < page_num <= len(pages)
                     ])
-                else:
-                    # Fallback to keyword search
-                    logger.info("Semantic search found no results, falling back to keyword search")
-                    keyword = section.lower()
-                    pages = text.split('\f')
-                    matching_pages = [
-                        (i + 1, page) for i, page in enumerate(pages)
-                        if keyword in page.lower()
-                    ]
 
-                    if matching_pages:
-                        extracted_text = '\n\n'.join([page for _, page in matching_pages])
-                        page_numbers = [page_num for page_num, _ in matching_pages]
-                    else:
-                        # Last resort: return full text
-                        extracted_text = text
-                        page_numbers = list(range(1, len(pages) + 1))
+                    return {
+                        "extracted_text": extracted_text,
+                        "page_numbers": page_numbers,
+                        "word_count": len(extracted_text.split())
+                    }
+                else:
+                    # Fallback
+                    return {
+                        "extracted_text": text,
+                        "page_numbers": list(range(1, len(pages) + 1)),
+                        "word_count": len(text.split())
+                    }
 
             except Exception as e:
-                logger.error(f"Error in semantic page search: {e}")
-                # Fallback to keyword search on error
-                keyword = section.lower()
-                pages = text.split('\f')
-                matching_pages = [
-                    (i + 1, page) for i, page in enumerate(pages)
-                    if keyword in page.lower()
-                ]
+                logger.error(f"Semantic search error: {e}")
+                return {
+                    "extracted_text": text,
+                    "page_numbers": list(range(1, len(pages) + 1)),
+                    "word_count": len(text.split())
+                }
 
-                if matching_pages:
-                    extracted_text = '\n\n'.join([page for _, page in matching_pages])
-                    page_numbers = [page_num for page_num, _ in matching_pages]
-                else:
-                    extracted_text = text
-                    page_numbers = list(range(1, len(pages) + 1))
-
-        return {
-            "extracted_text": extracted_text,
-            "page_numbers": page_numbers,
-            "word_count": len(extracted_text.split())
-        }
+        # Return the result from interpretation
+        return result
 
     except Exception as e:
         logger.error(f"Error in extract_section: {e}")
@@ -356,16 +339,46 @@ def create_keynote(
     logger.info(f"Tool: create_keynote(title='{title}')")
 
     try:
-        result = keynote_composer.create_presentation(
+        # Convert content string to slides format
+        # If content is short, create a single slide
+        slides = []
+
+        # Split content into paragraphs or use as single slide
+        if len(content) < 500:
+            # Short content - single slide
+            slides.append({
+                "title": "Overview",
+                "content": content
+            })
+        else:
+            # Longer content - split into multiple slides
+            # Simple split by double newlines or every ~300 chars
+            paragraphs = content.split('\n\n')
+            for i, para in enumerate(paragraphs[:10], 1):  # Max 10 slides
+                if para.strip():
+                    slides.append({
+                        "title": f"Slide {i}",
+                        "content": para.strip()
+                    })
+
+        # Call the actual keynote composer with slides
+        success = keynote_composer.create_presentation(
             title=title,
-            content=content,
+            slides=slides,
             output_path=output_path
         )
 
-        if result:
+        if success:
+            # Construct the path if not provided
+            if output_path:
+                final_path = output_path
+            else:
+                import os
+                final_path = os.path.expanduser(f"~/Documents/{title}.key")
+
             return {
-                "keynote_path": result.get("file_path", "Unknown"),
-                "slide_count": result.get("slide_count", 0),
+                "keynote_path": final_path,
+                "slide_count": len(slides) + 1,  # +1 for title slide
                 "message": "Keynote presentation created successfully"
             }
         else:
@@ -378,6 +391,81 @@ def create_keynote(
 
     except Exception as e:
         logger.error(f"Error in create_keynote: {e}")
+        return {
+            "error": True,
+            "error_type": "KeynoteError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def create_keynote_with_images(
+    title: str,
+    image_paths: List[str],
+    output_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a Keynote presentation with images (screenshots).
+
+    Args:
+        title: Presentation title
+        image_paths: List of image file paths to add as slides
+        output_path: Save location (None = default)
+
+    Returns:
+        Dictionary with keynote_path and slide_count
+    """
+    logger.info(f"Tool: create_keynote_with_images(title='{title}', images={len(image_paths)})")
+
+    try:
+        # Create slides with images
+        slides = []
+        for i, image_path in enumerate(image_paths, 1):
+            slides.append({
+                "title": f"Image {i}",
+                "image_path": image_path
+            })
+
+        # Determine output path - generate default if not provided
+        if not output_path:
+            import os
+            output_path = os.path.expanduser(f"~/Documents/{title}.key")
+
+        # Call the actual keynote composer with slides
+        success = keynote_composer.create_presentation(
+            title=title,
+            slides=slides,
+            output_path=output_path
+        )
+
+        if success:
+            # Verify the file actually exists
+            import os
+            if os.path.exists(output_path):
+                return {
+                    "keynote_path": output_path,
+                    "slide_count": len(slides) + 1,  # +1 for title slide
+                    "message": f"Keynote presentation created with {len(slides)} image slides"
+                }
+            else:
+                logger.error(f"Keynote reported success but file not found: {output_path}")
+                return {
+                    "error": True,
+                    "error_type": "KeynoteError",
+                    "error_message": f"Keynote file not saved to {output_path}",
+                    "retry_possible": False
+                }
+        else:
+            return {
+                "error": True,
+                "error_type": "KeynoteError",
+                "error_message": "Failed to create Keynote presentation with images",
+                "retry_possible": True
+            }
+
+    except Exception as e:
+        logger.error(f"Error in create_keynote_with_images: {e}")
         return {
             "error": True,
             "error_type": "KeynoteError",
@@ -435,6 +523,93 @@ def create_pages_doc(
         }
 
 
+@tool
+def organize_files(
+    category: str,
+    target_folder: str,
+    move_files: bool = True
+) -> Dict[str, Any]:
+    """
+    Organize files into a folder based on category using LLM-driven file selection.
+
+    This tool does EVERYTHING needed for file organization:
+    - Uses LLM to determine which files match the category
+    - Creates the target folder automatically (no need for separate folder creation)
+    - Moves or copies matching files to the folder
+    - Provides detailed reasoning for each file decision
+
+    Args:
+        category: Description of files to organize (e.g., "music notes", "work documents")
+        target_folder: Name or path of target folder (will be created if it doesn't exist)
+        move_files: If True, move files; if False, copy files (default: True)
+
+    Returns:
+        Dictionary with organized files information
+
+    Example:
+        organize_files(category="music notes", target_folder="music stuff")
+
+    Note: This is a STANDALONE tool - it handles folder creation, file categorization,
+    and file moving all in one step. No need to create folders separately!
+    """
+    try:
+        from ..automation.file_organizer import FileOrganizer
+        from ..utils import load_config
+        from ..documents.search import SemanticSearch
+        from ..documents import DocumentIndexer
+
+        config = load_config()
+        organizer = FileOrganizer(config)
+
+        # Get source directory from config
+        source_directory = config.get('document_directory', './test_data')
+
+        # Initialize search engine for content analysis
+        search_engine = None
+        try:
+            indexer = DocumentIndexer(config)
+            search_engine = SemanticSearch(indexer, config)
+        except Exception as e:
+            logger.warning(f"Search engine not available for content analysis: {e}")
+
+        logger.info(f"Organizing files - Category: '{category}', Target: '{target_folder}'")
+
+        # Use LLM-driven file organization
+        result = organizer.organize_files(
+            category=category,
+            target_folder=target_folder,
+            source_directory=source_directory,
+            search_engine=search_engine,
+            move=move_files
+        )
+
+        if result['success']:
+            return {
+                "files_moved": result['files_moved'],
+                "files_skipped": result['files_skipped'],
+                "target_path": result['target_path'],
+                "total_evaluated": result['total_evaluated'],
+                "reasoning": result['reasoning'],
+                "message": f"Organized {len(result['files_moved'])} files into '{target_folder}'"
+            }
+        else:
+            return {
+                "error": True,
+                "error_type": "OrganizationError",
+                "error_message": "File organization failed",
+                "retry_possible": True
+            }
+
+    except Exception as e:
+        logger.error(f"Error in organize_files: {e}")
+        return {
+            "error": True,
+            "error_type": "OrganizationError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
 # Tool registry
 ALL_TOOLS = [
     search_documents,
@@ -442,5 +617,7 @@ ALL_TOOLS = [
     take_screenshot,
     compose_email,
     create_keynote,
+    create_keynote_with_images,
     create_pages_doc,
+    organize_files,
 ]

@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Data & Logs
+data/*.log
+data/embeddings/faiss.index
+data/embeddings/metadata.pkl
+*.log
+
+# Test outputs
+test_output.log
+test_run.log
+
+# Test data generated folders
+test_data/new_misc_folder/
+test_data/photos/
+test_data/**/
+!test_data/*.pdf
+!test_data/*.txt
+
+# Archived/Obsolete files
+_archive/
+
+# Misc large files
+*.zip
+

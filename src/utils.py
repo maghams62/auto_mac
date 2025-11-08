@@ -7,6 +7,7 @@ import logging
 import yaml
 from pathlib import Path
 from typing import Dict, Any
+from dotenv import load_dotenv, find_dotenv
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
@@ -19,6 +20,9 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     Returns:
         Configuration dictionary
     """
+    # Ensure environment variables are available (loads .env once if present)
+    load_dotenv(find_dotenv(), override=False)
+
     config_path = Path(config_path)
 
     if not config_path.exists():
