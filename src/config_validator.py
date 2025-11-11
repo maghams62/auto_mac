@@ -123,12 +123,19 @@ class ConfigAccessor:
     def get_email_config(self) -> Dict[str, Any]:
         """
         Get email configuration.
-        
+
         Returns:
-            Email config dict with signature, default_subject_prefix, etc.
+            Email config dict with account_email, default_recipient, signature, etc.
         """
         email_config = self.get("email", {})
+        account_email = email_config.get("account_email")
+
+        if not account_email:
+            logger.warning("No account_email configured - email reading may not be constrained")
+
         return {
+            "account_email": account_email,
+            "default_recipient": email_config.get("default_recipient"),
             "signature": email_config.get("signature", ""),
             "default_subject_prefix": email_config.get("default_subject_prefix", "[Auto-generated]"),
         }

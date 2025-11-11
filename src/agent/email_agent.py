@@ -111,25 +111,42 @@ def read_latest_emails(
 
     Returns:
         Dictionary with list of emails containing sender, subject, date, content
+
+    Security:
+        Only reads from the email account specified in config.yaml (email.account_email)
     """
     logger.info(f"[EMAIL AGENT] Tool: read_latest_emails(count={count}, mailbox='{mailbox}')")
 
     try:
         from src.automation import MailReader
         from src.utils import load_config
+        from src.config_validator import ConfigAccessor
 
         config = load_config()
+        config_accessor = ConfigAccessor(config)
+        email_config = config_accessor.get_email_config()
+
+        # SECURITY: Get configured account to constrain email reading
+        account_email = email_config.get("account_email")
+        if not account_email:
+            logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
+
         mail_reader = MailReader(config)
 
         # Limit count to reasonable maximum
         count = min(count, 50)
 
-        emails = mail_reader.read_latest_emails(count=count, mailbox_name=mailbox)
+        emails = mail_reader.read_latest_emails(
+            count=count,
+            account_name=account_email,  # SECURITY: Constrain to configured account
+            mailbox_name=mailbox
+        )
 
         return {
             "emails": emails,
             "count": len(emails),
-            "mailbox": mailbox
+            "mailbox": mailbox,
+            "account": account_email
         }
 
     except Exception as e:
@@ -159,25 +176,42 @@ def read_emails_by_sender(
 
     Returns:
         Dictionary with list of emails from the specified sender
+
+    Security:
+        Only reads from the email account specified in config.yaml (email.account_email)
     """
     logger.info(f"[EMAIL AGENT] Tool: read_emails_by_sender(sender='{sender}', count={count})")
 
     try:
         from src.automation import MailReader
         from src.utils import load_config
+        from src.config_validator import ConfigAccessor
 
         config = load_config()
+        config_accessor = ConfigAccessor(config)
+        email_config = config_accessor.get_email_config()
+
+        # SECURITY: Get configured account to constrain email reading
+        account_email = email_config.get("account_email")
+        if not account_email:
+            logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
+
         mail_reader = MailReader(config)
 
         # Limit count to reasonable maximum
         count = min(count, 50)
 
-        emails = mail_reader.read_emails_by_sender(sender_email=sender, count=count)
+        emails = mail_reader.read_emails_by_sender(
+            sender_email=sender,
+            count=count,
+            account_name=account_email  # SECURITY: Constrain to configured account
+        )
 
         return {
             "emails": emails,
             "count": len(emails),
-            "sender": sender
+            "sender": sender,
+            "account": account_email
         }
 
     except Exception as e:
@@ -209,19 +243,32 @@ def read_emails_by_time(
 
     Returns:
         Dictionary with list of emails within the time range
+
+    Security:
+        Only reads from the email account specified in config.yaml (email.account_email)
     """
     logger.info(f"[EMAIL AGENT] Tool: read_emails_by_time(hours={hours}, minutes={minutes})")
 
     try:
         from src.automation import MailReader
         from src.utils import load_config
+        from src.config_validator import ConfigAccessor
 
         config = load_config()
+        config_accessor = ConfigAccessor(config)
+        email_config = config_accessor.get_email_config()
+
+        # SECURITY: Get configured account to constrain email reading
+        account_email = email_config.get("account_email")
+        if not account_email:
+            logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
+
         mail_reader = MailReader(config)
 
         emails = mail_reader.read_emails_by_time_range(
             hours=hours,
             minutes=minutes,
+            account_name=account_email,  # SECURITY: Constrain to configured account
             mailbox_name=mailbox
         )
 
@@ -229,7 +276,8 @@ def read_emails_by_time(
             "emails": emails,
             "count": len(emails),
             "time_range": f"{hours} hours" if hours else f"{minutes} minutes",
-            "mailbox": mailbox
+            "mailbox": mailbox,
+            "account": account_email
         }
 
     except Exception as e:

@@ -146,13 +146,20 @@ class MailReader:
         mailbox_name: str
     ) -> str:
         """Build AppleScript to read latest emails."""
+        # If account_name is provided, scope to that account; otherwise read from all accounts
+        if account_name:
+            account_escaped = self._escape_applescript_string(account_name)
+            mailbox_ref = f'mailbox "{mailbox_name}" of account "{account_escaped}"'
+        else:
+            mailbox_ref = f'mailbox "{mailbox_name}"'
+
         script = f'''
 tell application "Mail"
     set emailList to {{}}
     set messageCount to 0
 
     try
-        set targetMailbox to mailbox "{mailbox_name}"
+        set targetMailbox to {mailbox_ref}
         set allMessages to messages of targetMailbox
 
         repeat with msg in (items 1 thru (count of allMessages) of allMessages)
@@ -186,14 +193,21 @@ end tell
         """Build AppleScript to read emails by sender."""
         sender_escaped = self._escape_applescript_string(sender_email)
 
+        # If account_name is provided, scope to that account; otherwise read from all accounts
+        if account_name:
+            account_escaped = self._escape_applescript_string(account_name)
+            mailbox_ref = f'mailbox "INBOX" of account "{account_escaped}"'
+        else:
+            mailbox_ref = 'mailbox "INBOX"'
+
         script = f'''
 tell application "Mail"
     set emailList to {{}}
     set messageCount to 0
 
     try
-        -- Search across all mailboxes
-        set allMessages to messages of mailbox "INBOX"
+        -- Search in specified mailbox
+        set allMessages to messages of {mailbox_ref}
 
         repeat with msg in allMessages
             if messageCount ≥ {count} then exit repeat
@@ -231,12 +245,19 @@ end tell
         # Format datetime for AppleScript
         cutoff_str = cutoff_time.strftime("%m/%d/%Y %I:%M:%S %p")
 
+        # If account_name is provided, scope to that account; otherwise read from all accounts
+        if account_name:
+            account_escaped = self._escape_applescript_string(account_name)
+            mailbox_ref = f'mailbox "{mailbox_name}" of account "{account_escaped}"'
+        else:
+            mailbox_ref = f'mailbox "{mailbox_name}"'
+
         script = f'''
 tell application "Mail"
     set emailList to {{}}
 
     try
-        set targetMailbox to mailbox "{mailbox_name}"
+        set targetMailbox to {mailbox_ref}
         set allMessages to messages of targetMailbox
 
         -- Parse cutoff date

@@ -34,6 +34,7 @@ search:
 
 # Email Configuration
 email:
+  account_email: "spamstuff062@gmail.com"  # YOUR email account - used for READING emails (SECURITY: only reads from this account)
   default_recipient: "spamstuff062@gmail.com"  # Default email address when user says "email to me"
   default_subject_prefix: "[Auto-generated]"
   signature: "\n\n---\nSent via Mac Automation Assistant"
