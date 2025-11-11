@@ -1,0 +1,65 @@
+{
+  "session_id": "f6c149e5-762f-4399-949c-19384ecbfe35",
+  "status": "active",
+  "created_at": "2025-11-10T15:56:23.469692",
+  "last_active_at": "2025-11-10T15:56:54.302562",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-10T15:56:54.302562",
+      "user_request": "/google whats trending",
+      "agent_response": {
+        "goal": "Find out what's trending on Google",
+        "steps_executed": 1,
+        "results": {
+          "1": {
+            "results": [],
+            "total_results": 0,
+            "query": "trending topics",
+            "num_results": 0,
+            "search_type": "web"
+          }
+        },
+        "status": "success"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "google_search",
+          "parameters": {
+            "query": "trending topics",
+            "num_results": 5
+          },
+          "dependencies": [],
+          "reasoning": "Perform a Google search to find the latest trending topics",
+          "expected_output": "List of trending topics with URLs and snippets"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "results": [],
+          "total_results": 0,
+          "query": "trending topics",
+          "num_results": 0,
+          "search_type": "web"
+        }
+      },
+      "metadata": {
+        "goal": "Find out what's trending on Google",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 1,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

@@ -12,8 +12,9 @@ import sys
 import logging
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils import load_config
 from src.agent.writing_agent import WritingAgent

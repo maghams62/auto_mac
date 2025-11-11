@@ -40,9 +40,11 @@ class FileOrganizer:
             config: Configuration dictionary
         """
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0  # Deterministic for file operations
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.0,  # Deterministic for file operations
+            api_key=openai_config.get("api_key")
         )
 
     def organize_files(
@@ -234,6 +236,7 @@ Respond with ONLY valid JSON in this exact format:
             result = json.loads(content)
 
             # Add full paths back
+            valid_files = []
             for file_decision in result['files']:
                 matching_file = next(
                     (f for f in files if f['filename'] == file_decision['filename']),
@@ -241,6 +244,11 @@ Respond with ONLY valid JSON in this exact format:
                 )
                 if matching_file:
                     file_decision['path'] = matching_file['path']
+                    valid_files.append(file_decision)
+                else:
+                    logger.warning(f"LLM returned filename '{file_decision['filename']}' that doesn't match any scanned file. Skipping.")
+
+            result['files'] = valid_files
 
             logger.info(f"Categorization complete: {sum(1 for f in result['files'] if f['include'])} files to include")
             return result

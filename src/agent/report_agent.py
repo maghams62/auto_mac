@@ -9,11 +9,285 @@ This agent orchestrates:
 - PDF report generation
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 import logging
+import json
+import re
 
 logger = logging.getLogger(__name__)
+
+
+@tool
+def create_local_document_report(
+    topic: str,
+    query: Optional[str] = None,
+    max_documents: int = 2,
+    min_similarity: float = 0.5,
+    output_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a PDF report using ONLY locally stored documents (RAG workflow).
+
+    Steps:
+    1. Search configured document folders for content related to the topic
+    2. Require a matching file (reject if nothing relevant is found)
+    3. Summarize the retrieved text with strict "no outside knowledge" rules
+    4. Produce a short PDF report that cites the local sources
+
+    Returns error if no local files match the request or if summarization fails.
+    """
+
+    logger.info(f"[REPORT AGENT] Tool: create_local_document_report(topic='{topic}', query='{query}')")
+
+    from ..utils import load_config
+    from ..documents import DocumentIndexer, SemanticSearch, DocumentParser
+    from ..automation.report_generator import ReportGenerator
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    config = load_config()
+    search_query = (query or topic or "").strip()
+
+    if not search_query:
+        return {
+            "error": True,
+            "error_type": "InvalidRequest",
+            "error_message": "Topic or query is required to create a report",
+            "retry_possible": True
+        }
+
+    try:
+        indexer = DocumentIndexer(config)
+
+        # Ensure index has content; if not, attempt to build it once
+        needs_index = (
+            indexer.index is None or
+            getattr(indexer.index, "ntotal", 0) == 0 or
+            len(indexer.documents) == 0
+        )
+
+        if needs_index:
+            logger.info("[REPORT AGENT] Document index empty – indexing configured folders")
+            indexed_files = indexer.index_documents()
+            if indexed_files == 0:
+                return {
+                    "error": True,
+                    "error_type": "NoDocumentsIndexed",
+                    "error_message": "I could not find any accessible local files to index.",
+                    "query": search_query,
+                    "retry_possible": False
+                }
+
+        search_engine = SemanticSearch(indexer, config)
+
+        max_documents = max(1, min(max_documents, 5))
+        similarity_floor = max(min_similarity, config['search']['similarity_threshold'])
+
+        raw_results = search_engine.search(search_query, top_k=max_documents * 3)
+        filtered_results: List[Dict[str, Any]] = [
+            result for result in raw_results
+            if result.get('similarity', 0) >= similarity_floor
+        ]
+
+        if not filtered_results:
+            return {
+                "error": True,
+                "error_type": "NoRelevantDocuments",
+                "error_message": f"I could not find any local files related to '{search_query}'.",
+                "query": search_query,
+                "retry_possible": False
+            }
+
+        # Group by document path and keep the strongest chunks per document
+        grouped: List[Dict[str, Any]] = []
+        doc_lookup = {}
+        for result in filtered_results:
+            file_path = result['file_path']
+            if file_path not in doc_lookup:
+                doc_entry = {
+                    'file_path': file_path,
+                    'file_name': result['file_name'],
+                    'chunks': [],
+                    'max_similarity': result['similarity']
+                }
+                grouped.append(doc_entry)
+                doc_lookup[file_path] = doc_entry
+            doc_entry = doc_lookup[file_path]
+            doc_entry['chunks'].append(result)
+            doc_entry['max_similarity'] = max(doc_entry['max_similarity'], result['similarity'])
+
+        grouped.sort(key=lambda doc: doc['max_similarity'], reverse=True)
+        top_docs = grouped[:max_documents]
+
+        parser = DocumentParser(config)
+        sources_payload = []
+        sources_metadata = []
+
+        for idx, doc in enumerate(top_docs, start=1):
+            chunk_texts = []
+            for chunk in doc['chunks'][:3]:
+                chunk_text = chunk.get('full_content') or chunk.get('content_preview') or ''
+                if chunk_text:
+                    chunk_texts.append(chunk_text)
+
+            combined_text = "\n\n".join(chunk_texts).strip()
+            if not combined_text:
+                parsed_doc = parser.parse_document(doc['file_path'])
+                combined_text = (parsed_doc or {}).get('content', '').strip()
+
+            if not combined_text:
+                continue
+
+            truncated_text = combined_text[:12000]
+            sources_payload.append(
+                f"SOURCE {idx} — {doc['file_name']} (similarity {doc['max_similarity']:.2f})\n{truncated_text}"
+            )
+            sources_metadata.append({
+                "file_name": doc['file_name'],
+                "file_path": doc['file_path'],
+                "similarity": round(doc['max_similarity'], 3)
+            })
+
+        if not sources_payload:
+            return {
+                "error": True,
+                "error_type": "UnreadableSources",
+                "error_message": "Relevant files were found but could not be read.",
+                "query": search_query,
+                "retry_possible": False
+            }
+
+        openai_config = config.get('openai', {})
+        llm = ChatOpenAI(
+            model=openai_config.get('model', 'gpt-4o'),
+            temperature=0.1,
+            api_key=openai_config.get('api_key')
+        )
+
+        instruction = (
+            f"Topic: {topic}\n"
+            f"Query: {search_query}\n\n"
+            "You must create a factual report using ONLY the text from the local sources below.\n"
+            "Rules:\n"
+            "1. Do not add information that is not explicitly contained in the sources.\n"
+            "2. Quote or reference the sources in every key finding.\n"
+            "3. If the sources do not address the topic, respond with JSON:{\"status\": \"insufficient_data\", \"reason\": \"Explain why\"}\n"
+            "4. Otherwise respond with JSON:\n"
+            "{\n  \"status\": \"ok\",\n  \"overview\": \"2-3 sentences summary strictly from the sources\",\n"
+            "  \"key_findings\": [\"Finding 1\", \"Finding 2\"],\n"
+            "  \"supporting_evidence\": [\"Quote or detail referencing a source\"],\n"
+            "  \"notable_gaps\": [\"Optional list of missing info\"]\n}\n\n"
+            "Sources:\n"
+        )
+        prompt = instruction + "\n\n".join(sources_payload)
+
+        messages = [
+            SystemMessage(content="You are a meticulous analyst who only trusts the provided sources."),
+            HumanMessage(content=prompt)
+        ]
+
+        response = llm.invoke(messages)
+        content = response.content.strip()
+        json_match = re.search(r"\{[\s\S]*\}$", content)
+        if not json_match:
+            json_match = re.search(r"\{[\s\S]*\}", content)
+
+        if not json_match:
+            return {
+                "error": True,
+                "error_type": "LLMParseError",
+                "error_message": "Failed to interpret report summary from model response.",
+                "raw_response": content,
+                "retry_possible": True
+            }
+
+        summary = json.loads(json_match.group())
+
+        if summary.get("status") != "ok":
+            return {
+                "error": True,
+                "error_type": "InsufficientSourceCoverage",
+                "error_message": summary.get("reason", "Sources did not cover the requested topic."),
+                "query": search_query,
+                "retry_possible": False
+            }
+
+        overview = summary.get("overview", "No overview provided by sources.")
+
+        def _format_list(items: Optional[List[str]]) -> str:
+            if not items:
+                return "No information was available in the retrieved files."
+            return "\n".join(f"• {item}" for item in items)
+
+        sections = [
+            {"heading": "Overview", "content": overview.strip()},
+            {
+                "heading": "Key Findings",
+                "content": _format_list(summary.get("key_findings"))
+            },
+            {
+                "heading": "Supporting Evidence",
+                "content": _format_list(summary.get("supporting_evidence"))
+            },
+            {
+                "heading": "Notable Gaps",
+                "content": _format_list(summary.get("notable_gaps"))
+            },
+            {
+                "heading": "Sources",
+                "content": "\n".join(
+                    f"• {meta['file_name']} (similarity {meta['similarity']})\n  {meta['file_path']}"
+                    for meta in sources_metadata
+                )
+            }
+        ]
+
+        report_title = f"{topic} — Local Source Report"
+        report_generator = ReportGenerator(config)
+        output_stub = output_name or re.sub(r"[^a-zA-Z0-9_-]+", "_", topic.lower()).strip('_') or "local_report"
+
+        report_result = report_generator.create_report(
+            title=report_title,
+            content="",
+            sections=sections,
+            export_pdf=True,
+            output_name=output_stub[:60]
+        )
+
+        if report_result.get("error"):
+            return {
+                "error": True,
+                "error_type": "ReportGenerationError",
+                "error_message": report_result.get('error_message', 'Failed to create PDF report'),
+                "query": search_query,
+                "retry_possible": True
+            }
+
+        pdf_path = report_result.get("pdf_path") or report_result.get("rtf_path") or report_result.get("html_path")
+
+        return {
+            "success": True,
+            "topic": topic,
+            "query": search_query,
+            "report_path": pdf_path,
+            "report_format": "PDF" if report_result.get("pdf_path") else "RTF",
+            "sources_used": sources_metadata,
+            "sections": [section['heading'] for section in sections],
+            "message": report_result.get("message", "Report created successfully"),
+            "rag_mode": "local_documents"
+        }
+
+    except Exception as e:
+        logger.error(f"[REPORT AGENT] Error in create_local_document_report: {e}", exc_info=True)
+        return {
+            "error": True,
+            "error_type": "LocalReportError",
+            "error_message": str(e),
+            "topic": topic,
+            "query": search_query,
+            "retry_possible": True
+        }
 
 
 @tool
@@ -257,6 +531,7 @@ Please provide a brief analysis of this stock's performance and outlook.
 
 # Export tools
 REPORT_AGENT_TOOLS = [
+    create_local_document_report,
     create_stock_report,
 ]
 
@@ -266,14 +541,21 @@ Report Agent Hierarchy:
 ======================
 
 LEVEL 1: High-Level Report Generation
+├─ create_local_document_report → Local-only RAG report with PDF export
 └─ create_stock_report → Complete end-to-end stock report with chart and analysis
 
-This tool orchestrates multiple sub-agents:
+create_local_document_report orchestrates:
+1. Document Indexer + Semantic Search (local folders only)
+2. LLM summarizer with "no outside knowledge" rules
+3. Report Generator for PDF output
+
+create_stock_report orchestrates:
 1. Stock Agent: Ticker resolution, data fetching, chart capture
 2. Writing Agent: Content synthesis and analysis
 3. Report Generator: PDF creation with embedded images
 
 Typical Usage:
+create_local_document_report("Tesla Autopilot testing")  # RAG from local files
 create_stock_report("Microsoft")  # Auto-resolves ticker, creates full report
 create_stock_report("Bosch")  # Detects if public/private
 """

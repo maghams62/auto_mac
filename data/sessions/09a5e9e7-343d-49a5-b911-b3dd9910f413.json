@@ -1,0 +1,122 @@
+{
+  "session_id": "09a5e9e7-343d-49a5-b911-b3dd9910f413",
+  "status": "active",
+  "created_at": "2025-11-10T14:58:37.397515",
+  "last_active_at": "2025-11-10T15:05:33.495067",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-10T14:59:16.371974",
+      "user_request": "plan a trip from sf to la and email the link to spamstuff062@gmail.com",
+      "agent_response": {
+        "goal": "Plan a trip from San Francisco to Los Angeles and email the link",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "stops": [],
+            "departure_time": null,
+            "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "maps_service": "Apple Maps",
+            "num_fuel_stops": 0,
+            "num_food_stops": 0,
+            "message": "Here's your trip, enjoy: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "total_stops": 0,
+            "maps_opened": false
+          },
+          "2": {
+            "status": "sent",
+            "message": "Email sent successfully"
+          }
+        },
+        "status": "success"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "plan_trip_with_stops",
+          "parameters": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "num_fuel_stops": 0,
+            "num_food_stops": 0,
+            "departure_time": null,
+            "use_google_maps": false,
+            "open_maps": false
+          },
+          "dependencies": [],
+          "reasoning": "Plan a direct trip from San Francisco to Los Angeles without any stops and generate a Maps URL.",
+          "expected_output": "Maps URL for the route from San Francisco to Los Angeles"
+        },
+        {
+          "id": 2,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Trip Plan from SF to LA",
+            "body": "Here is the link to your planned trip from San Francisco to Los Angeles: $step1.maps_url",
+            "recipient": "spamstuff062@gmail.com",
+            "attachments": [],
+            "send": true
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Email the generated Maps URL to the specified recipient.",
+          "expected_output": "Email sent with the trip link"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "origin": "San Francisco, CA",
+          "destination": "Los Angeles, CA",
+          "stops": [],
+          "departure_time": null,
+          "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "maps_service": "Apple Maps",
+          "num_fuel_stops": 0,
+          "num_food_stops": 0,
+          "message": "Here's your trip, enjoy: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "total_stops": 0,
+          "maps_opened": false
+        },
+        "2": {
+          "status": "sent",
+          "message": "Email sent successfully"
+        }
+      },
+      "metadata": {
+        "goal": "Plan a trip from San Francisco to Los Angeles and email the link",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_2",
+      "timestamp": "2025-11-10T15:05:33.495067",
+      "user_request": "/help",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: The request '/help' does not correspond to any executable tool or action within the available toolset. The system is designed to execute specific tasks using predefined tools, and there is no tool available to provide a help or information response directly.",
+        "missing_capabilities": "The request '/help' does not correspond to any executable tool or action within the available toolset. The system is designed to execute specific tasks using predefined tools, and there is no tool available to provide a help or information response directly."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 2,
+    "total_steps_executed": 2,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

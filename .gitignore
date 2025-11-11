@@ -19,16 +19,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual Environment
 venv/
-env/
 ENV/
-.venv
-
-# Environment variables
-.env
+env/
 
 # IDE
 .vscode/
@@ -37,31 +32,36 @@ ENV/
 *.swo
 *~
 
+# Environment variables
+.env
+.env.local
+
+# Data files
+data/embeddings/*.index
+data/embeddings/*.pkl
+data/logs/*.log
+data/screenshots/*.png
+data/presentations/*.key
+data/reports/*.html
+
+# Keep directory structure but ignore contents
+!data/embeddings/.gitkeep
+!data/logs/.gitkeep
+!data/screenshots/.gitkeep
+!data/presentations/.gitkeep
+!data/reports/.gitkeep
+
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 
-# Data & Logs
-data/*.log
-data/embeddings/faiss.index
-data/embeddings/metadata.pkl
-*.log
+# Test data (optional - uncomment if you don't want to track test data)
+# test_data/
+# test_docs/
 
-# Test outputs
-test_output.log
-test_run.log
-
-# Test data generated folders
-test_data/new_misc_folder/
-test_data/photos/
-test_data/**/
-!test_data/*.pdf
-!test_data/*.txt
-
-# Archived/Obsolete files
+# Archive
 _archive/
 
-# Misc large files
-*.zip
-
+# Logs
+*.log

@@ -189,11 +189,15 @@ Complete specification of available tools for the automation agent.
 {
   "subject": "string - Email subject",
   "body": "string - Email body (supports markdown)",
-  "recipient": "string | null - Email address (null = draft only)",
+  "recipient": "string | null - Email address. If null, empty, or contains 'me'/'to me'/'my email', will use default_recipient from config.yaml (null = draft only if no default)",
   "attachments": "list[string] - File paths to attach",
   "send": "bool - If true, send immediately; if false, open draft"
 }
 ```
+
+**Special Behavior:**
+- If recipient is None, empty string, "me", "to me", "my email", or "myself", the tool automatically uses the `default_recipient` email address from config.yaml
+- This allows users to say "email the link to me" and it will use their configured default email (spamstuff062@gmail.com)
 
 **Returns:**
 ```json
@@ -396,6 +400,56 @@ Complete specification of available tools for the automation agent.
 
 ---
 
+## 9. create_zip_archive
+
+**Purpose:** Compress folders/files into a ZIP archive with optional include/exclude filters.
+
+**Parameters:**
+```json
+{
+  "source_path": "string - OPTIONAL - Folder/file to compress (defaults to primary document directory)",
+  "zip_name": "string - OPTIONAL - Output archive name ('.zip' appended automatically)",
+  "include_pattern": "string - OPTIONAL - Glob filter (default '*')",
+  "include_extensions": "list[string] - OPTIONAL - Only include these extensions (e.g., ['pdf','txt'])",
+  "exclude_extensions": 'list[string] - OPTIONAL - Skip these extensions (e.g., ["mp3","wav"])'
+}
+```
+
+**Returns:**
+```json
+{
+  "zip_path": "string",
+  "file_count": "int",
+  "total_size": "int",
+  "compressed_size": "int",
+  "included_extensions": "list[string] | null",
+  "excluded_extensions": "list[string] | null",
+  "message": "string"
+}
+```
+
+**Examples:**
+```json
+{
+  "action": "create_zip_archive",
+  "parameters": {
+    "source_path": "test_data",
+    "zip_name": "study_stuff.zip",
+    "exclude_extensions": ["mp3", "wav", "flac"]
+  }
+}
+```
+
+**Planner Tips:**
+- If `source_path` is omitted, the tool automatically zips from the primary document directory.
+- Use `include_pattern` for filename patterns (e.g., "A*" for files starting with "A").
+- Use `exclude_extensions` for requests like "zip all non-music files".
+- Use `include_extensions` to target specific file types (e.g., only PDFs).
+- No need to create temporary folders; filtering happens during ZIP creation.
+- Pair with `compose_email` when the user wants the ZIP sent out.
+
+---
+
 ## Tool Chaining Patterns
 
 ### Pattern 1: Search → Email
@@ -485,7 +539,7 @@ Each tool returns an error structure if execution fails:
 
 ---
 
-## 9. synthesize_content
+## 10. synthesize_content
 
 **Purpose:** Synthesize information from multiple sources into cohesive content
 
@@ -535,7 +589,7 @@ Each tool returns an error structure if execution fails:
 
 ---
 
-## 10. create_slide_deck_content
+## 11. create_slide_deck_content
 
 **Purpose:** Transform content into concise, bullet-point format for slide decks
 
@@ -584,7 +638,7 @@ Each slide object contains:
 
 ---
 
-## 11. create_detailed_report
+## 12. create_detailed_report
 
 **Purpose:** Transform content into detailed, well-structured long-form reports
 
@@ -636,7 +690,7 @@ Each slide object contains:
 
 ---
 
-## 12. create_meeting_notes
+## 13. create_meeting_notes
 
 **Purpose:** Transform content into structured meeting notes with action items
 
@@ -690,6 +744,492 @@ Each slide object contains:
 - Need to extract action items and owners
 - Want structured, professional meeting documentation
 - Creating notes for distribution to team
+
+---
+
+## 14. ensure_discord_session
+
+**Purpose:** Bring the Discord desktop app to the front and perform login via macOS automation.
+
+**How it works:**
+- Activates Discord.app
+- Uses credentials from `.env` (`DISCORD_EMAIL`, `DISCORD_PASSWORD`) through MacMCP UI scripting
+- Skips login when credentials are missing or session is already active
+
+**Parameters:**
+```json
+{}
+```
+
+**Returns:**
+```json
+{
+  "status": "string - skipped | login_submitted | already_logged_in",
+  "needs_login": "bool",
+  "raw_response": "string - Raw AppleScript output"
+}
+```
+
+**Use this when:**
+- Unsure whether Discord is already authenticated
+- Before attempting channel reads/posts after a reboot
+- Testing MacMCP accessibility permissions for Discord
+
+---
+
+## 15. navigate_discord_channel
+
+**Purpose:** Jump to a Discord server/channel using the Cmd+K quick switcher.
+
+**Parameters:**
+```json
+{
+  "channel_name": "string - REQUIRED - Channel (e.g., \"general\")",
+  "server_name": "string | null - Optional guild/server filter"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": "bool",
+  "status": "string - NAVIGATED or raw automation output",
+  "channel": "string",
+  "server": "string | null"
+}
+```
+
+**Use this when:**
+- Need to focus a channel before reading or posting
+- Want to ensure subsequent Discord actions target the right place
+
+---
+
+## 16. discord_send_message
+
+**Purpose:** Post messages to the currently focused Discord channel via macOS automation.
+
+**Parameters:**
+```json
+{
+  "channel_name": "string - REQUIRED unless default configured",
+  "message": "string - REQUIRED - Message body (newlines allowed)",
+  "server_name": "string | null - Optional guild/server name",
+  "confirm_delivery": "bool - Re-read channel afterward to ensure message appeared (default true)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": "bool",
+  "channel": "string",
+  "server": "string | null",
+  "message_preview": "string",
+  "delivery_confirmed": "bool | null"
+}
+```
+
+**Use this when:**
+- Sending status updates or bot-style responses through the desktop client
+- Sharing results from other agents back into Discord
+
+---
+
+## 17. discord_read_channel_messages
+
+**Purpose:** Scrape recent text from a Discord channel using accessibility APIs (no Discord API needed).
+
+**Parameters:**
+```json
+{
+  "channel_name": "string - REQUIRED unless default configured",
+  "limit": "int - Number of most recent messages (default 10)",
+  "server_name": "string | null - Optional guild/server name"
+}
+```
+
+**Returns:**
+```json
+{
+  "messages": "list[string] - Most recent messages (newest last)",
+  "sample_size": "int",
+  "channel": "string",
+  "server": "string | null"
+}
+```
+
+**Use this when:**
+- Need context from a Discord conversation before responding
+- Verifying that an automated post successfully appeared
+- Capturing a text snapshot before taking a screenshot
+
+---
+
+## 18. discord_detect_unread_channels
+
+**Purpose:** Look for unread indicators (bold text, filled dots) across the server/channel list.
+
+**Parameters:**
+```json
+{
+  "server_name": "string | null - Filter results to a specific guild"
+}
+```
+
+**Returns:**
+```json
+{
+  "unread_channels": "list[string] - Descriptions of unread items",
+  "total_detected": "int",
+  "filtered": "string | null - Filter that was applied"
+}
+```
+
+**Use this when:**
+- Determining whether attention is needed before sending new updates
+- Building automations that triage unread Discord notifications
+
+---
+
+## 19. discord_capture_recent_messages
+
+**Purpose:** Take a screenshot of the current Discord window for audit or sharing.
+
+**Parameters:**
+```json
+{
+  "channel_name": "string - REQUIRED unless default configured",
+  "server_name": "string | null",
+  "output_path": "string | null - Custom screenshot path (default saved under data/screenshots)"
+}
+```
+
+**Returns:**
+```json
+{
+  "screenshot_path": "string - Saved PNG path",
+  "channel": "string",
+  "server": "string | null"
+}
+```
+
+**Use this when:**
+- Need visual evidence of recent Discord messages
+- Preparing reports that include chat transcripts
+- Double-checking that UI automation reached the correct channel
+
+---
+
+## 20. verify_discord_channel
+
+**Purpose:** Run an end-to-end health check for the Discord automation stack.
+
+**Parameters:**
+```json
+{
+  "channel_name": "string - REQUIRED unless default configured",
+  "server_name": "string | null",
+  "send_test_message": "bool - Post a probe message (default false)",
+  "test_message": "string | null - Custom probe text"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": "bool",
+  "channel": "string",
+  "verification": {
+    "login_status": "string",
+    "able_to_read": "bool",
+    "messages_sampled": "int",
+    "message_preview": "list[string]",
+    "post_check": "object | null - Result from discord_send_message (if used)"
+  }
+}
+```
+
+**Use this when:**
+- Validating that MacMCP can still control Discord after permissions or OS updates
+- Before running workflows that depend on Discord posting
+- Integrating Discord automation into CI smoke tests
+
+---
+
+## 20. scan_subreddit_posts
+
+**Purpose:** Use Playwright to crawl a subreddit, collect posts/comments, and optionally summarize per an instruction.
+
+**Parameters:**
+```json
+{
+  "subreddit": "string - REQUIRED - e.g., \"startups\", \"SideProject\"",
+  "instruction": "string | null - Optional natural-language summary request",
+  "sort": "string - Sort order: hot | new | rising | top | controversial (default: hot)",
+  "limit_posts": "int - Number of posts to return (default: 10)",
+  "include_comments": "bool - Fetch top-level comments for each post (default: true)",
+  "comments_limit": "int - Comments per post (default: 5)",
+  "comment_threads_limit": "int | null - Limit number of posts that receive comment scraping",
+  "headless": "bool | null - Override browser headless mode"
+}
+```
+
+**Returns:**
+```json
+{
+  "subreddit": "string",
+  "sort": "string",
+  "url": "string",
+  "retrieved_at": "timestamp",
+  "post_count": "int",
+  "posts": [
+    {
+      "rank": "int",
+      "title": "string",
+      "url": "string",
+      "author": "string",
+      "flair": "string | null",
+      "snippet": "string | null",
+      "preview_image": "string | null",
+      "posted_ago": "string | null",
+      "upvotes": "int | null",
+      "comments_count": "int | null",
+      "top_comments": [
+        {
+          "author": "string",
+          "body": "string",
+          "posted_ago": "string | null",
+          "score": "int | null"
+        }
+      ]
+    }
+  ],
+  "analysis": "string - Optional summary (present only when instruction provided)"
+}
+```
+
+**Use this when:**
+- You need to gather qualitative signal from Reddit threads
+- The user asks for competitive intel, sentiment, or idea validation sourced from a subreddit
+- You plan to feed the structured results into another LLM agent for deeper analysis
+
+**Notes:**
+- No subreddits are hardcoded; always pass the target via parameters
+- Set `instruction` to automatically add an LLM-written summary (uses configured OpenAI model)
+- Reduce `include_comments` to false for faster, post-only sweeps
+
+---
+
+## 21. plan_trip_with_stops
+
+**Purpose:** Plan a road trip from origin to destination with specific numbers of fuel and food stops.
+
+**Parameters:**
+```json
+{
+  "origin": "string - REQUIRED - Starting location (e.g., \"Los Angeles, CA\", \"San Francisco, CA\")",
+  "destination": "string - REQUIRED - End location (e.g., \"San Diego, CA\", \"Los Angeles, CA\")",
+  "num_fuel_stops": "int - Number of fuel/gas stops (any reasonable number, typically 0-10, default: 0)",
+  "num_food_stops": "int - Number of food stops (any reasonable number, default: 0, e.g., 2 for lunch and dinner)",
+  "departure_time": "string | null - Departure time in format \"HH:MM AM/PM\" or \"YYYY-MM-DD HH:MM\" (optional)",
+  "use_google_maps": "bool - If true, generate Google Maps URL (opens in browser), else Apple Maps (opens in Maps app, default: false). Apple Maps is preferred for macOS and supports waypoints.",
+  "open_maps": "bool - If true, automatically open Maps app/browser with the route (default: false)"
+}
+```
+
+**Returns:**
+```json
+{
+  "origin": "string",
+  "destination": "string",
+  "stops": [
+    {
+      "order": "int",
+      "location": "string - City/town name",
+      "type": "food | fuel"
+    }
+  ],
+  "departure_time": "string | null",
+  "maps_url": "string - URL to open in Maps app or browser (ALWAYS provided)",
+  "maps_service": "Apple Maps | Google Maps",
+  "num_fuel_stops": "int",
+  "num_food_stops": "int",
+  "total_stops": "int",
+  "maps_opened": "bool - Whether Maps was automatically opened",
+  "message": "string - Summary message (includes Maps URL)"
+}
+```
+
+**Use this when:**
+- User wants to plan a road trip with stops
+- User specifies number of gas/fuel stops needed
+- User wants food stops (breakfast, lunch, dinner, etc.)
+- User provides departure time
+- User wants a route with waypoints
+
+**Parameter Extraction (LLM-Driven):**
+- **origin/destination**: Extract from query (handle abbreviations: "LA" → "Los Angeles, CA", "SD" → "San Diego, CA")
+- **num_fuel_stops**: Count fuel/gas stops mentioned ("2 gas stops" → 2, "one fuel stop" → 1)
+- **num_food_stops**: Count food/meal stops ("lunch and dinner" → 2, "breakfast, lunch, and dinner" → 3)
+- **departure_time**: Parse time from query ("5 AM" → "5:00 AM", "7:30 PM" → "7:30 PM")
+- **use_google_maps**: Default is false (Apple Maps). Only set to true if user specifically requests Google Maps. Apple Maps supports waypoints and is preferred for macOS.
+
+**Notes:**
+- Maximum ~20 total stops (fuel + food combined) - reasonable limit to prevent abuse, but LLM can suggest optimal number
+- LLM automatically suggests optimal stop locations along the route (NO hardcoded stops or routes)
+- Works for routes worldwide - LLM handles international routes and geographic knowledge
+- **Maps URL is ALWAYS provided** in the response - you can use it to open Maps manually or set `open_maps=true` to open automatically
+- Apple Maps URL is the default (opens in macOS Maps app, supports waypoints)
+- Google Maps URL available as alternative (opens in browser)
+- Departure time helps with traffic-aware routing (flexible time format parsing)
+- ALL parameter values must be extracted from user's natural language query using LLM reasoning
+- NO hardcoded geographic assumptions - LLM determines routes based on origin/destination
+
+**Example:**
+```json
+{
+  "action": "plan_trip_with_stops",
+  "parameters": {
+    "origin": "Los Angeles, CA",
+    "destination": "San Diego, CA",
+    "num_fuel_stops": 2,
+    "num_food_stops": 2,
+    "departure_time": "5:00 AM",
+    "use_google_maps": true
+  }
+}
+```
+
+---
+
+## 22. open_maps_with_route
+
+**Purpose:** Open Apple Maps application with a specific route.
+
+**Parameters:**
+```json
+{
+  "origin": "string - REQUIRED - Starting location",
+  "destination": "string - REQUIRED - End location",
+  "stops": "list[string] | null - Optional list of intermediate stops"
+}
+```
+
+**Returns:**
+```json
+{
+  "status": "opened",
+  "maps_url": "string - URL used to open Maps",
+  "message": "string - Status message"
+}
+```
+
+**Use this when:**
+- User wants to open Maps app directly with a route
+- You already have a planned route and want to open it
+- User wants to see the route in Apple Maps app
+
+**Example:**
+```json
+{
+  "action": "open_maps_with_route",
+  "parameters": {
+    "origin": "San Francisco, CA",
+    "destination": "Los Angeles, CA",
+    "stops": ["Gilroy, CA", "Coalinga, CA"]
+  }
+}
+```
+
+---
+
+## 23. summarize_list_activity
+
+**Purpose:** Summarize the top tweets/threads from a configured Twitter List using the official API and LLM.
+
+**Parameters:**
+```json
+{
+  "list_name": "string - OPTIONAL - Logical list key defined under twitter.lists (defaults to twitter.default_list)",
+  "lookback_hours": "int - OPTIONAL - Window in hours (default twitter.default_lookback_hours, min 1, max 168)",
+  "max_items": "int - OPTIONAL - Number of tweets/threads to highlight (default twitter.max_summary_items, max 10)"
+}
+```
+
+**Returns:**
+```json
+{
+  "summary": "string - Markdown summary describing trends and highlights",
+  "items": [
+    {
+      "id": "string",
+      "text": "string - Combined thread text",
+      "author_name": "string",
+      "author_handle": "string",
+      "created_at": "string - ISO timestamp",
+      "score": "float ranking heuristic",
+      "url": "string - Canonical tweet URL"
+    }
+  ],
+  "time_window": {
+    "hours": "int",
+    "start": "ISO timestamp",
+    "end": "ISO timestamp"
+  },
+  "list_name": "string"
+}
+```
+
+**Example:**
+```json
+{
+  "action": "summarize_list_activity",
+  "parameters": {
+    "lookback_hours": 6,
+    "max_items": 5
+  }
+}
+```
+
+---
+
+## 24. tweet_message
+
+**Purpose:** Publish a tweet using the configured Twitter user credentials.
+
+**Parameters:**
+```json
+{
+  "message": "string - REQUIRED - Tweet content (will be trimmed and must fit Twitter limits)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "tweet_id": "string",
+  "tweet_text": "string",
+  "tweet_url": "string",
+  "message": "Tweet posted successfully."
+}
+```
+
+**Example:**
+```json
+{
+  "action": "tweet_message",
+  "parameters": {
+    "message": "Launch day! 🚀"
+  }
+}
+```
+
+**Notes:**
+- Only list names defined in `config.yaml → twitter.lists` are valid.
+- Uses official Twitter APIs with credentials from `.env` (`TWITTER_*` variables); scraping is not allowed.
+- Automatically expands multi-tweet threads (when available), ranks by engagement, and feeds the content into the configured LLM for a concise summary.
 
 ---
 

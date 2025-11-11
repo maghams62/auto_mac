@@ -31,13 +31,19 @@ def _send_imessage_applescript(recipient: str, message: str) -> bool:
     # Escape message for AppleScript (handle quotes and newlines)
     message_escaped = message.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
-    # Improved AppleScript - simpler approach using send text
+    # Simplified AppleScript without hardcoded service (more compatible)
+    # Based on AppleScript MCP best practices - let Messages.app determine service
     applescript = f'''
-    tell application "Messages"
-        set myMessage to "{message_escaped}"
-        set myBuddy to "{recipient}"
-        send myMessage to buddy myBuddy of service "E:icloud.com"
-    end tell
+    try
+        tell application "Messages"
+            set targetService to 1st account whose service type = iMessage
+            set targetBuddy to participant "{recipient}" of targetService
+            send "{message_escaped}" to targetBuddy
+        end tell
+        return "Success"
+    on error errMsg
+        return "Error: " & errMsg
+    end try
     '''
 
     try:
@@ -50,6 +56,10 @@ def _send_imessage_applescript(recipient: str, message: str) -> bool:
         )
 
         if result.returncode == 0:
+            output = result.stdout.strip()
+            if "Error:" in output:
+                logger.error(f"iMessage AppleScript error: {output}")
+                return False
             logger.info(f"Successfully sent iMessage to {recipient}")
             return True
         else:
@@ -88,7 +98,7 @@ def send_imessage(
     Args:
         message: The message text to send (supports URLs, emojis, newlines)
         recipient: Phone number (e.g., "+16618572957") or email address.
-                  If None, uses default from config (+16618572957).
+                  If None, empty, or contains "me"/"to me"/"my phone", will use default_phone_number from config.yaml.
 
     Returns:
         Dictionary with status and message details
@@ -96,7 +106,7 @@ def send_imessage(
     Example:
         send_imessage(
             message="Your trip from Phoenix to LA is planned! Maps URL: maps://...",
-            recipient="+16618572957"
+            recipient="+16618572957"  # or None/"me" for default
         )
     """
     logger.info(f"[IMESSAGE AGENT] Tool: send_imessage(recipient='{recipient}')")
@@ -104,12 +114,16 @@ def send_imessage(
     try:
         from ..utils import load_config
 
-        # Get recipient from config if not provided
-        if recipient is None:
-            config = load_config()
-            recipient = config.get("imessage", {}).get("default_phone_number")
-
-            if not recipient:
+        config = load_config()
+        
+        # Handle "message to me" logic - use default recipient if recipient is None or contains "me"
+        if recipient is None or not recipient or recipient.lower().strip() in ["me", "my phone", "to me", "myself", "my number"]:
+            default_recipient = config.get("imessage", {}).get("default_phone_number")
+            if default_recipient:
+                recipient = default_recipient
+                logger.info(f"[IMESSAGE AGENT] Using default recipient: {recipient}")
+            elif recipient is None or not recipient:
+                # If no default configured and recipient is None, return error
                 return {
                     "error": True,
                     "error_type": "NoRecipient",
@@ -179,13 +193,13 @@ DIFFERENT FROM EMAIL AGENT:
 
 Input Parameters:
   • message (required): Text to send (supports URLs, emojis, newlines)
-  • recipient (optional): Phone number "+16618572957" or email
-                         If None, uses default: +16618572957
+  • recipient (optional): Phone number "+16618572957" or email.
+                         If None, empty, or contains "me"/"to me"/"my phone", uses default: +16618572957
 
 Typical Workflow:
 1. send_imessage(
      message="Trip planned! Maps: https://maps.google.com/...",
-     recipient="+16618572957"  # or None for default
+     recipient="+16618572957"  # or None/"me"/"to me" for default
    )
    → Sends text message via Messages.app
 
@@ -199,13 +213,17 @@ Features:
 - Direct phone number messaging
 - Uses macOS Messages.app (iMessage/SMS)
 - Default recipient: +16618572957 (from config)
+- Supports "to me" / "me" / "my phone" - automatically uses default recipient
 - Supports emojis, URLs, multiline messages
 - AppleScript automation
 
-Example 1 - With default recipient:
+Example 1 - With "to me" (uses default):
+send_imessage(message="Your trip is ready! maps://...", recipient="me")
+
+Example 2 - With default recipient (None):
 send_imessage(message="Your trip is ready! maps://...")
 
-Example 2 - With specific recipient:
+Example 3 - With specific recipient:
 send_imessage(
     message="Meeting at 3pm",
     recipient="+11234567890"

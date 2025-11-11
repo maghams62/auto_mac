@@ -3,6 +3,7 @@ LangGraph agent with task decomposition and state management.
 """
 
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
+from threading import Event
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from . import ALL_AGENT_TOOLS
 from .verifier import OutputVerifier
+from ..memory import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +33,16 @@ class AgentState(TypedDict):
     verification_results: Dict[int, Any]  # step_id -> verification result
     messages: List[Any]  # Conversation history
 
+    # Session context (NEW)
+    session_id: Optional[str]
+    session_context: Optional[Dict[str, Any]]
+
     # Output
     final_result: Optional[Dict[str, Any]]
     status: str  # "planning" | "executing" | "completed" | "error"
+    cancel_event: Optional[Event]
+    cancelled: bool
+    cancellation_reason: Optional[str]
 
 
 class AutomationAgent:
@@ -41,12 +50,29 @@ class AutomationAgent:
     LangGraph agent for task decomposition and execution.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        session_manager: Optional[SessionManager] = None
+    ):
         self.config = config
+        
+        # Initialize config accessor for safe, validated access
+        from ..config_validator import ConfigAccessor
+        self.config_accessor = ConfigAccessor(config)
+        
+        # Get OpenAI config through accessor (validates API key exists)
+        openai_config = self.config_accessor.get_openai_config()
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0
+            model=openai_config["model"],
+            temperature=0.0,
+            api_key=openai_config["api_key"]
         )
+
+        # Session management
+        self.session_manager = session_manager
+        if self.session_manager:
+            logger.info("[AUTOMATION AGENT] Session management enabled")
 
         # Initialize verifier
         self.verifier = OutputVerifier(config)
@@ -86,7 +112,7 @@ class AutomationAgent:
         # Conditional edge after planning: check if plan failed
         workflow.add_conditional_edges(
             "plan",
-            lambda state: "finalize" if state.get("status") == "error" else "execute",
+            lambda state: "finalize" if state.get("status") in {"error", "cancelled"} else "execute",
             {
                 "execute": "execute_step",
                 "finalize": "finalize"
@@ -111,6 +137,21 @@ class AutomationAgent:
         """
         Planning node: Decompose user request into steps.
         """
+        if self._handle_cancellation(state, "planning"):
+            return state
+        
+        # Safety check: reject /clear commands (should be handled by WebSocket handler)
+        user_request = state.get('user_request', '').strip().lower()
+        if user_request == '/clear' or user_request == 'clear':
+            logger.warning("Received /clear command in agent - this should be handled by WebSocket handler")
+            state["status"] = "error"
+            state["final_result"] = {
+                "error": True,
+                "message": "/clear command should be handled by the WebSocket handler, not the agent. Please use /clear directly.",
+                "missing_capabilities": None
+            }
+            return state
+        
         logger.info("=== PLANNING PHASE ===")
         logger.info(f"User request: {state['user_request']}")
 
@@ -118,6 +159,9 @@ class AutomationAgent:
         system_prompt = self.prompts.get("system", "")
         task_decomp_prompt = self.prompts.get("task_decomposition", "")
         few_shot_examples = self.prompts.get("few_shot_examples", "")
+        
+        # Inject user context from config (constrains LLM to only use configured data)
+        user_context = self.config_accessor.get_user_context_for_llm()
 
         # CRITICAL: Dynamically generate tool list from actual registered tools
         # This prevents hallucination by ensuring LLM only knows about real tools
@@ -152,6 +196,8 @@ class AutomationAgent:
 {system_prompt}
 
 {task_decomp_prompt}
+
+{user_context}
 
 AVAILABLE TOOLS (COMPLETE LIST - DO NOT HALLUCINATE OTHER TOOLS):
 {available_tools_list}
@@ -275,6 +321,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         Execution node: Execute current step.
         """
+        if self._handle_cancellation(state, "execution"):
+            return state
         current_idx = state["current_step"]
         steps = state.get("steps")
 
@@ -369,9 +417,21 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         # Handle case where plan has no steps (impossible task already set error)
         steps = state.get("steps") or []
 
-        # Don't override error status if already set (e.g., from impossible task detection)
+        # Don't override statuses already set (error/cancelled)
         if state.get("status") == "error":
-            logger.info(f"Final status: error (preserved from planning)")
+            logger.info("Final status: error (preserved from earlier stage)")
+            return state
+
+        if state.get("status") == "cancelled" or state.get("cancelled"):
+            summary = {
+                "goal": state.get("goal", ""),
+                "steps_executed": min(state.get("current_step", 0), len(steps)),
+                "results": state.get("step_results", {}),
+                "status": "cancelled",
+                "message": state.get("cancellation_reason") or "Execution cancelled."
+            }
+            state["final_result"] = summary
+            logger.info("Final status: cancelled")
             return state
 
         # Gather all results
@@ -393,10 +453,28 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
     def _should_continue(self, state: AgentState) -> str:
         """Decide whether to continue executing steps or finalize."""
+        if state.get("status") == "cancelled" or state.get("cancelled"):
+            return "finalize"
         steps = state.get("steps")
         if not steps or state["current_step"] >= len(steps):
             return "finalize"
         return "continue"
+
+    def _cancellation_requested(self, state: AgentState) -> bool:
+        """Check if a cancellation has been requested for this run."""
+        cancel_event = state.get("cancel_event")
+        return bool(cancel_event and cancel_event.is_set())
+
+    def _handle_cancellation(self, state: AgentState, stage: str) -> bool:
+        """Mark the run as cancelled if requested."""
+        if self._cancellation_requested(state):
+            reason = state.get("cancellation_reason") or "Execution cancelled by user request."
+            state["cancellation_reason"] = reason
+            state["cancelled"] = True
+            state["status"] = "cancelled"
+            logger.info(f"[AGENT] Cancellation requested during {stage}. Aborting remaining work.")
+            return True
+        return False
 
     def _resolve_parameters(
         self,
@@ -521,17 +599,30 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         ]
         return action in verify_actions
 
-    def run(self, user_request: str) -> Dict[str, Any]:
+    def run(
+        self,
+        user_request: str,
+        session_id: Optional[str] = None,
+        cancel_event: Optional[Event] = None
+    ) -> Dict[str, Any]:
         """
         Execute the agent workflow.
 
         Args:
             user_request: Natural language request
+            session_id: Optional session ID for context tracking
+            cancel_event: Optional threading.Event used to signal cancellation
 
         Returns:
             Final result dictionary
         """
         logger.info(f"Starting agent for request: {user_request}")
+
+        # Get session context if available
+        session_context = None
+        if self.session_manager and session_id:
+            session_context = self.session_manager.get_langgraph_context(session_id)
+            logger.info(f"[SESSION] Loaded context for session: {session_id}")
 
         # Initialize state
         initial_state = {
@@ -542,14 +633,38 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             "step_results": {},
             "verification_results": {},
             "messages": [],
+            "session_id": session_id,
+            "session_context": session_context,
             "final_result": None,
-            "status": "planning"
+            "status": "planning",
+            "cancel_event": cancel_event,
+            "cancelled": False,
+            "cancellation_reason": None
         }
 
         # Run graph
         try:
             final_state = self.graph.invoke(initial_state)
-            return final_state["final_result"]
+            result = final_state["final_result"]
+
+            # Record interaction in session memory
+            if self.session_manager and session_id:
+                memory = self.session_manager.get_or_create_session(session_id)
+                memory.add_interaction(
+                    user_request=user_request,
+                    agent_response=result,
+                    plan=final_state.get("steps", []),
+                    step_results=final_state.get("step_results", {}),
+                    metadata={
+                        "goal": final_state.get("goal", ""),
+                        "status": final_state.get("status", "unknown")
+                    }
+                )
+                # Save session to disk
+                self.session_manager.save_session(session_id)
+                logger.info(f"[SESSION] Recorded interaction for session: {session_id}")
+
+            return result
 
         except Exception as e:
             logger.error(f"Agent execution error: {e}")

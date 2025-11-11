@@ -213,9 +213,11 @@ def check_quality(
         from ..utils import load_config
 
         config = load_config()
+        openai_config = config.get("openai", {})
         llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.0,
+            api_key=openai_config.get("api_key")
         )
 
         # Use LLM to evaluate quality

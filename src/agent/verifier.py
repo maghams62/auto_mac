@@ -28,9 +28,11 @@ class OutputVerifier:
             config: Configuration dictionary containing API keys and model settings
         """
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0  # Use deterministic output for verification
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.0,  # Use deterministic output for verification
+            api_key=openai_config.get("api_key")
         )
 
     def verify_step_output(
@@ -251,9 +253,11 @@ class ReflectionEngine:
     def __init__(self, config: dict):
         """Initialize reflection engine."""
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.3
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.3,
+            api_key=openai_config.get("api_key")
         )
 
     def reflect_and_replan(

@@ -45,6 +45,7 @@ class ToolSpec:
     strengths: List[str]
     limits: List[str]
     description: str = ""
+    parameters: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -54,7 +55,8 @@ class ToolSpec:
             "io": self.io,
             "strengths": self.strengths,
             "limits": self.limits,
-            "description": self.description
+            "description": self.description,
+            "parameters": self.parameters,
         }
 
 

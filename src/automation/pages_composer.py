@@ -73,6 +73,10 @@ class PagesComposer:
                     pass
 
             if result.returncode == 0:
+                output = result.stdout.strip()
+                if "Error:" in output:
+                    logger.error(f"Pages AppleScript error: {output}")
+                    return False
                 logger.info("Pages document created successfully")
                 return True
             else:
@@ -104,17 +108,24 @@ class PagesComposer:
         title = self._escape_applescript_string(title)
 
         script_parts = [
-            'tell application "Pages"',
-            '    activate',
-            '    set newDoc to make new document',
-            '    tell newDoc',
-            '        tell body text',
+            'try',
+            '    tell application "Pages"',
+            '        activate',
+            '        set newDoc to make new document',
+            '        tell newDoc',
+            '            tell body text',
         ]
 
         # Add title
         script_parts.extend([
-            f'            set titlePara to make new paragraph at end with properties {{font:"{self._get_title_font()}", size:{self._get_title_size()}}}',
-            f'            set text of titlePara to "{title}\\n"',
+            '                try',
+            f'                    set titlePara to make new paragraph at end with properties {{font:"{self._get_title_font()}", size:{self._get_title_size()}}}',
+            f'                    set text of titlePara to "{title}\\n"',
+            '                on error',
+            '                    -- Fallback: create simple paragraph',
+            '                    set titlePara to make new paragraph at end',
+            f'                    set text of titlePara to "{title}\\n"',
+            '                end try',
         ])
 
         # Add sections
@@ -124,30 +135,43 @@ class PagesComposer:
 
             if heading:
                 script_parts.extend([
-                    f'            set headingPara to make new paragraph at end with properties {{font:"{self._get_heading_font()}", size:{self._get_heading_size()}}}',
-                    f'            set text of headingPara to "{heading}\\n"',
+                    '                try',
+                    f'                    set headingPara to make new paragraph at end with properties {{font:"{self._get_heading_font()}", size:{self._get_heading_size()}}}',
+                    f'                    set text of headingPara to "{heading}\\n"',
+                    '                on error',
+                    '                    set headingPara to make new paragraph at end',
+                    f'                    set text of headingPara to "{heading}\\n"',
+                    '                end try',
                 ])
 
             if content:
                 script_parts.extend([
-                    f'            set contentPara to make new paragraph at end',
-                    f'            set text of contentPara to "{content}\\n\\n"',
+                    '                try',
+                    '                    set contentPara to make new paragraph at end',
+                    f'                    set text of contentPara to "{content}\\n\\n"',
+                    '                on error',
+                    '                    -- Skip if paragraph creation fails',
+                    '                end try',
                 ])
 
         script_parts.extend([
+            '            end tell',
             '        end tell',
-            '    end tell',
         ])
 
         # Save if path provided
         if output_path:
             escaped_path = self._escape_applescript_string(output_path)
             script_parts.extend([
-                f'    save newDoc in POSIX file "{escaped_path}"',
+                f'        save newDoc in POSIX file "{escaped_path}"',
             ])
 
         script_parts.extend([
-            'end tell',
+            '    end tell',
+            '    return "Success"',
+            'on error errMsg',
+            '    return "Error: " & errMsg',
+            'end try',
         ])
 
         return '\n'.join(script_parts)

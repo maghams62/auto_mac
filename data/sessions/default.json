@@ -1,0 +1,21 @@
+{
+  "session_id": "default",
+  "status": "cleared",
+  "created_at": "2025-11-10T14:20:22.889850",
+  "last_active_at": "2025-11-10T14:20:22.889908",
+  "interactions": [],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 0,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": [],
+    "cleared_at": "2025-11-10T14:20:22.889905",
+    "previous_session_duration": 0
+  }
+}

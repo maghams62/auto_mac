@@ -63,9 +63,11 @@ def synthesize_content(
         from ..utils import load_config
 
         config = load_config()
+        openai_config = config.get("openai", {})
         llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.3  # Slightly creative for better synthesis
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.3,  # Slightly creative for better synthesis
+            api_key=openai_config.get("api_key")
         )
 
         # Flatten list if it contains nested lists (from context variables)
@@ -215,9 +217,11 @@ def create_slide_deck_content(
         from ..utils import load_config
 
         config = load_config()
+        openai_config = config.get("openai", {})
         llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.2
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.2,
+            api_key=openai_config.get("api_key")
         )
 
         if not content or not content.strip():
@@ -369,9 +373,11 @@ def create_detailed_report(
         from ..utils import load_config
 
         config = load_config()
+        openai_config = config.get("openai", {})
         llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.3
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.3,
+            api_key=openai_config.get("api_key")
         )
 
         if not content or not content.strip():
@@ -522,9 +528,11 @@ def create_meeting_notes(
         from ..utils import load_config
 
         config = load_config()
+        openai_config = config.get("openai", {})
         llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.1  # Very low temperature for accuracy
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.1,  # Very low temperature for accuracy
+            api_key=openai_config.get("api_key")
         )
 
         if not content or not content.strip():

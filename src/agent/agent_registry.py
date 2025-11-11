@@ -11,21 +11,38 @@ This module provides a unified interface to all specialized agents:
 Each agent acts as a mini-orchestrator for its domain.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 
+from ..memory import SessionManager
+
 from .file_agent import FileAgent, FILE_AGENT_TOOLS, FILE_AGENT_HIERARCHY
+from .folder_agent import FolderAgent, FOLDER_AGENT_TOOLS, FOLDER_AGENT_HIERARCHY
+from .google_agent import GoogleAgent, GOOGLE_AGENT_TOOLS, GOOGLE_AGENT_HIERARCHY
 from .browser_agent import BrowserAgent, BROWSER_AGENT_TOOLS, BROWSER_AGENT_HIERARCHY
 from .presentation_agent import PresentationAgent, PRESENTATION_AGENT_TOOLS, PRESENTATION_AGENT_HIERARCHY
 from .email_agent import EmailAgent, EMAIL_AGENT_TOOLS, EMAIL_AGENT_HIERARCHY
 from .critic_agent import CriticAgent, CRITIC_AGENT_TOOLS, CRITIC_AGENT_HIERARCHY
 from .writing_agent import WritingAgent, WRITING_AGENT_TOOLS, WRITING_AGENT_HIERARCHY
-from .stock_agent import STOCK_AGENT_TOOLS, STOCK_AGENT_HIERARCHY
-from .screen_agent import SCREEN_AGENT_TOOLS, SCREEN_AGENT_HIERARCHY
+# Optional imports for agents with external dependencies
+try:
+    from .stock_agent import STOCK_AGENT_TOOLS, STOCK_AGENT_HIERARCHY
+except ImportError:
+    STOCK_AGENT_TOOLS = []
+    STOCK_AGENT_HIERARCHY = ""
+try:
+    from .screen_agent import SCREEN_AGENT_TOOLS, SCREEN_AGENT_HIERARCHY
+except ImportError:
+    SCREEN_AGENT_TOOLS = []
+    SCREEN_AGENT_HIERARCHY = ""
 from .report_agent import ReportAgent, REPORT_AGENT_TOOLS, REPORT_AGENT_HIERARCHY
 from .google_finance_agent import GoogleFinanceAgent, GOOGLE_FINANCE_AGENT_TOOLS, GOOGLE_FINANCE_AGENT_HIERARCHY
 from .maps_agent import MapsAgent, MAPS_AGENT_TOOLS, MAPS_AGENT_HIERARCHY
 from .imessage_agent import iMessageAgent, IMESSAGE_AGENT_TOOLS, IMESSAGE_AGENT_HIERARCHY
+from .discord_agent import DiscordAgent, DISCORD_AGENT_TOOLS, DISCORD_AGENT_HIERARCHY
+from .reddit_agent import RedditAgent, REDDIT_AGENT_TOOLS, REDDIT_AGENT_HIERARCHY
+from .twitter_agent import TwitterAgent, TWITTER_AGENT_TOOLS, TWITTER_AGENT_HIERARCHY
+from .notifications_agent import NotificationsAgent, NOTIFICATIONS_AGENT_TOOLS, NOTIFICATIONS_AGENT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +50,8 @@ logger = logging.getLogger(__name__)
 # Combined tool registry (for backwards compatibility)
 ALL_AGENT_TOOLS = (
     FILE_AGENT_TOOLS +
+    FOLDER_AGENT_TOOLS +
+    GOOGLE_AGENT_TOOLS +
     BROWSER_AGENT_TOOLS +
     PRESENTATION_AGENT_TOOLS +
     EMAIL_AGENT_TOOLS +
@@ -43,9 +62,12 @@ ALL_AGENT_TOOLS = (
     REPORT_AGENT_TOOLS +
     GOOGLE_FINANCE_AGENT_TOOLS +
     MAPS_AGENT_TOOLS +
-    IMESSAGE_AGENT_TOOLS
+    IMESSAGE_AGENT_TOOLS +
+    DISCORD_AGENT_TOOLS +
+    REDDIT_AGENT_TOOLS +
+    TWITTER_AGENT_TOOLS +
+    NOTIFICATIONS_AGENT_TOOLS
 )
-
 # Legacy compatibility
 ALL_TOOLS = FILE_AGENT_TOOLS + PRESENTATION_AGENT_TOOLS + EMAIL_AGENT_TOOLS
 BROWSER_TOOLS = BROWSER_AGENT_TOOLS
@@ -56,7 +78,7 @@ AGENT_HIERARCHY_DOCS = """
 Multi-Agent System Hierarchy:
 =============================
 
-The system is organized into 6 specialized agents, each acting as a mini-orchestrator
+The system is organized into specialized agents, each acting as a mini-orchestrator
 for its domain:
 
 1. FILE AGENT (5 tools)
@@ -83,7 +105,16 @@ for its domain:
    └─ Domain: Verification, reflection, and quality assurance
    └─ Tools: verify_output, reflect_on_failure, validate_plan, check_quality
 
-Total: 22 tools across 6 specialized agents
+7. TWITTER AGENT (1 tool)
+   └─ Domain: Twitter list ingestion/summarization
+   └─ Tools: summarize_list_activity
+
+8. MAPS AGENT (2 tools)
+   └─ Domain: Apple Maps trip planning and navigation
+   └─ Tools: plan_trip_with_stops, open_maps_with_route
+   └─ Integration: Uses AppleScript automation (MapsAutomation) for native macOS Maps.app control
+
+Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 50+ tools (and growing).
 
 Each agent:
 - Has a clear domain of responsibility
@@ -107,53 +138,113 @@ class AgentRegistry:
     - Verification (CriticAgent)
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        session_manager: Optional[SessionManager] = None
+    ):
         self.config = config
 
-        # Initialize all agents
-        self.file_agent = FileAgent(config)
-        self.browser_agent = BrowserAgent(config)
-        self.presentation_agent = PresentationAgent(config)
-        self.email_agent = EmailAgent(config)
-        self.writing_agent = WritingAgent(config)
-        self.critic_agent = CriticAgent(config)
-        self.report_agent = ReportAgent(config)
-        self.google_finance_agent = GoogleFinanceAgent(config)
-        self.maps_agent = MapsAgent(config)
-        self.imessage_agent = iMessageAgent(config)
+        # Session management
+        self.session_manager = session_manager
+        if self.session_manager:
+            logger.info("[AGENT REGISTRY] Session management enabled")
 
-        # Create agent mapping
-        self.agents = {
-            "file": self.file_agent,
-            "browser": self.browser_agent,
-            "presentation": self.presentation_agent,
-            "email": self.email_agent,
-            "writing": self.writing_agent,
-            "critic": self.critic_agent,
-            "report": self.report_agent,
-            "google_finance": self.google_finance_agent,
-            "maps": self.maps_agent,
-            "imessage": self.imessage_agent,
+        # LAZY INITIALIZATION: Store agent classes, not instances
+        # Only instantiate agents when they're actually needed
+        self._agent_classes = {
+            "file": FileAgent,
+            "folder": FolderAgent,
+            "google": GoogleAgent,
+            "browser": BrowserAgent,
+            "presentation": PresentationAgent,
+            "email": EmailAgent,
+            "writing": WritingAgent,
+            "critic": CriticAgent,
+            "report": ReportAgent,
+            "google_finance": GoogleFinanceAgent,
+            "maps": MapsAgent,
+            "imessage": iMessageAgent,
+            "discord": DiscordAgent,
+            "reddit": RedditAgent,
+            "twitter": TwitterAgent,
+            "notifications": NotificationsAgent,
         }
 
-        # Create tool-to-agent mapping for routing
+        # Cache for instantiated agents (lazy initialization)
+        self.agents = {}
+
+        # Create tool-to-agent mapping (using tool lists, not instances)
         self.tool_to_agent = {}
-        for agent_name, agent in self.agents.items():
-            for tool in agent.get_tools():
+        tool_lists = {
+            "file": FILE_AGENT_TOOLS,
+            "folder": FOLDER_AGENT_TOOLS,
+            "google": GOOGLE_AGENT_TOOLS,
+            "browser": BROWSER_AGENT_TOOLS,
+            "presentation": PRESENTATION_AGENT_TOOLS,
+            "email": EMAIL_AGENT_TOOLS,
+            "writing": WRITING_AGENT_TOOLS,
+            "critic": CRITIC_AGENT_TOOLS,
+            "report": REPORT_AGENT_TOOLS,
+            "google_finance": GOOGLE_FINANCE_AGENT_TOOLS,
+            "maps": MAPS_AGENT_TOOLS,
+            "imessage": IMESSAGE_AGENT_TOOLS,
+            "discord": DISCORD_AGENT_TOOLS,
+            "reddit": REDDIT_AGENT_TOOLS,
+            "twitter": TWITTER_AGENT_TOOLS,
+            "notifications": NOTIFICATIONS_AGENT_TOOLS,
+        }
+
+        for agent_name, tools in tool_lists.items():
+            for tool in tools:
                 self.tool_to_agent[tool.name] = agent_name
 
-        logger.info(f"[AGENT REGISTRY] Initialized with {len(self.agents)} agents and {len(self.tool_to_agent)} tools")
+        logger.info(f"[AGENT REGISTRY] Initialized with {len(self._agent_classes)} agent classes and {len(self.tool_to_agent)} tools (lazy loading enabled)")
 
     def get_agent(self, agent_name: str):
-        """Get a specific agent by name."""
-        return self.agents.get(agent_name)
+        """
+        Get a specific agent by name (lazy initialization).
+
+        Only instantiates the agent if it hasn't been created yet.
+        Caches the instance for future use.
+        """
+        # Check if already instantiated
+        if agent_name in self.agents:
+            return self.agents[agent_name]
+
+        # Lazy instantiation
+        if agent_name in self._agent_classes:
+            logger.info(f"[AGENT REGISTRY] Lazy initializing {agent_name} agent")
+            agent_class = self._agent_classes[agent_name]
+            agent_instance = agent_class(self.config)
+            self.agents[agent_name] = agent_instance
+            return agent_instance
+
+        logger.warning(f"[AGENT REGISTRY] Unknown agent: {agent_name}")
+        return None
 
     def get_agent_for_tool(self, tool_name: str):
-        """Get the agent responsible for a specific tool."""
+        """Get the agent responsible for a specific tool (lazy initialization)."""
         agent_name = self.tool_to_agent.get(tool_name)
         if agent_name:
-            return self.agents[agent_name]
+            return self.get_agent(agent_name)  # Use lazy loading
         return None
+
+    def initialize_agents(self, agent_names: List[str]) -> None:
+        """
+        Pre-initialize specific agents (called by intent planner).
+
+        This allows the orchestrator to only initialize the agents
+        that are actually needed for the current request.
+
+        Args:
+            agent_names: List of agent names to initialize
+        """
+        for agent_name in agent_names:
+            if agent_name not in self.agents and agent_name in self._agent_classes:
+                logger.info(f"[AGENT REGISTRY] Pre-initializing {agent_name} agent")
+                agent_class = self._agent_classes[agent_name]
+                self.agents[agent_name] = agent_class(self.config)
 
     def get_all_tools(self) -> List:
         """Get all tools from all agents."""
@@ -180,12 +271,22 @@ class AgentRegistry:
 
         return "\n".join(docs)
 
-    def execute_tool(self, tool_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_tool(
+        self,
+        tool_name: str,
+        inputs: Dict[str, Any],
+        session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Route and execute a tool through its responsible agent.
 
         This is the main execution interface - tools are automatically routed
         to their owning agent.
+
+        Args:
+            tool_name: Name of tool to execute
+            inputs: Tool input parameters
+            session_id: Optional session ID for context tracking
         """
         agent = self.get_agent_for_tool(tool_name)
 
@@ -202,7 +303,26 @@ class AgentRegistry:
         agent_name = self.tool_to_agent[tool_name]
         logger.info(f"[AGENT REGISTRY] Routing {tool_name} to {agent_name} agent")
 
-        return agent.execute(tool_name, inputs)
+        # Track tool usage in session memory
+        if self.session_manager and session_id:
+            memory = self.session_manager.get_or_create_session(session_id)
+            memory.metadata["tools_used"].add(tool_name)
+            memory.metadata["agents_used"].add(agent_name)
+
+        result = agent.execute(tool_name, inputs)
+
+        # Store result in session context if needed
+        if self.session_manager and session_id and not result.get("error"):
+            memory = self.session_manager.get_or_create_session(session_id)
+            # Store commonly referenced results
+            if tool_name == "take_screenshot":
+                memory.set_context("last_screenshot_path", result.get("screenshot_path"))
+            elif tool_name == "create_keynote" or tool_name == "create_keynote_with_images":
+                memory.set_context("last_presentation_path", result.get("file_path"))
+            elif tool_name == "search_documents":
+                memory.set_context("last_search_results", result.get("documents", []))
+
+        return result
 
     def get_agent_stats(self) -> Dict[str, Any]:
         """Get statistics about registered agents and tools."""
@@ -231,6 +351,12 @@ def get_agent_tool_mapping() -> Dict[str, str]:
 
     for tool in FILE_AGENT_TOOLS:
         mapping[tool.name] = "file"
+
+    for tool in FOLDER_AGENT_TOOLS:
+        mapping[tool.name] = "folder"
+
+    for tool in GOOGLE_AGENT_TOOLS:
+        mapping[tool.name] = "google"
 
     for tool in BROWSER_AGENT_TOOLS:
         mapping[tool.name] = "browser"
@@ -265,6 +391,15 @@ def get_agent_tool_mapping() -> Dict[str, str]:
     for tool in IMESSAGE_AGENT_TOOLS:
         mapping[tool.name] = "imessage"
 
+    for tool in DISCORD_AGENT_TOOLS:
+        mapping[tool.name] = "discord"
+
+    for tool in REDDIT_AGENT_TOOLS:
+        mapping[tool.name] = "reddit"
+
+    for tool in TWITTER_AGENT_TOOLS:
+        mapping[tool.name] = "twitter"
+
     return mapping
 
 
@@ -276,7 +411,7 @@ def print_agent_hierarchy():
     print("=" * 80)
 
     mapping = get_agent_tool_mapping()
-    for agent_name in ["file", "browser", "presentation", "email", "writing", "critic"]:
+    for agent_name in ["file", "browser", "presentation", "email", "writing", "critic", "twitter"]:
         tools = [tool for tool, agent in mapping.items() if agent == agent_name]
         print(f"\n{agent_name.upper()} AGENT ({len(tools)} tools):")
         for tool in tools:

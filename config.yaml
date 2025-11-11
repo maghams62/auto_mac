@@ -34,12 +34,42 @@ search:
 
 # Email Configuration
 email:
+  default_recipient: "spamstuff062@gmail.com"  # Default email address when user says "email to me"
   default_subject_prefix: "[Auto-generated]"
   signature: "\n\n---\nSent via Mac Automation Assistant"
 
 # iMessage Configuration
 imessage:
   default_phone_number: "+16618572957"  # Default recipient for messages
+
+# Discord Configuration
+discord:
+  default_server: "Personal"        # Default server for quick navigation (optional)
+  default_channel: "general"        # Default channel fallback
+  screenshot_dir: "data/screenshots"
+  switcher_delay_seconds: 0.6       # Delay between Cmd+K keystrokes
+  credentials:
+    email: "${DISCORD_EMAIL}"
+    password: "${DISCORD_PASSWORD}"
+    mfa_code: "${DISCORD_MFA_CODE}"
+
+# Reddit Configuration
+reddit:
+  headless: true
+  default_sort: "hot"
+  max_scroll_iterations: 12
+  scroll_pause_ms: 1200
+  comment_threads_limit: 3
+  viewport:
+    width: 1280
+    height: 900
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+
+# Maps Configuration
+maps:
+  max_stops: 20  # Maximum total stops (fuel + food combined) - can be increased if needed
+  default_maps_service: "apple"  # "apple" or "google" - which Maps service to use by default (LLM can override based on user query)
+  stop_suggestion_max_tokens: 1000  # Max tokens for LLM stop suggestion (increased for international routes)
 
 # UI Configuration
 ui:
@@ -77,3 +107,12 @@ browser:
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   file: "data/app.log"
+
+# Twitter Configuration
+twitter:
+  default_list: "product_watch"        # Logical name defined in lists mapping below
+  default_lookback_hours: 24           # Used when user does not specify a window
+  max_summary_items: 5                 # Maximum tweets/threads to summarize per run
+  lists:
+    # Map logical names to actual Twitter List IDs (replace with your own)
+    product_watch: "72719839"

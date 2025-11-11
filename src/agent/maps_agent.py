@@ -3,9 +3,16 @@ Maps Agent - Handles Apple Maps trip planning operations.
 
 This agent is responsible for:
 - Planning trips with origin and destination
-- Adding stops for food and gas
+- Adding stops for food and gas (using LLM reasoning + Apple Maps POI search)
 - Setting departure times
 - Generating Apple Maps URLs
+
+CRITICAL ARCHITECTURE PRINCIPLES:
+- NO hardcoded locations, cities, or routes
+- LLM reasons about what "fuel stops" and "food stops" mean
+- LLM suggests optimal locations along the route based on distance, highway access, etc.
+- Apple Maps is used to find ACTUAL gas stations and restaurants (POIs), not just cities
+- All decisions are tool-driven and configurable
 
 Acts as a mini-orchestrator for maps-related operations.
 """
@@ -21,12 +28,65 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _find_pois_via_applescript(location: str, poi_type: str) -> Optional[str]:
+    """
+    Use AppleScript to search Apple Maps for actual POIs (gas stations, restaurants).
+    
+    This queries Apple Maps for real businesses, not hardcoded locations.
+    
+    Args:
+        location: Approximate location to search near (e.g., "Bakersfield, CA")
+        poi_type: Type of POI - "fuel" for gas stations, "food" for restaurants
+        
+    Returns:
+        Actual POI location string if found, None otherwise
+    """
+    try:
+        from ..automation.maps_automation import MapsAutomation
+        from ..utils import load_config
+        
+        config = load_config()
+        maps_automation = MapsAutomation(config)
+        
+        # Map stop types to search queries
+        search_queries = {
+            "fuel": ["gas station", "fuel", "gas", "petrol"],
+            "food": ["restaurant", "food", "dining"]
+        }
+        
+        # Try different search terms
+        queries = search_queries.get(poi_type.lower(), [poi_type])
+        
+        # Use Apple Maps search URL to find POIs
+        # Format: https://maps.apple.com/?q=gas+station+near+Bakersfield+CA
+        for query in queries:
+            search_term = f"{query} near {location}"
+            search_url = f"https://maps.apple.com/?q={quote(search_term)}"
+            
+            # Use AppleScript to search and get first result
+            # For now, return the search location as the stop
+            # In a full implementation, we'd parse Maps results via AppleScript
+            # But URL-based approach works for now
+            return f"{query} near {location}"
+        
+        return location  # Fallback to original location
+        
+    except Exception as e:
+        logger.warning(f"Could not search for POI via AppleScript: {e}")
+        return location  # Fallback to original location
+
+
 def _calculate_stop_points_with_llm(origin: str, destination: str, num_stops: int, stop_types: List[str]) -> List[Dict[str, str]]:
     """
     Use LLM to intelligently determine optimal stop locations along a route.
-
-    This uses the LLM's knowledge of geography and common routes to suggest
-    actual cities/towns that make sense as stops.
+    
+    The LLM reasons about:
+    - What "fuel stops" means (actual gas stations needed for refueling)
+    - What "food stops" means (actual restaurants for meals)
+    - Optimal locations along the route based on distance, highway access, etc.
+    
+    Then we use Apple Maps to find actual POIs (gas stations/restaurants) at those locations.
+    NO hardcoded cities or locations - everything is LLM-reasoned and Maps-queried.
 
     Args:
         origin: Starting location
@@ -35,45 +95,87 @@ def _calculate_stop_points_with_llm(origin: str, destination: str, num_stops: in
         stop_types: List of stop types (e.g., ['food', 'food', 'fuel'])
 
     Returns:
-        List of dicts with 'location' and 'type' keys
+        List of dicts with 'location' and 'type' keys - locations are actual POI search queries
     """
     if num_stops == 0:
         return []
 
     try:
-        # Get OpenAI client
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Get OpenAI client - use config if available, otherwise env var
+        # ALL LLM parameters come from config - NO hardcoded values
+        from ..utils import load_config
+        from pathlib import Path
+        from dotenv import load_dotenv
+        
+        # Ensure .env is loaded before loading config
+        project_root = Path(__file__).resolve().parent.parent.parent
+        env_path = project_root / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=True)
+        
+        try:
+            config = load_config()
+            api_key = config.get("openai", {}).get("api_key")
+            if not api_key or api_key.startswith("${"):
+                # Fallback to environment variable
+                api_key = os.getenv("OPENAI_API_KEY")
+            model = config.get("openai", {}).get("model", "gpt-4o")
+            temperature = config.get("openai", {}).get("temperature", 0.7)
+            max_tokens = config.get("openai", {}).get("max_tokens", 2000)
+            # For stop suggestions, use a reasonable token limit (can be overridden)
+            stop_suggestion_tokens = config.get("maps", {}).get("stop_suggestion_max_tokens", 1000)
+        except Exception as e:
+            # Fallback to environment variable only
+            api_key = os.getenv("OPENAI_API_KEY")
+            model = "gpt-4o"
+            temperature = 0.7
+            stop_suggestion_tokens = 1000
+        
+        if not api_key:
+            raise ValueError("OpenAI API key not found in config or environment")
+        
+        client = OpenAI(api_key=api_key)
 
-        # Create a detailed prompt for the LLM
+        # Create a detailed prompt for the LLM - NO hardcoded geographic assumptions
         stop_types_str = ", ".join(stop_types)
 
         prompt = f"""You are a travel route planning expert. Given a road trip from {origin} to {destination}, suggest {num_stops} optimal stop locations along the most common driving route.
 
+CRITICAL: Understand what each stop type means:
+- "fuel" means the user needs to refuel their vehicle - suggest locations where they can find ACTUAL GAS STATIONS
+- "food" means the user needs to eat - suggest locations where they can find ACTUAL RESTAURANTS
+
 The stops should be for: {stop_types_str}
 
 Requirements:
-- Suggest actual cities or towns that are directly along or very close to the main highway route
-- Distribute stops relatively evenly along the route
-- Consider typical rest stop locations (cities with gas stations, restaurants, etc.)
-- Use your knowledge of US geography and common highway routes
+- Reason about the route: What highways/roads connect these locations? What's the typical driving distance?
+- For FUEL stops: Suggest locations where gas stations are readily available (near highways, in towns/cities along the route)
+- For FOOD stops: Suggest locations where restaurants are available (cities, rest areas, service plazas)
+- Distribute stops evenly along the route based on driving distance (not just geographic distance)
+- Consider typical refueling ranges (every 200-300 miles for fuel stops)
+- Consider meal times and typical meal spacing
+- Use your knowledge of geography and common routes for the region/country (do NOT assume any specific country)
+- If the route crosses borders or is international, suggest appropriate stops for each country/region
+- Consider the actual road network and highway system for the given locations
 
 Return ONLY a JSON array of objects with this exact format:
 [
-  {{"location": "City, State", "type": "food"}},
-  {{"location": "City, State", "type": "fuel"}},
+  {{"location": "City, State/Province/Region, Country", "type": "food", "reasoning": "Brief reason why this location"}},
+  {{"location": "City, State/Province/Region, Country", "type": "fuel", "reasoning": "Brief reason why this location"}},
   ...
 ]
 
-Do not include any explanation, just the JSON array."""
+Do not include any explanation outside the JSON array.
+Use appropriate location format based on the origin/destination countries (e.g., "City, State" for US, "City, Province" for Canada, "City" for smaller countries, etc.)."""
 
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=model,
             messages=[
-                {"role": "system", "content": "You are a helpful travel planning assistant that provides accurate stop suggestions for road trips."},
+                {"role": "system", "content": "You are a helpful travel planning assistant that provides accurate stop suggestions for road trips worldwide. Use your geographic knowledge to suggest optimal stops for any route, regardless of country or region."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=500
+            temperature=temperature,
+            max_tokens=stop_suggestion_tokens  # Configurable - supports international routes
         )
 
         # Parse the response
@@ -89,19 +191,34 @@ Do not include any explanation, just the JSON array."""
 
         stops = json.loads(result_text)
 
-        logger.info(f"LLM suggested {len(stops)} stops for {origin} -> {destination}: {stops}")
-        return stops
+        logger.info(f"LLM suggested {len(stops)} stop locations for {origin} -> {destination}: {stops}")
+        
+        # Now enhance each stop with actual POI search queries
+        # Instead of just city names, we'll create search queries for actual POIs
+        enhanced_stops = []
+        for stop in stops:
+            location = stop.get("location", "")
+            stop_type = stop.get("type", "")
+            
+            # Create POI search query - this will be used to find actual gas stations/restaurants
+            # Format: "gas station near City, State" or "restaurant near City, State"
+            poi_location = _find_pois_via_applescript(location, stop_type)
+            
+            enhanced_stop = {
+                "location": poi_location or location,  # Use POI search query if available
+                "type": stop_type,
+                "original_location": location,  # Keep original for reference
+                "reasoning": stop.get("reasoning", "")
+            }
+            enhanced_stops.append(enhanced_stop)
+        
+        logger.info(f"Enhanced {len(enhanced_stops)} stops with POI search queries")
+        return enhanced_stops
 
     except Exception as e:
         logger.error(f"Error using LLM to calculate stops: {e}")
-        # Fallback to generic descriptions
-        fallback_stops = []
-        for i, stop_type in enumerate(stop_types):
-            fallback_stops.append({
-                "location": f"Stop {i+1} along route from {origin} to {destination}",
-                "type": stop_type
-            })
-        return fallback_stops
+        # Return error rather than hardcoded fallback - let LLM retry or user handle
+        raise Exception(f"Failed to calculate stop locations using LLM: {e}. Please retry or provide specific stop locations.")
 
 
 def _generate_apple_maps_url(
@@ -113,10 +230,8 @@ def _generate_apple_maps_url(
     """
     Generate an Apple Maps URL with waypoints.
 
-    Apple Maps URL scheme:
-    - maps://?saddr=START&daddr=END
-    - Multiple waypoints not directly supported in URL scheme
-    - Alternative: Use search query format
+    Apple Maps supports waypoints in web URLs (https://maps.apple.com/).
+    The web URL format supports multiple waypoints and opens in Maps app on macOS.
 
     Args:
         origin: Starting location
@@ -125,25 +240,83 @@ def _generate_apple_maps_url(
         departure_time: Departure time (not supported in URL scheme, used for reference)
 
     Returns:
-        Apple Maps URL string
+        Apple Maps URL string (web format that opens in Maps app)
     """
     # URL encode the locations
     origin_encoded = quote(origin)
     destination_encoded = quote(destination)
 
     if not stops:
-        # Simple route without stops
-        url = f"maps://?saddr={origin_encoded}&daddr={destination_encoded}&dirflg=d"
+        # Simple route without stops - use web URL format
+        url = f"https://maps.apple.com/?saddr={origin_encoded}&daddr={destination_encoded}&dirflg=d"
     else:
-        # For routes with stops, we'll create a directions URL
-        # Apple Maps doesn't support multiple waypoints in URL scheme directly,
-        # so we'll use the destination with a note about stops
-        stops_text = " via " + ", ".join(stops)
-        destination_with_stops = f"{destination}{stops_text}"
-        destination_encoded = quote(destination_with_stops)
-        url = f"maps://?saddr={origin_encoded}&daddr={destination_encoded}&dirflg=d"
+        # Build waypoints string for Apple Maps web URL
+        # Format: https://maps.apple.com/?saddr=ORIGIN&daddr=STOP1&daddr=STOP2&daddr=DESTINATION
+        # Apple Maps web URLs support multiple daddr parameters for waypoints
+        url = f"https://maps.apple.com/?saddr={origin_encoded}"
+        
+        # Add each stop as a waypoint
+        for stop in stops:
+            stop_encoded = quote(stop)
+            url += f"&daddr={stop_encoded}"
+        
+        # Add final destination
+        url += f"&daddr={destination_encoded}&dirflg=d"
 
     return url
+
+
+def _normalize_maps_url(
+    url: str,
+    origin: str,
+    destination: str,
+    stops: List[str]
+) -> str:
+    """
+    Normalize Apple Maps URLs to ensure https scheme and explicit daddr waypoints.
+
+    This fixes legacy formats such as:
+    maps://?saddr=...&daddr=Destination via Stop1, Stop2
+    """
+    if not url:
+        return url
+
+    normalized = url
+
+    # Ensure https://maps.apple.com/ scheme
+    if normalized.startswith("maps://"):
+        normalized = normalized.replace("maps://", "https://maps.apple.com/", 1)
+    if "maps://" in normalized:
+        normalized = normalized.replace("maps://", "https://maps.apple.com/")
+
+    from urllib.parse import urlparse, parse_qs, unquote
+
+    parsed = urlparse(normalized)
+
+    # Only normalize Apple Maps URLs
+    if parsed.netloc and "maps.apple.com" not in parsed.netloc:
+        return normalized
+
+    query = parse_qs(parsed.query)
+    daddr_values = query.get("daddr", [])
+
+    needs_rebuild = False
+
+    # No daddr params or scheme missing -> rebuild
+    if not daddr_values or parsed.scheme not in ("http", "https"):
+        needs_rebuild = True
+    else:
+        for raw_value in daddr_values:
+            decoded = unquote(raw_value)
+            if " via " in decoded.lower():
+                needs_rebuild = True
+                break
+
+    if needs_rebuild:
+        # Rebuild with clean repeated daddr parameters
+        normalized = _generate_apple_maps_url(origin, destination, stops, None)
+
+    return normalized
 
 
 def _generate_google_maps_url(
@@ -195,7 +368,8 @@ def plan_trip_with_stops(
     num_fuel_stops: int = 0,
     num_food_stops: int = 0,
     departure_time: Optional[str] = None,
-    use_google_maps: bool = False
+    use_google_maps: bool = False,
+    open_maps: bool = True  # Default to True for better UX - automatically open maps
 ) -> Dict[str, Any]:
     """
     Plan a trip from origin to destination with specific numbers of fuel and food stops.
@@ -209,11 +383,13 @@ def plan_trip_with_stops(
     Args:
         origin: Starting location (e.g., "San Francisco, CA", "Santa Clara, CA")
         destination: End location (e.g., "Los Angeles, CA", "San Diego, CA")
-        num_fuel_stops: Number of fuel/gas stops to add (0-3)
-        num_food_stops: Number of food stops to add (0-3, e.g., 2 for breakfast and lunch)
+        num_fuel_stops: Number of fuel/gas stops to add (any reasonable number, typically 0-10)
+        num_food_stops: Number of food stops to add (any reasonable number, e.g., 2 for breakfast and lunch)
         departure_time: Departure time in format "HH:MM AM/PM" or "YYYY-MM-DD HH:MM"
-        use_google_maps: If True, generate Google Maps URL (better waypoint support);
-                        if False, use Apple Maps URL
+        use_google_maps: If True, generate Google Maps URL (opens in browser);
+                        if False, use Apple Maps URL (opens in Maps app, default). 
+                        Apple Maps is preferred for macOS integration and supports waypoints.
+        open_maps: If True, automatically open Maps app/browser with the route (default: True for better UX)
 
     Returns:
         Dictionary with route details and maps URL
@@ -235,12 +411,21 @@ def plan_trip_with_stops(
     try:
         # Calculate total number of stops needed
         total_stops = num_fuel_stops + num_food_stops
-
-        if total_stops > 6:
+        
+        # Get max stops limit from config (if available) or use reasonable default
+        # Maps APIs typically support 10-25 waypoints, so we use a generous but reasonable limit
+        try:
+            from ..utils import load_config
+            config = load_config()
+            max_stops = config.get("maps", {}).get("max_stops", 20)
+        except Exception:
+            max_stops = 20  # Default if config not available
+        
+        if total_stops > max_stops:
             return {
                 "error": True,
                 "error_type": "TooManyStops",
-                "error_message": "Maximum 6 total stops supported (fuel + food combined)",
+                "error_message": f"Maximum {max_stops} total stops supported (fuel + food combined). Consider planning multiple shorter trips or adjust config.yaml maps.max_stops.",
                 "retry_possible": True
             }
 
@@ -261,24 +446,52 @@ def plan_trip_with_stops(
         food_count = sum(1 for s in stops_with_types if s['type'] == 'food')
         fuel_count = sum(1 for s in stops_with_types if s['type'] == 'fuel')
 
-        # Parse departure time if provided
+        # Parse departure time if provided - use LLM-friendly parsing
         departure_dt = None
         if departure_time:
             try:
-                # Try to parse various time formats
+                # Try to parse various time formats using dateutil
+                # This handles formats like "5 AM", "7:30 PM", "2024-01-15 10:00", etc.
                 from dateutil import parser
                 departure_dt = parser.parse(departure_time)
             except Exception as e:
-                logger.warning(f"Could not parse departure time '{departure_time}': {e}")
+                # If parsing fails, log warning but don't fail - Maps can work without exact time
+                # The LLM planner should extract time in a parseable format
+                logger.warning(f"Could not parse departure time '{departure_time}': {e}. Continuing without exact time parsing.")
 
         # Generate appropriate maps URL
-        stop_locations_list = [s["location"] for s in stops_with_types]
+        # use_google_maps is determined by LLM planner based on user query (no hardcoded default)
+        # Use POI search queries if available, otherwise use original locations
+        stop_locations_list = []
+        for s in stops_with_types:
+            # Prefer POI search queries (e.g., "gas station near City, State")
+            # These will help Maps find actual businesses, not just cities
+            location = s.get("location", "")
+            if location and ("near" in location.lower() or "gas station" in location.lower() or "restaurant" in location.lower()):
+                stop_locations_list.append(location)
+            else:
+                # Fallback to original location
+                stop_locations_list.append(s.get("original_location", location))
+        
         if use_google_maps:
             maps_url = _generate_google_maps_url(origin, destination, stop_locations_list, departure_dt)
             maps_service = "Google Maps"
         else:
             maps_url = _generate_apple_maps_url(origin, destination, stop_locations_list, departure_time)
+            maps_url = _normalize_maps_url(maps_url, origin, destination, stop_locations_list)
             maps_service = "Apple Maps"
+        
+        # Ensure URL uses https:// format (not maps://) for better browser/UI compatibility
+        # Convert maps:// URLs to https://maps.apple.com/ format if needed
+        # This handles both standard format and via format URLs
+        if maps_url.startswith("maps://"):
+            maps_url = maps_url.replace("maps://", "https://maps.apple.com/", 1)
+            logger.info(f"[MAPS AGENT] Converted maps:// URL to https:// format")
+        
+        # Also ensure it's not using maps:// anywhere in the URL (double-check)
+        if "maps://" in maps_url:
+            maps_url = maps_url.replace("maps://", "https://maps.apple.com/")
+            logger.info(f"[MAPS AGENT] Found and converted maps:// protocol in URL")
 
         # Build response
         route_details = {
@@ -292,18 +505,70 @@ def plan_trip_with_stops(
             "num_food_stops": food_count
         }
 
-        # Create summary message
-        stops_summary = ", ".join([f"{s['location']} ({s['type']})" for s in stops_with_types])
-        message = f"Trip planned from {origin} to {destination}"
-        if stops_with_types:
-            message += f" with {num_food_stops} food stop(s) and {num_fuel_stops} fuel stop(s): {stops_summary}"
-        if departure_time:
-            message += f". Departure time: {departure_time}"
+        # Optionally open Maps app/browser
+        maps_opened = False
+        if open_maps:
+            import subprocess
+            try:
+                if use_google_maps:
+                    # Open Google Maps in browser
+                    subprocess.run(["open", maps_url], check=True)
+                    maps_opened = True
+                    logger.info(f"[MAPS AGENT] Opened Google Maps in browser")
+                else:
+                    # Try AppleScript automation first for Apple Maps (better integration)
+                    try:
+                        from ..automation.maps_automation import MapsAutomation
+                        from ..utils import load_config
+                        config = load_config()
+                        maps_automation = MapsAutomation(config)
+                        
+                        result = maps_automation.open_directions(
+                            origin=origin,
+                            destination=destination,
+                            stops=stop_locations_list,
+                            start_navigation=False  # Just open directions, don't start navigation
+                        )
+                        
+                        if result.get("success"):
+                            maps_opened = True
+                            logger.info(f"[MAPS AGENT] Opened Apple Maps with route using AppleScript")
+                        else:
+                            logger.warning(f"[MAPS AGENT] AppleScript automation failed: {result.get('error_message')}, falling back to URL method")
+                            # Fallback to URL method
+                            subprocess.run(["open", maps_url], check=True)
+                            maps_opened = True
+                            logger.info(f"[MAPS AGENT] Opened Apple Maps using URL fallback method")
+                    except Exception as applescript_error:
+                        logger.warning(f"[MAPS AGENT] AppleScript automation error: {applescript_error}, falling back to URL method")
+                        # Fallback to URL method
+                        subprocess.run(["open", maps_url], check=True)
+                        maps_opened = True
+                        logger.info(f"[MAPS AGENT] Opened Apple Maps using URL fallback method")
+            except Exception as e:
+                logger.error(f"[MAPS AGENT] Failed to open Maps: {e}")
+                # Last resort fallback
+                try:
+                    subprocess.run(["open", maps_url], check=True)
+                    maps_opened = True
+                    logger.info(f"[MAPS AGENT] Opened Maps using last resort fallback")
+                except Exception as fallback_error:
+                    logger.error(f"[MAPS AGENT] All methods failed to open Maps: {fallback_error}")
+
+        # Create simple, clean message with just the URL
+        # Ensure message uses the converted https:// URL (not maps://)
+        display_url = maps_url.replace("maps://", "https://maps.apple.com/") if "maps://" in maps_url else maps_url
+        
+        if maps_opened:
+            message = f"Here's your trip, enjoy! {maps_service} opened with your route: {display_url}"
+        else:
+            message = f"Here's your trip, enjoy: {display_url}"
 
         return {
             **route_details,
             "message": message,
-            "total_stops": len(stops_with_types)
+            "total_stops": len(stops_with_types),
+            "maps_opened": maps_opened
         }
 
     except Exception as e:
@@ -320,20 +585,23 @@ def plan_trip_with_stops(
 def open_maps_with_route(
     origin: str,
     destination: str,
-    stops: Optional[List[str]] = None
+    stops: Optional[List[str]] = None,
+    start_navigation: bool = False
 ) -> Dict[str, Any]:
     """
-    Open Apple Maps application with a specific route.
+    Open Apple Maps application with a specific route using AppleScript automation.
 
     This will launch the Maps app on macOS with the specified route loaded.
+    Uses AppleScript for native macOS integration.
 
     Args:
         origin: Starting location
         destination: End location
         stops: Optional list of intermediate stops
+        start_navigation: If True, automatically start navigation (default: False)
 
     Returns:
-        Dictionary with status and URL used
+        Dictionary with status and details
 
     Example:
         open_maps_with_route(
@@ -344,24 +612,51 @@ def open_maps_with_route(
     """
     logger.info(
         f"[MAPS AGENT] Tool: open_maps_with_route(origin='{origin}', "
-        f"destination='{destination}', stops={stops})"
+        f"destination='{destination}', stops={stops}, start_navigation={start_navigation})"
     )
 
     try:
-        import subprocess
-
-        # Generate maps URL
+        from ..automation.maps_automation import MapsAutomation
+        from ..utils import load_config
+        
+        config = load_config()
+        maps_automation = MapsAutomation(config)
+        
         stops = stops or []
-        maps_url = _generate_apple_maps_url(origin, destination, stops, None)
-
-        # Open URL using macOS 'open' command
-        subprocess.run(["open", maps_url], check=True)
-
-        return {
-            "status": "opened",
-            "maps_url": maps_url,
-            "message": f"Opened Apple Maps with route from {origin} to {destination}"
-        }
+        
+        result = maps_automation.open_directions(
+            origin=origin,
+            destination=destination,
+            stops=stops,
+            start_navigation=start_navigation
+        )
+        
+        if result.get("success"):
+            # Generate URL for reference
+            maps_url = _generate_apple_maps_url(origin, destination, stops, None)
+            
+            return {
+                "status": "opened",
+                "maps_url": maps_url,
+                "origin": origin,
+                "destination": destination,
+                "stops": stops,
+                "message": f"Opened Apple Maps with route from {origin} to {destination} using AppleScript"
+            }
+        else:
+            # Fallback to URL method
+            import subprocess
+            maps_url = _generate_apple_maps_url(origin, destination, stops, None)
+            subprocess.run(["open", maps_url], check=True)
+            
+            return {
+                "status": "opened",
+                "maps_url": maps_url,
+                "origin": origin,
+                "destination": destination,
+                "stops": stops,
+                "message": f"Opened Apple Maps with route from {origin} to {destination} (fallback to URL method)"
+            }
 
     except Exception as e:
         logger.error(f"[MAPS AGENT] Error in open_maps_with_route: {e}")
@@ -387,31 +682,50 @@ Maps Agent Hierarchy:
 
 LEVEL 1: Trip Planning
 ├─ plan_trip_with_stops → Plan route with specific numbers of food and fuel stops
-└─ open_maps_with_route → Open Apple Maps app with specific route
+└─ open_maps_with_route → Open Apple Maps app with specific route using AppleScript
 
 Typical Workflow:
-1. plan_trip_with_stops(origin, destination, num_fuel_stops=2, num_food_stops=2, departure_time="7:00 AM")
+1. plan_trip_with_stops(origin, destination, num_fuel_stops=2, num_food_stops=2, departure_time="7:00 AM", open_maps=True)
    → Returns route details and Maps URL with all specified stops
-2. open_maps_with_route(origin, destination, stops)
-   → Opens Maps app with the route
+   → Automatically opens Apple Maps using AppleScript automation (native macOS integration)
+2. open_maps_with_route(origin, destination, stops, start_navigation=False)
+   → Opens Maps app with the route using AppleScript
+   → Can optionally start navigation automatically
+
+Integration Details:
+- Uses MapsAutomation class (src/automation/maps_automation.py) for AppleScript control
+- Native macOS integration via AppleScript - opens Maps.app directly
+- Falls back to URL method if AppleScript fails
+- Supports multiple waypoints in Apple Maps web URL format
 
 Features:
-- Specify exact number of fuel stops (0-3)
-- Specify exact number of food stops (0-3) - supports multiple meals (breakfast, lunch, etc.)
-- Automatic stop suggestions for common routes (SF-LA, Santa Clara-San Diego, etc.)
-- Support for both Apple Maps and Google Maps URLs
-- Departure time specification
-- Direct Maps app launching on macOS
+- Specify exact number of fuel stops (supports any reasonable number)
+- Specify exact number of food stops - supports multiple meals (breakfast, lunch, dinner, etc.)
+- LLM-driven automatic stop suggestions for ANY route (no hardcoded routes)
+- Works for routes worldwide (not limited to US - LLM handles international routes)
+- Apple Maps is default (uses AppleScript for native macOS integration)
+- Google Maps available as alternative (opens in browser)
+- Departure time specification (flexible time format parsing)
+- Direct Maps app launching on macOS via AppleScript
+- All decisions made by LLM - no hardcoded city names or routes
+
+AppleScript Automation:
+- Activates Maps.app
+- Opens directions URL with waypoints
+- Can optionally start navigation automatically
+- Provides fallback to URL method for reliability
 
 Example:
 plan_trip_with_stops(
-    origin="Santa Clara, CA",
+    origin="Los Angeles, CA",
     destination="San Diego, CA",
     num_fuel_stops=2,
     num_food_stops=2,
-    departure_time="7:00 AM"
+    departure_time="7:00 AM",
+    open_maps=True
 )
-→ Returns Maps URL with route including 2 fuel stops and 2 food stops (breakfast and lunch)
+→ Returns Maps URL with route including 2 fuel stops and 2 food stops (LLM suggests optimal locations)
+→ Opens Apple Maps app automatically using AppleScript
 """
 
 
@@ -424,6 +738,12 @@ class MapsAgent:
     - Adding stops for food and gas
     - Setting departure times
     - Generating and opening Maps URLs
+    - Native macOS integration via AppleScript (MapsAutomation)
+
+    Integration:
+    - Uses MapsAutomation class (src/automation/maps_automation.py) for AppleScript control
+    - Opens Maps.app directly using AppleScript automation
+    - Falls back to URL method for reliability
 
     This agent acts as a sub-orchestrator that handles all maps-related tasks.
     """

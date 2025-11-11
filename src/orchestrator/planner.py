@@ -12,7 +12,11 @@ from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from .tools_catalog import format_tool_catalog_for_prompt
+from .tools_catalog import format_tool_catalog_for_prompt, build_tool_parameter_index
+from ..agent.agent_registry import AgentRegistry
+from .agent_capabilities import build_agent_capabilities
+from .intent_planner import IntentPlanner
+from .agent_router import AgentRouter
 
 
 logger = logging.getLogger(__name__)
@@ -44,10 +48,17 @@ class Planner:
             config: Configuration dictionary
         """
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.2  # Lower temperature for structured planning
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.2,  # Lower temperature for structured planning
+            api_key=openai_config.get("api_key")
         )
+        self.agent_registry = AgentRegistry(config)
+        self.intent_planner = IntentPlanner(config)
+        self.agent_router = AgentRouter()
+        self.agent_capabilities = build_agent_capabilities(self.agent_registry)
+        self.tool_parameters = build_tool_parameter_index()
 
     def create_plan(
         self,
@@ -79,13 +90,17 @@ class Planner:
         logger.info(f"Creating plan for goal: '{goal}'")
 
         try:
+            router_metadata = self._prepare_hierarchy_metadata(goal, available_tools)
+            filtered_tools = router_metadata.get("tool_catalog", available_tools)
+
             # Build the planning prompt
             prompt = self._build_planning_prompt(
                 goal=goal,
-                available_tools=available_tools,
+                available_tools=filtered_tools,
                 context=context,
                 previous_plan=previous_plan,
-                feedback=feedback
+                feedback=feedback,
+                intent_metadata=router_metadata.get("intent")
             )
 
             # Get plan from LLM
@@ -102,12 +117,15 @@ class Planner:
 
             if plan_data:
                 logger.info(f"Plan created with {len(plan_data['steps'])} steps")
-                return {
+                result_payload = {
                     "success": True,
                     "plan": plan_data['steps'],
                     "reasoning": plan_data.get('reasoning', 'Plan created successfully'),
                     "error": None
                 }
+                if router_metadata.get("intent"):
+                    result_payload["intent_metadata"] = router_metadata["intent"]
+                return result_payload
             else:
                 logger.error("Failed to parse plan from LLM response")
                 return {
@@ -131,11 +149,16 @@ class Planner:
         return """You are an expert task planner. Your job is to create step-by-step execution plans.
 
 CORE PRINCIPLES:
-1. **LLM-Driven Decisions**: All parameters and choices must be determined by LLM reasoning, not hardcoded
+1. **LLM-Driven Decisions**: ALL parameters MUST be extracted from the user's natural language query using LLM reasoning
+   - NO hardcoded values or assumptions
+   - Parse city names, stop counts, times, etc. from the query text
+   - Handle variations: "LA" = "Los Angeles, CA", "2 gas stops" = num_fuel_stops=2, "lunch and dinner" = num_food_stops=2
+   - Use your knowledge to interpret abbreviations and common phrases
 2. **Tool Understanding**: Carefully read tool capabilities - some tools are COMPLETE and standalone
 3. **Simplicity**: Prefer simple plans - if one tool can do everything, use just that tool
 4. **Dependencies**: Clearly specify step dependencies
 5. **Context Passing**: Use $stepN.field syntax to pass results between steps
+6. **Selective File Workflows**: If the user requests zipping or emailing only certain kinds of files (e.g., "non music files", "only PDFs"), FIRST create the filtered collection using LLM reasoning (`organize_files` or similar). Only after that call `create_zip_archive`, passing the appropriate `include_extensions` or `exclude_extensions`, and attach the resulting ZIP with `compose_email` when email is requested. Never zip the whole folder when the user asked for a filtered subset.
 
 CRITICAL RULES:
 - If a tool description says "COMPLETE" or "STANDALONE", it handles everything - don't break it into sub-steps!
@@ -165,15 +188,22 @@ Respond with JSON containing:
     def _build_planning_prompt(
         self,
         goal: str,
-        available_tools: List[Dict[str, Any]],
+        available_tools: List[Any],
         context: Optional[Dict[str, Any]] = None,
         previous_plan: Optional[List[Dict[str, Any]]] = None,
-        feedback: Optional[str] = None
+        feedback: Optional[str] = None,
+        intent_metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """Build the planning prompt."""
 
         # Format tool catalog
         tool_catalog_str = format_tool_catalog_for_prompt(available_tools)
+
+        # Add file system context from config
+        file_context = {}
+        if self.config.get('documents', {}).get('folders'):
+            file_context['user_document_folders'] = self.config['documents']['folders']
+            file_context['note'] = "When working with user files (zip, search, organize), use these document folders"
 
         prompt_parts = [
             f"GOAL: {goal}",
@@ -182,6 +212,20 @@ Respond with JSON containing:
             tool_catalog_str,
             ""
         ]
+
+        if file_context:
+            prompt_parts.extend([
+                "FILE SYSTEM CONTEXT:",
+                json.dumps(file_context, indent=2),
+                ""
+            ])
+
+        if intent_metadata:
+            prompt_parts.extend([
+                "INTENT SUMMARY:",
+                json.dumps(intent_metadata, indent=2),
+                ""
+            ])
 
         # Add context if provided
         if context:
@@ -207,8 +251,20 @@ Respond with JSON containing:
         prompt_parts.extend([
             "TASK: Create a step-by-step execution plan to achieve the goal.",
             "",
+            "CRITICAL: Parameter Extraction - Use LLM Reasoning:",
+            "- Extract ALL parameters from the user's natural language query",
+            "- For trip planning: parse origin, destination, number of stops, departure time from the query",
+            "- Handle variations: 'LA' → 'Los Angeles, CA', 'SD' → 'San Diego, CA', '2 gas stops' → num_fuel_stops=2",
+            "- Interpret meal requests: 'lunch and dinner' → num_food_stops=2, 'breakfast and lunch' → num_food_stops=2",
+            "- Parse time formats: '5 AM' → '5:00 AM', '7:30 PM' → '7:30 PM'",
+            "- For selective ZIP requests: use include_pattern (e.g., 'A*') and include/exclude_extensions to target the correct files",
+            "- For file operations (zip, organize, search): ALWAYS specify source_path using the user_document_folders from FILE SYSTEM CONTEXT",
+            "- Example: if user says 'zip files starting with A', set source_path to the first folder from user_document_folders",
+            "- NO hardcoded values - extract everything from the user's query using reasoning",
+            "",
             "Remember:",
-            "- Use LLM reasoning for all decisions",
+            "- Use LLM reasoning for all decisions and parameter extraction",
+            "- For file operations, ALWAYS check FILE SYSTEM CONTEXT for the correct folder paths",
             "- Check if tools are COMPLETE/STANDALONE before breaking into sub-steps",
             "- Keep plans as simple as possible",
             "- Specify dependencies clearly",
@@ -217,6 +273,36 @@ Respond with JSON containing:
         ])
 
         return "\n".join(prompt_parts)
+
+    def _prepare_hierarchy_metadata(
+        self,
+        goal: str,
+        available_tools: List[Any]
+    ) -> Dict[str, Any]:
+        """Run Level 1 and Level 2 stages and provide routing metadata."""
+
+        try:
+            intent = self.intent_planner.analyze(goal, self.agent_capabilities)
+            logger.debug(f"[PLANNER] Intent planner result: {intent}")
+
+            # OPTIMIZATION: Only initialize agents that are actually needed
+            # This prevents loading all 16 agents for every request
+            involved_agents = intent.get("involved_agents", [])
+            if involved_agents:
+                logger.info(f"[PLANNER] Initializing only required agents: {involved_agents}")
+                self.agent_registry.initialize_agents(involved_agents)
+            else:
+                logger.warning(f"[PLANNER] No specific agents identified by intent planner. Intent: {intent}")
+
+            routing = self.agent_router.route(intent, available_tools, self.agent_registry)
+            routing.setdefault("tool_catalog", available_tools)
+            return routing
+        except Exception as exc:
+            logger.warning("[PLANNER] Intent planning failed, using fallback: %s", exc)
+            return {
+                "tool_catalog": available_tools,
+                "intent": None
+            }
 
     def _parse_plan_response(self, response_text: str) -> Optional[Dict[str, Any]]:
         """
@@ -307,8 +393,33 @@ Respond with JSON containing:
                 issues.append(f"Step {step_id}: Tool '{action}' not available")
 
             # Check parameters
-            if "parameters" not in step:
+            parameters = step.get("parameters")
+            if parameters is None:
                 warnings.append(f"Step {step_id}: No parameters specified")
+                parameters = {}
+            elif not isinstance(parameters, dict):
+                issues.append(f"Step {step_id}: Parameters must be an object/dict, got {type(parameters).__name__}")
+                continue
+
+            # Check required parameters against schema
+            param_meta = self.tool_parameters.get(action, {})
+            required_params = param_meta.get("required") or []
+            optional_params = param_meta.get("optional") or []
+            declared_params = set(parameters.keys())
+
+            missing_required = [param for param in required_params if param not in declared_params]
+            if missing_required:
+                issues.append(
+                    f"Step {step_id}: Missing required parameters for '{action}': {', '.join(sorted(missing_required))}"
+                )
+
+            # Warn about unknown parameters (may indicate typo)
+            allowed_params = set(required_params) | set(optional_params)
+            if allowed_params and declared_params - allowed_params:
+                unknown = ", ".join(sorted(declared_params - allowed_params))
+                warnings.append(
+                    f"Step {step_id}: Unknown parameters for '{action}': {unknown}"
+                )
 
             # Check dependencies
             dependencies = step.get("dependencies", [])

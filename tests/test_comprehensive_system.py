@@ -25,8 +25,9 @@ from pathlib import Path
 from typing import Dict, List, Any
 import json
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils import load_config, setup_logging
 from src.documents import DocumentIndexer

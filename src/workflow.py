@@ -264,17 +264,38 @@ class WorkflowOrchestrator:
 
         return result
 
-    def reindex_documents(self) -> Dict[str, Any]:
+    def reindex_documents(self, cancel_event=None) -> Dict[str, Any]:
         """
-        Reindex all documents.
+        Reindex all documents from configured folders in config.yaml.
+
+        This method ONLY indexes folders specified in config.yaml under documents.folders.
+        It does not accept custom folder paths - use index_documents() directly for that.
+
+        Args:
+            cancel_event: Optional asyncio.Event to signal cancellation
 
         Returns:
             Indexing statistics
         """
-        logger.info("Starting document reindexing")
+        logger.info("Starting document reindexing from config.yaml folders")
+        
+        # Get folders from config to log them
+        config_folders = self.config.get('documents', {}).get('folders', [])
+        logger.info(f"Will index documents from configured folders: {config_folders}")
 
         try:
-            count = self.indexer.index_documents()
+            # Pass None to ensure it uses config folders only
+            count = self.indexer.index_documents(folders=None, cancel_event=cancel_event)
+            
+            # Check if cancelled
+            if cancel_event and cancel_event.is_set():
+                logger.info("Indexing cancelled by user")
+                return {
+                    'success': False,
+                    'cancelled': True,
+                    'error': 'Indexing cancelled by user',
+                }
+            
             stats = self.indexer.get_stats()
 
             return {

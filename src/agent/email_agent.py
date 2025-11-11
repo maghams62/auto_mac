@@ -33,7 +33,7 @@ def compose_email(
     Args:
         subject: Email subject
         body: Email body (supports markdown)
-        recipient: Email address (None = draft only)
+        recipient: Email address. If None, empty, or contains "me"/"to me"/"my email", will use default_recipient from config.yaml
         attachments: List of file paths to attach
         send: If True, send immediately; if False, open draft
 
@@ -43,10 +43,21 @@ def compose_email(
     logger.info(f"[EMAIL AGENT] Tool: compose_email(subject='{subject}', recipient='{recipient}', send={send})")
 
     try:
-        from automation import MailComposer
-        from utils import load_config
+        from src.automation import MailComposer
+        from src.utils import load_config
 
         config = load_config()
+        
+        # Handle "email to me" logic - use default recipient if recipient is None or contains "me"
+        if recipient is None or not recipient or recipient.lower().strip() in ["me", "my email", "to me", "myself"]:
+            default_recipient = config.get('email', {}).get('default_recipient')
+            if default_recipient:
+                recipient = default_recipient
+                logger.info(f"[EMAIL AGENT] Using default recipient: {recipient}")
+            elif recipient is None or not recipient:
+                # If no default configured and recipient is None, create draft
+                logger.info("[EMAIL AGENT] No recipient specified and no default configured - creating draft")
+        
         mail_composer = MailComposer(config)
 
         success = mail_composer.compose_email(

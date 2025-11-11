@@ -10,6 +10,42 @@ from .state import ToolSpec
 logger = logging.getLogger(__name__)
 
 
+def _build_parameter_metadata(tool) -> List[Dict[str, Any]]:
+    """
+    Build structured parameter metadata for a LangChain tool.
+
+    Args:
+        tool: LangChain tool instance
+
+    Returns:
+        List of parameter dictionaries with name/type/required/description/default
+    """
+    metadata: List[Dict[str, Any]] = []
+    args_schema = getattr(tool, "args_schema", None)
+
+    if not args_schema:
+        return metadata
+
+    try:
+        schema_dict = args_schema.schema()
+    except Exception:
+        return metadata
+
+    required_fields = set(schema_dict.get("required", []))
+    properties = schema_dict.get("properties", {}) or {}
+
+    for name, prop in properties.items():
+        metadata.append({
+            "name": name,
+            "type": prop.get("type", "any"),
+            "required": name in required_fields,
+            "description": prop.get("description", "") or "",
+            "default": prop.get("default"),
+        })
+
+    return metadata
+
+
 def generate_tool_catalog() -> List[ToolSpec]:
     """
     Generate tool catalog from existing LangChain tools.
@@ -178,6 +214,38 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Organize files into folders using LLM-driven categorization. Creates target folder automatically and moves/copies matching files. NO separate folder creation needed!"
         ),
+        "create_zip_archive": ToolSpec(
+            name="create_zip_archive",
+            kind="tool",
+            io={
+                "in": [
+                    "source_path: Optional[str]",
+                    "zip_name: Optional[str]",
+                    "include_pattern: Optional[str]",
+                    "include_extensions: Optional[List[str]]",
+                    "exclude_extensions: Optional[List[str]]"
+                ],
+                "out": [
+                    "zip_path",
+                    "file_count",
+                    "total_size",
+                    "compressed_size",
+                    "compression_ratio",
+                    "source_path",
+                    "message"
+                ]
+            },
+            strengths=[
+                "Flexible filtering with glob patterns and extension allow/deny lists",
+                "Defaults to primary document directory when source_path is omitted",
+                "Returns archive statistics (file count, size, compression ratio)"
+            ],
+            limits=[
+                "Operates within the configured document directory",
+                "Does not bundle sub-folder creation (combine with organize_files if needed)"
+            ],
+            description="Create ZIP archives with optional filename pattern and extension filters."
+        ),
         # Browser Tools (Separate Hierarchy)
         "google_search": ToolSpec(
             name="google_search",
@@ -297,6 +365,58 @@ def generate_tool_catalog() -> List[ToolSpec]:
                 "Best for analysis/reasoning tasks"
             ],
             description="LlamaIndex worker for complex atomic tasks and RAG"
+        ),
+        "plan_trip_with_stops": ToolSpec(
+            name="plan_trip_with_stops",
+            kind="maps_tool",
+            io={
+                "in": ["origin: str", "destination: str", "num_fuel_stops: int", "num_food_stops: int", "departure_time: Optional[str]", "use_google_maps: bool", "open_maps: bool"],
+                "out": ["origin", "destination", "stops", "departure_time", "maps_url", "maps_service", "num_fuel_stops", "num_food_stops", "total_stops", "maps_opened", "message"]
+            },
+            strengths=[
+                "LLM-driven stop location suggestions (NO hardcoded routes)",
+                "Handles multiple fuel and food stops",
+                "Supports departure time for traffic-aware routing",
+                "ALWAYS returns Maps URL in https://maps.apple.com/ format (browser/UI compatible)",
+                "URL format automatically converted from maps:// to https://maps.apple.com/ if needed",
+                "Returns simple, clean message: 'Here's your trip, enjoy: [URL]' (no verbose reasoning chain)",
+                "Optional automatic Maps opening (open_maps parameter)",
+                "Apple Maps URL is default (opens in macOS Maps app, supports waypoints)",
+                "Uses AppleScript automation (MapsAutomation) for native macOS integration",
+                "Falls back to URL method if AppleScript fails",
+                "Google Maps URL available as alternative (opens in browser)",
+                "Automatic route optimization using LLM geographic knowledge",
+                "Orchestrator extracts Maps URL to top level for easy access"
+            ],
+            limits=[
+                "Maximum ~20 total stops (fuel + food combined) - reasonable limit, but LLM can suggest optimal number",
+                "Stop locations determined by LLM (may vary based on route knowledge)",
+                "Requires valid origin and destination locations",
+                "Works for routes worldwide - no geographic limitations"
+            ],
+            description="Plan a road trip with fuel and food stops. ALL parameters must be extracted from user's natural language query using LLM reasoning. Handles variations like 'LA' → 'Los Angeles, CA', '2 gas stops' → num_fuel_stops=2, 'lunch and dinner' → num_food_stops=2. Returns simple response with Maps URL - no verbose reasoning chain shown to user."
+        ),
+        "open_maps_with_route": ToolSpec(
+            name="open_maps_with_route",
+            kind="maps_tool",
+            io={
+                "in": ["origin: str", "destination: str", "stops: Optional[List[str]]"],
+                "out": ["status", "maps_url", "message"]
+            },
+            strengths=[
+                "Opens Apple Maps app directly on macOS using AppleScript",
+                "Uses MapsAutomation class for native macOS integration",
+                "Supports routes with multiple waypoints",
+                "Can optionally start navigation automatically",
+                "Falls back to URL method if AppleScript fails",
+                "Direct integration with macOS Maps application"
+            ],
+            limits=[
+                "macOS only",
+                "Requires Maps app to be installed",
+                "Waypoints limited by Maps app capabilities"
+            ],
+            description="Open Apple Maps application with a specific route. Use after plan_trip_with_stops to display the route in Maps app."
         )
     }
 
@@ -304,12 +424,20 @@ def generate_tool_catalog() -> List[ToolSpec]:
     for tool in ALL_AGENT_TOOLS:
         tool_name = tool.name
         if tool_name in tool_mappings:
-            catalog.append(tool_mappings[tool_name])
+            spec = tool_mappings[tool_name]
+            spec.parameters = _build_parameter_metadata(tool)
+            catalog.append(spec)
             logger.debug(f"Added tool to catalog: {tool_name}")
+        else:
+            logger.debug(f"Tool '{tool_name}' not in catalog mapping; skipping")
 
     # Always add the LlamaIndex worker
     if "llamaindex_worker" not in [t.name for t in catalog]:
-        catalog.append(tool_mappings["llamaindex_worker"])
+        spec = tool_mappings["llamaindex_worker"]
+        spec.parameters = _build_parameter_metadata(
+            next((tool for tool in ALL_AGENT_TOOLS if tool.name == "llamaindex_worker"), None)
+        )
+        catalog.append(spec)
 
     logger.info(f"Generated tool catalog with {len(catalog)} tools")
     return catalog
@@ -326,6 +454,26 @@ def get_tool_specs_as_dicts(catalog: List[ToolSpec]) -> List[Dict[str, Any]]:
         List of tool specification dictionaries
     """
     return [tool.to_dict() for tool in catalog]
+
+
+def build_tool_parameter_index() -> Dict[str, Dict[str, Any]]:
+    """
+    Build parameter metadata for all registered tools.
+
+    Returns:
+        Mapping of tool_name -> {"parameters": [...], "required": [...], "optional": [...]}
+    """
+    index: Dict[str, Dict[str, Any]] = {}
+
+    for tool in ALL_AGENT_TOOLS:
+        params = _build_parameter_metadata(tool)
+        index[tool.name] = {
+            "parameters": params,
+            "required": [p["name"] for p in params if p.get("required")],
+            "optional": [p["name"] for p in params if not p.get("required")],
+        }
+
+    return index
 
 
 def format_tool_catalog_for_prompt(catalog: List[ToolSpec]) -> str:
@@ -346,6 +494,15 @@ def format_tool_catalog_for_prompt(catalog: List[ToolSpec]) -> str:
 
         lines.append(f"**Inputs:** {', '.join(tool.io['in'])}")
         lines.append(f"**Outputs:** {', '.join(tool.io['out'])}\n")
+
+        if tool.parameters:
+            lines.append("**Parameters:**")
+            for param in tool.parameters:
+                requirement = "REQUIRED" if param.get("required") else "optional"
+                param_type = param.get("type") or "any"
+                desc = param.get("description") or ""
+                lines.append(f"  - {param['name']} ({requirement}, {param_type}): {desc}")
+            lines.append("")
 
         lines.append("**Strengths:**")
         for strength in tool.strengths:

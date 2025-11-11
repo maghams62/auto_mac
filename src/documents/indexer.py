@@ -93,29 +93,42 @@ class DocumentIndexer:
             logger.error(f"Error getting embedding: {e}")
             raise
 
-    def index_documents(self, folders: Optional[List[str]] = None) -> int:
+    def index_documents(self, folders: Optional[List[str]] = None, cancel_event=None) -> int:
         """
         Index all documents in specified folders.
 
         Args:
-            folders: List of folder paths to index (uses config if None)
+            folders: List of folder paths to index. If None, uses folders from config.yaml.
+                     IMPORTANT: Only folders specified in config.yaml will be indexed.
+            cancel_event: Optional asyncio.Event to signal cancellation
 
         Returns:
             Number of documents indexed
         """
+        # Always use config folders - ignore any passed folders parameter for /index command
+        # This ensures /index only indexes what's configured in config.yaml
         if folders is None:
             folders = self.config['documents']['folders']
+            logger.info(f"Using folders from config.yaml: {folders}")
+        else:
+            # If folders are explicitly passed (e.g., from report_agent), use them
+            logger.info(f"Using explicitly provided folders: {folders}")
 
         # Expand paths
         folders = [os.path.expanduser(folder) for folder in folders]
 
-        logger.info(f"Starting indexing for folders: {folders}")
+        logger.info(f"Starting indexing for {len(folders)} folder(s): {folders}")
 
         # Find all supported documents
         supported_types = self.config['documents']['supported_types']
         all_files = []
 
         for folder in folders:
+            # Check for cancellation during file discovery
+            if cancel_event and cancel_event.is_set():
+                logger.info("Indexing cancelled during file discovery")
+                return 0
+                
             folder_path = Path(folder)
             if not folder_path.exists():
                 logger.warning(f"Folder not found: {folder}")
@@ -130,6 +143,11 @@ class DocumentIndexer:
         indexed_count = 0
 
         for file_path in tqdm(all_files, desc="Indexing documents"):
+            # Check for cancellation before processing each file
+            if cancel_event and cancel_event.is_set():
+                logger.info(f"Indexing cancelled after processing {indexed_count} documents")
+                return indexed_count
+                
             try:
                 # Parse document
                 parsed_doc = self.parser.parse_document(str(file_path))
@@ -142,6 +160,11 @@ class DocumentIndexer:
                 chunks = self._create_chunks(parsed_doc)
 
                 for chunk in chunks:
+                    # Check for cancellation before each embedding call
+                    if cancel_event and cancel_event.is_set():
+                        logger.info(f"Indexing cancelled during chunk processing")
+                        return indexed_count
+                    
                     # Get embedding
                     embedding = self.get_embedding(chunk['content'])
 

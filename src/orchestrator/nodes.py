@@ -29,9 +29,11 @@ class PlannerNode:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.2  # Lower temperature for structured planning
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.2,  # Lower temperature for structured planning
+            api_key=openai_config.get("api_key")
         )
 
     def __call__(self, state: OrchestratorState) -> OrchestratorState:
@@ -173,9 +175,11 @@ class EvaluatorNode:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0  # Deterministic evaluation
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.0,  # Deterministic evaluation
+            api_key=openai_config.get("api_key")
         )
 
     def validate_plan(self, state: OrchestratorState) -> OrchestratorState:
@@ -616,9 +620,11 @@ class SynthesisNode:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.3
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.3,
+            api_key=openai_config.get("api_key")
         )
 
     def __call__(self, state: OrchestratorState) -> OrchestratorState:

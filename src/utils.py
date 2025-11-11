@@ -10,18 +10,50 @@ from typing import Dict, Any
 from dotenv import load_dotenv, find_dotenv
 
 
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = "config.yaml", use_global_manager: bool = True) -> Dict[str, Any]:
     """
-    Load configuration from YAML file.
+    Load configuration from YAML file or global ConfigManager.
+
+    If global ConfigManager is available, uses it for hot-reload support.
+    Otherwise, falls back to reading from file.
 
     Args:
-        config_path: Path to config file
+        config_path: Path to config file (used if global manager not available)
+        use_global_manager: If True, try to use global ConfigManager first
 
     Returns:
         Configuration dictionary
     """
+    # Try to use global ConfigManager if available (for hot-reload)
+    if use_global_manager:
+        try:
+            from .config_manager import get_global_config_manager
+            manager = get_global_config_manager(config_path)
+            return manager.get_config()
+        except (ImportError, AttributeError):
+            # ConfigManager not initialized yet, fall back to file
+            pass
+
+    # Fallback to file-based loading
     # Ensure environment variables are available (loads .env once if present)
-    load_dotenv(find_dotenv(), override=False)
+    # Always prioritize the project-local .env so the value the developer edits wins.
+    project_root = Path(__file__).resolve().parent.parent
+    explicit_env = project_root / ".env"
+    dotenv_loaded = False
+
+    if explicit_env.exists():
+        load_dotenv(explicit_env, override=True)
+        dotenv_loaded = True
+
+    if not dotenv_loaded:
+        env_path = find_dotenv(usecwd=True)
+        if env_path:
+            load_dotenv(env_path, override=True)
+            dotenv_loaded = True
+
+    if not dotenv_loaded:
+        # Fallback: attempt default loading without overriding existing values
+        load_dotenv(override=False)
 
     config_path = Path(config_path)
 
@@ -88,6 +120,35 @@ def setup_logging(config: Dict[str, Any]):
     # Reduce noise from some libraries
     logging.getLogger('openai').setLevel(logging.WARNING)
     logging.getLogger('httpx').setLevel(logging.WARNING)
+
+
+def save_config(config: Dict[str, Any], config_path: str = "config.yaml") -> None:
+    """
+    Save configuration to YAML file.
+    
+    Uses ruamel.yaml if available to preserve comments and structure,
+    otherwise falls back to standard yaml library.
+    
+    Args:
+        config: Configuration dictionary to save
+        config_path: Path to config file
+    """
+    config_path = Path(config_path)
+    
+    try:
+        # Try to use ruamel.yaml for better YAML preservation
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        yaml.width = 4096  # Prevent line wrapping
+        
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f)
+    except ImportError:
+        # Fallback to standard yaml library
+        import yaml
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
 def ensure_directories():

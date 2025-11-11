@@ -46,10 +46,24 @@ class KeynoteComposer:
         logger.info(f"Creating Keynote presentation: {title}")
 
         try:
+            # Validate slide image paths exist (defensive programming)
+            import os
+            validated_slides = []
+            for i, slide in enumerate(slides):
+                validated_slide = slide.copy()
+                if 'image_path' in slide and slide['image_path']:
+                    image_path = slide['image_path']
+                    if os.path.exists(image_path) and os.path.isfile(image_path):
+                        validated_slide['image_path'] = image_path
+                    else:
+                        logger.warning(f"[KEYNOTE] Slide {i+1} image not found, removing: {image_path}")
+                        validated_slide.pop('image_path', None)
+                validated_slides.append(validated_slide)
+
             # Build AppleScript
             script = self._build_applescript(
                 title=title,
-                slides=slides,
+                slides=validated_slides,
                 output_path=output_path,
             )
 
@@ -75,6 +89,10 @@ class KeynoteComposer:
                     pass
 
             if result.returncode == 0:
+                output = result.stdout.strip()
+                if "Error:" in output:
+                    logger.error(f"Keynote AppleScript error: {output}")
+                    return False
                 logger.info("Keynote presentation created successfully")
                 return True
             else:
@@ -108,21 +126,24 @@ class KeynoteComposer:
             output_path = str(Path(output_path).expanduser().resolve())
 
         script_parts = [
-            'tell application "Keynote"',
-            '    activate',
-            '    set newDoc to make new document',
-            '    delay 0.5',
-            '    tell newDoc',
+            'try',
+            '    tell application "Keynote"',
+            '        activate',
+            '        set newDoc to make new document',
+            '        delay 0.5',
+            '        tell newDoc',
         ]
 
         # Add title slide
         script_parts.extend([
-            '        -- Set up title slide',
-            '        tell slide 1',
-            '            try',
-            f'                set object text of default title item to "{title}"',
-            '            end try',
-            '        end tell',
+            '            -- Set up title slide',
+            '            tell slide 1',
+            '                try',
+            f'                    set object text of default title item to "{title}"',
+            '                on error',
+            '                    -- Skip if no default title item',
+            '                end try',
+            '            end tell',
         ])
 
         # Add content slides
@@ -141,36 +162,46 @@ class KeynoteComposer:
             if image_path:
                 escaped_image_path = self._escape_applescript_string(image_path)
                 script_parts.extend([
-                    f'            -- Add image to slide',
-                    f'            set imagePath to POSIX file "{escaped_image_path}"',
-                    '            try',
-                    '                set imgObj to make new image with properties {file:imagePath}',
-                    '                set width of imgObj to 900',
-                    '                set position of imgObj to {62, 120}',
-                    '            on error errMsg',
-                    '                -- If sizing fails, keep Keynote defaults',
-                    '            end try',
+                    f'                -- Add image to slide',
+                    f'                set imagePath to POSIX file "{escaped_image_path}"',
+                    '                try',
+                    '                    set imgObj to make new image with properties {file:imagePath}',
+                    '                    set width of imgObj to 900',
+                    '                    set position of imgObj to {62, 120}',
+                    '                on error errMsg',
+                    '                    -- If sizing fails, keep Keynote defaults',
+                    '                end try',
                 ])
             else:
                 script_parts.extend([
-                    '            try',
-                    f'                set object text of default title item to "{slide_title}"',
-                    '            end try',
-                    '            try',
-                    f'                set object text of default body item to "{slide_content}"',
-                    '            end try',
+                    '                try',
+                    f'                    set object text of default title item to "{slide_title}"',
+                    '                on error',
+                    '                    -- Skip if no title item',
+                    '                end try',
+                    '                try',
+                    f'                    set object text of default body item to "{slide_content}"',
+                    '                on error',
+                    '                    -- Skip if no body item',
+                    '                end try',
                 ])
 
             script_parts.append('        end tell')
 
         # Save if path provided
-        script_parts.append('    end tell')
+        script_parts.append('        end tell')
 
         if output_path:
             escaped_path = self._escape_applescript_string(output_path)
-            script_parts.append(f'    save newDoc in POSIX file "{escaped_path}"')
+            script_parts.append(f'        save newDoc in POSIX file "{escaped_path}"')
 
-        script_parts.append('end tell')
+        script_parts.extend([
+            '    end tell',
+            '    return "Success"',
+            'on error errMsg',
+            '    return "Error: " & errMsg',
+            'end try'
+        ])
 
         return '\n'.join(script_parts)
 

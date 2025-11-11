@@ -12,6 +12,7 @@ from enum import Enum
 
 from ..agent import ALL_AGENT_TOOLS
 from ..agent.verifier import OutputVerifier
+from .tools_catalog import build_tool_parameter_index
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class PlanExecutor:
 
         # Initialize tools (all agent tools)
         self.tools = {tool.name: tool for tool in ALL_AGENT_TOOLS}
+        self.tool_parameters = build_tool_parameter_index()
         logger.info(f"Executor initialized with {len(self.tools)} tools from all agents")
 
         # Initialize verifier if enabled
@@ -232,10 +234,18 @@ class PlanExecutor:
             Step result dictionary
         """
         action = step.get("action")
-        parameters = step.get("parameters", {})
+        parameters = step.get("parameters") or {}
+        if not isinstance(parameters, dict):
+            return {
+                "error": True,
+                "error_type": "InvalidParameters",
+                "error_message": f"Parameters for '{action}' must be an object/dict, got {type(parameters).__name__}",
+                "retry_possible": False
+            }
 
         # Resolve parameter references
         resolved_params = self._resolve_parameters(parameters, state)
+        logger.info(f"[EXECUTOR] {action} parameters -> raw={parameters}, resolved={resolved_params}")
 
         # Get the tool
         tool = self.tools.get(action)
@@ -246,6 +256,12 @@ class PlanExecutor:
                 "error_message": f"Tool '{action}' not found",
                 "retry_possible": False
             }
+
+        # Validate required parameters before invocation
+        validation_error = self._validate_parameters(action, resolved_params)
+        if validation_error:
+            logger.error(f"[EXECUTOR] Parameter validation failed for {action}: {validation_error['error_message']}")
+            return validation_error
 
         # Execute the tool
         try:
@@ -310,6 +326,54 @@ class PlanExecutor:
                 resolved[key] = value
 
         return resolved
+
+    def _validate_parameters(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Ensure required parameters are populated before executing a tool.
+
+        Args:
+            tool_name: Tool being executed
+            parameters: Resolved parameters for the tool
+
+        Returns:
+            None if validation passes, else structured error payload
+        """
+        param_meta = self.tool_parameters.get(tool_name, {})
+        required_params: List[str] = param_meta.get("required") or []
+
+        if not required_params:
+            return None
+
+        missing: List[str] = []
+        for param in required_params:
+            if param not in parameters:
+                missing.append(param)
+                continue
+
+            value = parameters.get(param)
+            if value is None:
+                missing.append(param)
+            elif isinstance(value, str) and not value.strip():
+                missing.append(param)
+
+        if missing:
+            missing_sorted = sorted(set(missing))
+            return {
+                "error": True,
+                "error_type": "MissingParameters",
+                "error_message": (
+                    f"Missing required parameters for '{tool_name}': "
+                    f"{', '.join(missing_sorted)}"
+                ),
+                "retry_possible": False,
+                "missing_parameters": missing_sorted,
+            }
+
+        return None
 
     def _check_dependencies(
         self,

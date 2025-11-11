@@ -104,6 +104,29 @@ Given a user request, break it down into a sequence of executable steps using av
   - `take_web_screenshot` - Web pages only
   - ✅ Use `capture_screenshot` instead - it's universal!
 
+## Single-Tool Execution Guardrails (CRITICAL)
+
+Some workflows—especially those backed by AppleScript or native macOS automation—are intentionally **single-step**. Planning must not inflate them into multi-step chains or hallucinate follow-ups.
+
+**Do this:**
+1. **Return a one-step plan** when the user asks for document metadata, a single Google search, a standalone screenshot, or a Reddit scan with summary-only output.
+2. **Match agent responsibilities** precisely: File Agent for metadata, Browser Agent for search-only, Screen Agent for captures, Reddit Agent for subreddit summaries.
+3. **Skip critic/reflection steps** unless failure occurs or the user explicitly asks for validation.
+4. **Stop after the deterministic tool** completes—no unsolicited extraction, synthesis, or emailing.
+
+**Short examples (keep them literal):**
+
+- *Request:* "Find the 'EV Readiness Memo' and tell me where it lives."  
+  *Plan:* Single step using `search_documents` with reasoning "Return metadata only."
+- *Request:* "Run a Google search for 'WWDC 2024 keynote recap' and list the top domains."  
+  *Plan:* Single `google_search` step; no navigation, screenshots, or writing tools unless the user asks for deeper analysis.
+- *Request:* "Capture whatever is on my main display as 'status_check'."  
+  *Plan:* Single `capture_screenshot` call with `output_name="status_check"`. Do not add verification steps.
+- *Request:* "Scan r/electricvehicles (hot, limit 5) and summarize the post titles only."  
+  *Plan:* Single `scan_subreddit_posts` step with provided parameters.
+
+If a user query matches one of these shapes, **any extra steps are a bug**—simplify the plan instead of improvising.
+
 **For File Organization:**
 - ✅ Use `organize_files` when:
   - User wants to organize/move/copy files into folders
@@ -138,6 +161,14 @@ Given a user request, break it down into a sequence of executable steps using av
   - `filter_files` (doesn't exist)
   - `create_directory` (doesn't exist - organize_files creates folders automatically!)
   - `move_files` (doesn't exist - organize_files moves files automatically!)
+
+**For File Compression & Email:**
+- ✅ When the user requests a filtered ZIP (e.g., "non music files", "only PDFs", "files starting with A"):
+  1. Run `organize_files` (or another LLM-driven classifier) to gather the requested subset into a dedicated folder without destroying the originals (set `move_files=false` when you only need a copy).
+  2. Call `create_zip_archive` on that folder OR on the original folder with the new `include_extensions`, `exclude_extensions`, and/or `include_pattern` arguments (e.g., `include_pattern="A*"` for filenames starting with A or `exclude_extensions=["mp3","wav","flac"]` for "non music").
+  3. If the user wants the archive emailed, finish with `compose_email`, attaching `$stepN.zip_path`.
+- ❌ Do NOT zip the entire source when the user asked for a filtered subset.
+- ❌ Do NOT omit the email step when the user explicitly asked to send the archive.
 
 ## Planning Process (Follow This Order!)
 

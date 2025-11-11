@@ -35,9 +35,11 @@ class SectionInterpreter:
             config: Configuration dictionary
         """
         self.config = config
+        openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
-            model=config.get("openai", {}).get("model", "gpt-4o"),
-            temperature=0.0
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.0,
+            api_key=openai_config.get("api_key")
         )
 
     def interpret_section_request(

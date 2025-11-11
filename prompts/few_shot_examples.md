@@ -10,8 +10,21 @@
 - **Ticker Discovery Rule:** Unless the user explicitly provides a ticker symbol (e.g., "MSFT"), ALWAYS run the Browser Agent sequence (search → navigate → extract) on allowlisted finance domains to confirm the ticker before invoking stock tools.
 - **Screen Agent (visual desktop):** `capture_screenshot` (focused window only)
 - **Stock Agent:** `get_stock_price`, `get_stock_history`, `capture_stock_chart`, `compare_stocks`
+- **Maps Agent (trip planning):** `plan_trip_with_stops`, `open_maps_with_route`
 
 Reference this hierarchy when picking tools—if a capability lives in a specific agent, route the plan through that agent’s tools.
+
+### Single-Step Patterns (Plan → Execute → Verify Loop)
+Some requests are intentionally one-and-done. Mirror these micro-patterns exactly so planning, execution, and verification stay aligned:
+
+| User Request | Plan (single step) | Execution Expectation | Verification |
+|--------------|--------------------|-----------------------|--------------|
+| "Find the 'EV Readiness Memo' and tell me where it lives." | `search_documents` with the query only. | Return top doc metadata; stop. | Skip critic unless the user explicitly asked for validation. |
+| "Run a Google search for 'WWDC 2024 keynote recap' and list the top domains." | `google_search` (no navigation). | Provide the domains from search results; no extra steps. | No reflection/critic unless search fails. |
+| "Capture whatever is on my main display as 'status_check'." | `capture_screenshot` with `output_name`. | Produce screenshot path; do not follow with other tools. | Only re-plan if capture fails. |
+| "Scan r/electricvehicles (hot, limit 5) and summarize the titles." | `scan_subreddit_posts` with sort + limit. | Summarize the titles from the returned payload. | Critic is optional—only call it on demand. |
+
+If your plan has more than one step for these shapes, revise before execution. Deterministic AppleScript-backed tools should not trigger verification loops unless something goes wrong.
 
 ### 1. Capability Assessment (MUST DO BEFORE PLANNING!)
 **BEFORE creating any plan, verify you have the necessary tools:**
@@ -1859,6 +1872,449 @@ Tools:
 - **`concise`** - For summaries and slide decks (key points only)
 - **`comparative`** - For comparing sources (highlight differences/similarities)
 - **`chronological`** - For timelines and sequential content
+
+---
+
+## Example 13: MAPS AGENT - Simple Trip with Fuel Stops (NEW!)
+
+### User Request
+"Plan a trip from New York to Los Angeles with 3 fuel stops"
+
+### Decomposition
+```json
+{
+  "goal": "Plan route from New York to Los Angeles with 3 fuel stops and open Maps",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "New York, NY",
+        "destination": "Los Angeles, CA",
+        "num_fuel_stops": 3,
+        "num_food_stops": 0,
+        "departure_time": null,
+        "use_google_maps": false,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "Plan trip with 3 fuel stops. Maps will open automatically (open_maps=true by default)",
+      "expected_output": "Route with 3 fuel stops, Maps URL, and Apple Maps opened automatically"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Maps Agent Pattern**
+- ✅ Use `plan_trip_with_stops` for ALL trip planning (it's the PRIMARY tool)
+- ✅ `open_maps` defaults to `true` - Maps opens automatically
+- ✅ LLM automatically suggests optimal fuel stop locations along the route
+- ✅ Returns `maps_url` (always provided) and `maps_opened` status
+- ✅ Works for ANY route worldwide (not limited to US)
+
+---
+
+## Example 14: MAPS AGENT - Trip with Food Stops (NEW!)
+
+### User Request
+"Plan a trip from San Francisco to San Diego with stops for breakfast and lunch"
+
+### Decomposition
+```json
+{
+  "goal": "Plan route with 2 food stops (breakfast and lunch)",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "San Francisco, CA",
+        "destination": "San Diego, CA",
+        "num_fuel_stops": 0,
+        "num_food_stops": 2,
+        "departure_time": null,
+        "use_google_maps": false,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User wants breakfast and lunch stops = 2 food stops. LLM will suggest optimal locations",
+      "expected_output": "Route with 2 food stops, Maps URL, Apple Maps opened"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Food Stops Pattern**
+- ✅ Count food stops: "breakfast and lunch" = 2 food stops
+- ✅ "breakfast, lunch, and dinner" = 3 food stops
+- ✅ LLM suggests optimal cities/towns along route for meals
+- ✅ No hardcoded locations - LLM uses geographic knowledge
+
+---
+
+## Example 15: MAPS AGENT - Trip with Fuel and Food Stops (NEW!)
+
+### User Request
+"Plan a trip from Los Angeles to Las Vegas with 2 gas stops and a lunch stop, leaving at 8 AM"
+
+### Decomposition
+```json
+{
+  "goal": "Plan route with fuel stops, food stop, and departure time",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "Los Angeles, CA",
+        "destination": "Las Vegas, NV",
+        "num_fuel_stops": 2,
+        "num_food_stops": 1,
+        "departure_time": "8:00 AM",
+        "use_google_maps": false,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "2 fuel stops + 1 food stop = 3 total stops. Departure time helps with traffic-aware routing",
+      "expected_output": "Route with stops, departure time, Maps URL, Apple Maps opened"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Combined Stops Pattern**
+- ✅ Count fuel stops separately: "2 gas stops" = `num_fuel_stops: 2`
+- ✅ Count food stops separately: "a lunch stop" = `num_food_stops: 1`
+- ✅ Departure time format: "8 AM" → "8:00 AM" (flexible parsing)
+- ✅ Total stops = fuel + food (e.g., 2 + 1 = 3 stops)
+
+---
+
+## Example 16: MAPS AGENT - Trip Planning with Google Maps (NEW!)
+
+### User Request
+"Plan a trip from Seattle to Portland with 2 fuel stops using Google Maps"
+
+### Decomposition
+```json
+{
+  "goal": "Plan route using Google Maps instead of Apple Maps",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "Seattle, WA",
+        "destination": "Portland, OR",
+        "num_fuel_stops": 2,
+        "num_food_stops": 0,
+        "departure_time": null,
+        "use_google_maps": true,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User explicitly requested Google Maps. Opens in browser instead of Maps app",
+      "expected_output": "Route with stops, Google Maps URL, opens in browser"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Maps Service Selection**
+- ✅ Default: `use_google_maps: false` → Apple Maps (native macOS integration)
+- ✅ If user requests Google Maps: `use_google_maps: true` → Opens in browser
+- ✅ Apple Maps preferred for macOS (better integration, AppleScript automation)
+- ✅ Google Maps available as alternative (better waypoint support for complex routes)
+
+---
+
+## Example 17: MAPS AGENT - Open Maps with Existing Route (NEW!)
+
+### User Request
+"Open Maps with a route from Chicago to Detroit via Toledo"
+
+### Decomposition
+```json
+{
+  "goal": "Open Maps app with specific route and waypoints",
+  "steps": [
+    {
+      "id": 1,
+      "action": "open_maps_with_route",
+      "parameters": {
+        "origin": "Chicago, IL",
+        "destination": "Detroit, MI",
+        "stops": ["Toledo, OH"],
+        "start_navigation": false
+      },
+      "dependencies": [],
+      "reasoning": "User wants to open Maps with specific route. Use open_maps_with_route when route is already known",
+      "expected_output": "Apple Maps opened with route, waypoint shown"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: open_maps_with_route Pattern**
+- ✅ Use `open_maps_with_route` when route/stops are already known
+- ✅ Use `plan_trip_with_stops` when you need LLM to suggest stops
+- ✅ `stops` parameter: List of waypoint locations (e.g., `["Toledo, OH", "Cleveland, OH"]`)
+- ✅ `start_navigation: false` = Just open directions (default)
+- ✅ `start_navigation: true` = Automatically start navigation
+
+---
+
+## Example 18: MAPS AGENT - Complex Trip Planning (NEW!)
+
+### User Request
+"Plan a cross-country trip from Boston to San Francisco with 5 fuel stops, breakfast, lunch, and dinner stops, leaving tomorrow at 6 AM"
+
+### Decomposition
+```json
+{
+  "goal": "Plan complex cross-country route with multiple stops and departure time",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "Boston, MA",
+        "destination": "San Francisco, CA",
+        "num_fuel_stops": 5,
+        "num_food_stops": 3,
+        "departure_time": "6:00 AM",
+        "use_google_maps": false,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "5 fuel + 3 food = 8 total stops. LLM will suggest optimal locations across the country. Departure time helps with traffic routing",
+      "expected_output": "Route with 8 stops distributed across cross-country route, Maps URL, Apple Maps opened"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**CRITICAL: Complex Trip Planning**
+- ✅ Supports any reasonable number of stops (typically 0-20 total)
+- ✅ LLM distributes stops evenly along route
+- ✅ Works for ANY route worldwide (not just US)
+- ✅ Departure time helps with traffic-aware routing
+- ✅ LLM uses geographic knowledge - no hardcoded routes
+
+---
+
+## Example 19: MAPS AGENT - Trip Planning Without Opening Maps (NEW!)
+
+### User Request
+"Plan a trip from Miami to Key West with 1 fuel stop and give me the link"
+
+### Decomposition
+```json
+{
+  "goal": "Plan route and return URL without opening Maps",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "Miami, FL",
+        "destination": "Key West, FL",
+        "num_fuel_stops": 1,
+        "num_food_stops": 0,
+        "departure_time": null,
+        "use_google_maps": false,
+        "open_maps": false
+      },
+      "dependencies": [],
+      "reasoning": "User wants 'the link' = URL only, not auto-opening. Set open_maps=false",
+      "expected_output": "Route with 1 fuel stop, Maps URL in response (maps_opened: false)"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: open_maps Parameter**
+- ✅ `open_maps: true` (default) → Automatically opens Maps app/browser
+- ✅ `open_maps: false` → Returns URL only, doesn't open Maps
+- ✅ Use `false` when user says "give me the link" or "just the URL"
+- ✅ Use `true` when user says "open it in Maps" or "show me the route"
+- ✅ Maps URL is ALWAYS provided in response, regardless of `open_maps` value
+
+---
+
+## Example 20: MAPS AGENT - International Trip Planning (NEW!)
+
+### User Request
+"Plan a trip from London to Paris with 2 fuel stops"
+
+### Decomposition
+```json
+{
+  "goal": "Plan international route with fuel stops",
+  "steps": [
+    {
+      "id": 1,
+      "action": "plan_trip_with_stops",
+      "parameters": {
+        "origin": "London, UK",
+        "destination": "Paris, France",
+        "num_fuel_stops": 2,
+        "num_food_stops": 0,
+        "departure_time": null,
+        "use_google_maps": false,
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "International route - LLM handles geographic knowledge for any country. Works worldwide",
+      "expected_output": "Route with 2 fuel stops between London and Paris, Maps URL, Apple Maps opened"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: International Routes**
+- ✅ Works for ANY route worldwide (not limited to US)
+- ✅ LLM uses geographic knowledge for international routes
+- ✅ No hardcoded geographic assumptions
+- ✅ Supports cities in any country (UK, France, Germany, Japan, etc.)
+
+---
+
+## Example 21: FILE AGENT - Zip Non-Music Files and Email (NEW!)
+
+### User Request
+"Zip all the non-music files into a folder called study_stuff and email the zip to me."
+
+### Decomposition
+```json
+{
+  "goal": "Collect non-music files as study_stuff, zip them, and email the archive",
+  "steps": [
+    {
+      "id": 1,
+      "action": "organize_files",
+      "parameters": {
+        "category": "non-music study files",
+        "target_folder": "study_stuff",
+        "move_files": false
+      },
+      "dependencies": [],
+      "reasoning": "LLM-driven categorization copies only the non-music files into the study_stuff folder",
+      "expected_output": "Filtered study_stuff folder containing non-music files"
+    },
+    {
+      "id": 2,
+      "action": "create_zip_archive",
+      "parameters": {
+        "source_path": "study_stuff",
+        "zip_name": "study_stuff.zip",
+        "exclude_extensions": ["mp3", "wav", "flac", "m4a"]
+      },
+      "dependencies": [1],
+      "reasoning": "Create a ZIP archive of the curated folder while guarding against music extensions",
+      "expected_output": "ZIP archive path"
+    },
+    {
+      "id": 3,
+      "action": "compose_email",
+      "parameters": {
+        "recipient": null,
+        "subject": "study_stuff.zip",
+        "body": "Attached is the study_stuff archive (non-music files).",
+        "attachments": ["$step2.zip_path"],
+        "send": false
+      },
+      "dependencies": [2],
+      "reasoning": "Draft the email with the ZIP attached so the user can send it",
+      "expected_output": "Email draft with ZIP attached"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+---
+
+## Maps Agent Tool Selection Decision Tree
+
+### When to Use Each Tool
+
+**Use `plan_trip_with_stops` when:**
+- ✅ User wants to plan a trip with stops
+- ✅ User specifies number of fuel/food stops needed
+- ✅ You need LLM to suggest optimal stop locations
+- ✅ User provides origin and destination
+
+**Use `open_maps_with_route` when:**
+- ✅ Route and stops are already known/determined
+- ✅ User wants to open Maps with specific waypoints
+- ✅ You have a pre-planned route to display
+
+### Parameter Extraction Guide
+
+**Origin/Destination:**
+- Extract from query: "from X to Y" → `origin: "X"`, `destination: "Y"`
+- Handle abbreviations: "LA" → "Los Angeles, CA", "NYC" → "New York, NY"
+- International: "London" → "London, UK", "Paris" → "Paris, France"
+
+**Fuel Stops:**
+- "3 fuel stops" → `num_fuel_stops: 3`
+- "2 gas stops" → `num_fuel_stops: 2`
+- "one fuel stop" → `num_fuel_stops: 1`
+- "no fuel stops" → `num_fuel_stops: 0`
+
+**Food Stops:**
+- "breakfast and lunch" → `num_food_stops: 2`
+- "breakfast, lunch, and dinner" → `num_food_stops: 3`
+- "a lunch stop" → `num_food_stops: 1`
+- "no food stops" → `num_food_stops: 0`
+
+**Departure Time:**
+- "leaving at 8 AM" → `departure_time: "8:00 AM"`
+- "departure at 7:30 PM" → `departure_time: "7:30 PM"`
+- "tomorrow at 6 AM" → `departure_time: "6:00 AM"` (or parse relative date)
+- Flexible format parsing supported
+
+**Maps Service:**
+- Default: `use_google_maps: false` (Apple Maps)
+- If user says "Google Maps" → `use_google_maps: true`
+- If user says "Apple Maps" → `use_google_maps: false` (explicit)
+
+**Auto-Open:**
+- Default: `open_maps: true` (opens automatically)
+- If user says "give me the link" → `open_maps: false`
+- If user says "open it in Maps" → `open_maps: true`
+- If user says "show me the route" → `open_maps: true`
+
+### Common Patterns
+
+**Simple Trip:**
+```
+plan_trip_with_stops(origin, destination, num_fuel_stops=X, open_maps=true)
+```
+
+**Trip with Food:**
+```
+plan_trip_with_stops(origin, destination, num_food_stops=X, open_maps=true)
+```
+
+**Complex Trip:**
+```
+plan_trip_with_stops(origin, destination, num_fuel_stops=X, num_food_stops=Y, departure_time="...", open_maps=true)
+```
+
+**Open Existing Route:**
+```
+open_maps_with_route(origin, destination, stops=[...], start_navigation=false)
+```
 
 ### Step 6: Final Checklist
 

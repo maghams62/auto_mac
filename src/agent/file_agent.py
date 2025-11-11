@@ -293,10 +293,10 @@ def organize_files(
     logger.info(f"[FILE AGENT] Tool: organize_files(category='{category}', target='{target_folder}')")
 
     try:
-        from automation.file_organizer import FileOrganizer
-        from utils import load_config
-        from documents.search import SemanticSearch
-        from documents import DocumentIndexer
+        from src.automation.file_organizer import FileOrganizer
+        from src.utils import load_config
+        from src.documents.search import SemanticSearch
+        from src.documents import DocumentIndexer
 
         config = load_config()
         organizer = FileOrganizer(config)
@@ -350,9 +350,11 @@ def organize_files(
 
 @tool
 def create_zip_archive(
-    source_path: str,
-    zip_name: str,
-    include_pattern: str = "*"
+    source_path: Optional[str] = None,
+    zip_name: str = "archive.zip",
+    include_pattern: str = "*",
+    include_extensions: Optional[List[str]] = None,
+    exclude_extensions: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Create a ZIP archive from files or folders.
@@ -364,14 +366,16 @@ def create_zip_archive(
         source_path: Path to file or folder to compress (can be relative to document_directory)
         zip_name: Name of the output ZIP file (with or without .zip extension)
         include_pattern: Optional glob pattern to filter files (default: "*" = all files)
+        include_extensions: Optional list[str] of extensions (without dot) to include (e.g., ["pdf", "txt"])
+        exclude_extensions: Optional list[str] of extensions to exclude (e.g., ["mp3", "wav"])
 
     Returns:
         Dictionary with zip_path, file_count, and total_size
 
     Examples:
         - Zip entire folder: create_zip_archive("test_data", "backup.zip")
-        - Zip only PDFs: create_zip_archive("test_data", "pdfs.zip", "*.pdf")
-        - Zip specific folder: create_zip_archive("test_data/misc_folder", "misc_archive.zip")
+        - Zip only PDFs: create_zip_archive("test_data", "pdfs.zip", include_extensions=["pdf"])
+        - Zip everything except music: create_zip_archive("test_data", "study_stuff.zip", exclude_extensions=["mp3", "wav", "flac"])
     """
     logger.info(f"[FILE AGENT] Tool: create_zip_archive(source='{source_path}', zip='{zip_name}')")
 
@@ -380,7 +384,7 @@ def create_zip_archive(
         import os
         from pathlib import Path
         import fnmatch
-        from utils import load_config
+        from ..utils import load_config
 
         config = load_config()
 
@@ -388,18 +392,17 @@ def create_zip_archive(
         if not zip_name.endswith('.zip'):
             zip_name += '.zip'
 
-        # Resolve source path
+        # Resolve source path (default to document directory if not provided)
         doc_dir = config.get('document_directory', './test_data')
+        source_path = source_path or doc_dir
 
         # Make path absolute
         if os.path.isabs(source_path):
             source_path = os.path.abspath(source_path)
         else:
-            # Check if it's relative to current dir first
             if os.path.exists(source_path):
                 source_path = os.path.abspath(source_path)
             else:
-                # Try relative to document directory
                 source_path = os.path.abspath(os.path.join(doc_dir, source_path))
 
         if not os.path.exists(source_path):
@@ -418,6 +421,23 @@ def create_zip_archive(
 
         zip_path = os.path.join(output_dir, zip_name)
 
+        include_set = {ext.lower().lstrip('.') for ext in (include_extensions or []) if ext}
+        exclude_set = {ext.lower().lstrip('.') for ext in (exclude_extensions or []) if ext}
+
+        def should_include(file_name: str) -> bool:
+            if not fnmatch.fnmatch(file_name, include_pattern):
+                return False
+
+            ext = os.path.splitext(file_name)[1].lower().lstrip('.')
+
+            if include_set and ext not in include_set:
+                return False
+
+            if exclude_set and ext in exclude_set:
+                return False
+
+            return True
+
         # Create ZIP archive
         file_count = 0
         total_size = 0
@@ -425,7 +445,7 @@ def create_zip_archive(
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             if os.path.isfile(source_path):
                 # Single file
-                if fnmatch.fnmatch(os.path.basename(source_path), include_pattern):
+                if should_include(os.path.basename(source_path)):
                     zipf.write(source_path, os.path.basename(source_path))
                     file_count = 1
                     total_size = os.path.getsize(source_path)
@@ -434,7 +454,7 @@ def create_zip_archive(
                 # Directory - walk and add files
                 for root, dirs, files in os.walk(source_path):
                     for file in files:
-                        if fnmatch.fnmatch(file, include_pattern):
+                        if should_include(file):
                             file_path = os.path.join(root, file)
                             # Archive name preserves directory structure
                             arcname = os.path.relpath(file_path, source_path)
@@ -461,6 +481,10 @@ def create_zip_archive(
             "total_size": total_size,
             "compressed_size": os.path.getsize(zip_path),
             "compression_ratio": round((1 - os.path.getsize(zip_path) / total_size) * 100, 1) if total_size > 0 else 0,
+            "include_pattern": include_pattern,
+            "included_extensions": sorted(include_set) if include_set else None,
+            "excluded_extensions": sorted(exclude_set) if exclude_set else None,
+            "source_path": source_path,
             "message": f"Created ZIP archive with {file_count} files"
         }
 
@@ -474,6 +498,193 @@ def create_zip_archive(
         }
 
 
+@tool
+def explain_folder(folder_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    List and explain all files in an authorized folder with brief descriptions.
+
+    FILE AGENT - LEVEL 1: File Explanation
+    Use this to get a high-level overview of files in a folder with 1-2 line explanations.
+
+    Args:
+        folder_path: Optional path to folder (must be in authorized folders from config).
+                     If None, lists files from all authorized folders.
+
+    Returns:
+        Dictionary with:
+        - files: List of file entries, each with file_path, file_name, file_type, explanation
+        - folder_path: The folder that was queried (or "all authorized folders")
+        - total_count: Number of files found
+
+    Security:
+        - Only operates on folders explicitly allowed in config.yaml (documents.folders)
+        - Validates folder_path against authorized paths
+    """
+    logger.info(f"[FILE AGENT] Tool: explain_folder(folder_path='{folder_path}')")
+
+    try:
+        from ..documents import DocumentIndexer
+        from ..utils import load_config
+        from pathlib import Path
+        import os
+
+        config = load_config()
+        indexer = DocumentIndexer(config)
+
+        # Get authorized folders from config
+        authorized_folders = config.get('documents', {}).get('folders', [])
+        if not authorized_folders:
+            return {
+                "error": True,
+                "error_type": "ConfigError",
+                "error_message": "No authorized folders configured in config.yaml",
+                "retry_possible": False
+            }
+
+        # Expand paths
+        authorized_folders = [os.path.expanduser(f) for f in authorized_folders]
+
+        # If folder_path provided, validate it's authorized
+        target_folder = None
+        if folder_path:
+            folder_path = os.path.expanduser(folder_path)
+            folder_path = os.path.abspath(folder_path)
+
+            # Check if folder_path is within any authorized folder
+            is_authorized = False
+            for auth_folder in authorized_folders:
+                auth_folder = os.path.abspath(auth_folder)
+                try:
+                    # Check if folder_path is within auth_folder
+                    Path(folder_path).relative_to(auth_folder)
+                    is_authorized = True
+                    target_folder = folder_path
+                    break
+                except ValueError:
+                    # Not a subpath, continue checking
+                    continue
+
+            if not is_authorized:
+                return {
+                    "error": True,
+                    "error_type": "UnauthorizedPath",
+                    "error_message": f"Folder '{folder_path}' is not in authorized folders. Authorized: {authorized_folders}",
+                    "retry_possible": False
+                }
+
+        # Get all indexed files
+        if not indexer.documents:
+            return {
+                "error": True,
+                "error_type": "NoIndexError",
+                "error_message": "No files indexed. Run indexing first.",
+                "retry_possible": False
+            }
+
+        # Collect unique files (group by file_path)
+        file_map = {}
+        for doc_chunk in indexer.documents:
+            file_path = doc_chunk['file_path']
+            
+            # Filter by folder if specified
+            if target_folder:
+                try:
+                    Path(file_path).relative_to(target_folder)
+                except ValueError:
+                    continue  # Skip files not in target folder
+
+            if file_path not in file_map:
+                file_map[file_path] = {
+                    'file_path': file_path,
+                    'file_name': doc_chunk['file_name'],
+                    'file_type': doc_chunk['file_type'],
+                    'chunks': []
+                }
+            
+            # Collect content previews from chunks
+            file_map[file_path]['chunks'].append(doc_chunk.get('content', '')[:500])
+
+        # Generate explanations using LLM
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        openai_config = config.get("openai", {})
+        llm = ChatOpenAI(
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=0.3,
+            api_key=openai_config.get("api_key")
+        )
+
+        explained_files = []
+        for file_path, file_info in sorted(file_map.items()):
+            # Combine chunk previews for context
+            content_preview = '\n\n'.join(file_info['chunks'])[:2000]  # Limit to avoid token limits
+            
+            # Generate explanation
+            prompt = f"""Provide a brief 1-2 sentence explanation of what this file is about.
+
+File: {file_info['file_name']}
+Type: {file_info['file_type']}
+Content preview: {content_preview[:1000]}
+
+Respond with ONLY the explanation, no additional text."""
+
+            try:
+                messages = [
+                    SystemMessage(content="You provide concise file descriptions. Respond with 1-2 sentences only."),
+                    HumanMessage(content=prompt)
+                ]
+                response = llm.invoke(messages)
+                explanation = response.content.strip()
+            except Exception as e:
+                logger.warning(f"[FILE AGENT] Error generating explanation for {file_info['file_name']}: {e}")
+                explanation = f"{file_info['file_type'].upper()} file"
+
+            explained_files.append({
+                'file_path': file_path,
+                'file_name': file_info['file_name'],
+                'file_type': file_info['file_type'],
+                'explanation': explanation
+            })
+
+        return {
+            "files": explained_files,
+            "folder_path": target_folder or "all authorized folders",
+            "total_count": len(explained_files)
+        }
+
+    except Exception as e:
+        logger.error(f"[FILE AGENT] Error in explain_folder: {e}")
+        return {
+            "error": True,
+            "error_type": "ExplanationError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def explain_files() -> Dict[str, Any]:
+    """
+    List and explain all indexed/authorized files with brief descriptions.
+
+    FILE AGENT - LEVEL 1: File Explanation
+    Use this to get a high-level overview of all files you have access to with 1-2 line explanations.
+
+    Returns:
+        Dictionary with:
+        - files: List of file entries, each with file_path, file_name, file_type, explanation
+        - total_count: Number of files found
+
+    Security:
+        - Only returns files from folders explicitly allowed in config.yaml (documents.folders)
+    """
+    logger.info(f"[FILE AGENT] Tool: explain_files()")
+
+    # Reuse explain_folder with no folder_path to get all files
+    return explain_folder.invoke({"folder_path": None})
+
+
 # File Agent Tool Registry
 FILE_AGENT_TOOLS = [
     search_documents,
@@ -481,6 +692,8 @@ FILE_AGENT_TOOLS = [
     take_screenshot,
     organize_files,
     create_zip_archive,
+    explain_folder,
+    explain_files,
 ]
 
 
@@ -489,8 +702,10 @@ FILE_AGENT_HIERARCHY = """
 File Agent Hierarchy:
 ====================
 
-LEVEL 1: Document Discovery
+LEVEL 1: Document Discovery & Explanation
 └─ search_documents → Find relevant documents using semantic search
+└─ explain_folder → List and explain files in a folder (1-2 line descriptions)
+└─ explain_files → List and explain all indexed files (1-2 line descriptions)
 
 LEVEL 2: Content Extraction
 └─ extract_section → Extract specific sections from documents
@@ -505,10 +720,11 @@ LEVEL 5: Compression
 └─ create_zip_archive → Create ZIP archives from files/folders
 
 Typical Workflow:
-1. search_documents(query) → Find document
-2. extract_section(doc_path, section) → Extract content
-3. [Optional] take_screenshot(doc_path, pages) → Capture images
-4. [Optional] organize_files(category, folder) → Organize files
+1. explain_files() or explain_folder(path) → Get overview of available files
+2. search_documents(query) → Find specific document
+3. extract_section(doc_path, section) → Extract content
+4. [Optional] take_screenshot(doc_path, pages) → Capture images
+5. [Optional] organize_files(category, folder) → Organize files
 """
 
 

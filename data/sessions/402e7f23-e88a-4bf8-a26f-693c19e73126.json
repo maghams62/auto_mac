@@ -1,0 +1,62 @@
+{
+  "session_id": "402e7f23-e88a-4bf8-a26f-693c19e73126",
+  "status": "active",
+  "created_at": "2025-11-10T14:49:13.109664",
+  "last_active_at": "2025-11-10T14:49:20.993545",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-10T14:49:20.993545",
+      "user_request": "/email send an email to spamstuff062@gmail.com saying HIIIIIIII",
+      "agent_response": {
+        "goal": "Send an email to spamstuff062@gmail.com with the message 'HIIIIIIII'",
+        "steps_executed": 1,
+        "results": {
+          "1": {
+            "status": "sent",
+            "message": "Email sent successfully"
+          }
+        },
+        "status": "success"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Hello",
+            "body": "HIIIIIIII",
+            "recipient": "spamstuff062@gmail.com",
+            "attachments": [],
+            "send": true
+          },
+          "dependencies": [],
+          "reasoning": "Compose and send an email with the specified message to the given recipient.",
+          "expected_output": "Email sent to spamstuff062@gmail.com"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "status": "sent",
+          "message": "Email sent successfully"
+        }
+      },
+      "metadata": {
+        "goal": "Send an email to spamstuff062@gmail.com with the message 'HIIIIIIII'",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 1,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

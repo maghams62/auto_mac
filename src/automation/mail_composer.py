@@ -54,12 +54,30 @@ class MailComposer:
             # Add signature to body
             full_body = body + self.signature
 
-            # Handle attachments
+            # Handle attachments with validation
             all_attachments = []
+            invalid_attachments = []
+
             if attachment_path:
                 all_attachments.append(attachment_path)
             if attachment_paths:
                 all_attachments.extend(attachment_paths)
+
+            # Validate all attachment paths exist
+            import os
+            validated_attachments = []
+            for att_path in all_attachments:
+                if os.path.exists(att_path) and os.path.isfile(att_path):
+                    validated_attachments.append(att_path)
+                else:
+                    logger.warning(f"[MAIL COMPOSER] Attachment file not found, skipping: {att_path}")
+                    invalid_attachments.append(att_path)
+
+            # Log warning if some attachments were invalid
+            if invalid_attachments:
+                logger.warning(f"[MAIL COMPOSER] {len(invalid_attachments)} attachment(s) not found: {invalid_attachments}")
+
+            all_attachments = validated_attachments
 
             # Build AppleScript
             script = self._build_applescript(
