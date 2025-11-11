@@ -1,0 +1,38 @@
+{
+  "session_id": "256bee0d-6249-457c-af7a-a96c316a27c1",
+  "status": "active",
+  "created_at": "2025-11-11T11:20:33.888703",
+  "last_active_at": "2025-11-11T11:20:47.265077",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T11:20:47.265077",
+      "user_request": "send all duplicated docs in my folder to my email",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: Missing required capabilities: document duplication detection. The available tools can search, extract, and organize files, but there is no tool to identify duplicated documents. To complete this request, a 'detect_duplicates' tool would be necessary, which is not available in the current system.",
+        "missing_capabilities": "Missing required capabilities: document duplication detection. The available tools can search, extract, and organize files, but there is no tool to identify duplicated documents. To complete this request, a 'detect_duplicates' tool would be necessary, which is not available in the current system."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

@@ -131,7 +131,7 @@ class SlashCommandParser:
     AGENT_DESCRIPTIONS = {
         "file": "Handle file operations: search, organize, zip, screenshots",
         "folder": "Folder management: list, organize, rename files (LLM-driven, sandboxed)",
-        "google": "Google search via official API (fast, structured results, no browser)",
+        "google": "DuckDuckGo web search (legacy name), fast structured results without a browser",
         "browser": "Web browsing: search Google, navigate URLs, extract content",
         "presentation": "Create presentations: Keynote, Pages documents",
         "email": "Read, compose, send, and summarize emails via Mail.app",
@@ -951,15 +951,30 @@ class SlashCommandHandler:
             return remainder, extracted
 
         # Posting
-        for prefix in ("post", "publish", "send"):
+        for prefix in ("post", "publish", "send", "tweet"):
             if lower.startswith(prefix + " "):
                 message = text[len(prefix):].strip()
                 if not message:
                     raise ValueError("Provide a message to post, e.g. /bluesky post \"Hello Bluesky\"")
+                # Handle "-" separator (e.g., "tweet - message here")
+                if message.startswith("-"):
+                    message = message[1:].strip()
                 quoted = _extract_quoted_text(message)
                 if quoted:
                     message = quoted
                 return "post", {"message": message.strip()}
+
+        # Check for "last N tweets" pattern - should trigger summary mode
+        last_tweets_match = re.search(r'\blast\s+(\d+)\s+(?:tweets?|posts?)', lower)
+        if last_tweets_match:
+            # Extract number of tweets/posts
+            num_items = int(last_tweets_match.group(1))
+            # Use summarize mode with the query
+            return "summary", {
+                "query": text,  # Pass full text so bluesky agent can parse it
+                "max_items": min(num_items, 10),
+                "lookback_hours": default_lookback
+            }
 
         # Summaries
         if lower.startswith(("summarize", "summary", "analyze")):
@@ -1237,14 +1252,14 @@ class SlashCommandHandler:
 
     def _get_llm_response_for_blocked_search(self, query: str, agent) -> str:
         """
-        Get LLM response when Google search is blocked.
-        
-        Uses LLM knowledge to provide helpful information about the query.
-        
+        Get an LLM response when DuckDuckGo search is unavailable.
+
+        Uses general knowledge to provide helpful information about the query.
+
         Args:
             query: The search query
             agent: Agent instance (to get config for API key)
-            
+
         Returns:
             Response string from LLM
         """
@@ -1268,7 +1283,7 @@ class SlashCommandHandler:
             # Create prompt for LLM to provide information
             prompt = f"""The user asked: "{query}"
 
-Google search is currently blocked/not returning results. Based on your knowledge, please provide helpful information about this topic. 
+DuckDuckGo search is currently blocked/not returning results. Based on your knowledge, please provide helpful information about this topic. 
 
 If the query is about trending topics or current events, provide general information about what's typically trending, or explain that real-time trending data requires access to Google Trends or other live sources.
 
@@ -1284,11 +1299,14 @@ Be helpful and informative, but note that this is based on general knowledge rat
             
         except Exception as e:
             logger.warning(f"[SLASH COMMAND] Failed to get LLM response for blocked search: {e}")
-            return f"I searched Google for '{query}', but Google appears to be blocking automated requests. Please try using /browse for browser-based search or visit Google Trends: https://trends.google.com"
+            return (
+                f"I attempted a DuckDuckGo search for '{query}', but automated access appears to be blocked. "
+                "Please try using /browse for browser-based search or visit https://duckduckgo.com directly."
+            )
 
     def _summarize_google_results(self, search_results: List[Dict], query: str, agent) -> Optional[str]:
         """
-        Summarize Google search results using LLM.
+        Summarize DuckDuckGo search results using LLM.
         
         Args:
             search_results: List of search result dictionaries
@@ -1325,7 +1343,7 @@ Be helpful and informative, but note that this is based on general knowledge rat
             ])
             
             # Create summarization prompt
-            summary_prompt = f"""Based on the following Google search results for "{query}", provide a concise summary of what's trending or what the key information is.
+            summary_prompt = f"""Based on the following DuckDuckGo search results for "{query}", provide a concise summary of what's trending or what the key information is.
 
 Search Results:
 {results_text}
@@ -1461,7 +1479,7 @@ Use LLM reasoning to parse values from the task description."""
                         "num_results": 0,
                         "total_results": 0,
                         "search_type": result.get("search_type", "web"),
-                        "note": "Both Google search methods failed, but I've provided information based on your query."
+                        "note": "Both DuckDuckGo search attempts failed, but I've provided information based on your query."
                     }
 
             return result
@@ -1498,7 +1516,7 @@ Use LLM reasoning to parse values from the task description."""
                             "num_results": 0,
                             "total_results": 0,
                             "search_type": result.get("search_type", "web"),
-                            "note": "Google search was blocked, but I've provided information based on your query."
+                            "note": "DuckDuckGo search was blocked, but I've provided information based on your query."
                         }
                 
                 return result

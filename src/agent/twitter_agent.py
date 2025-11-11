@@ -19,6 +19,50 @@ from ..integrations.twitter_client import TwitterAPIClient, isoformat, TwitterAP
 logger = logging.getLogger(__name__)
 
 
+def _normalize_tweet(tweet: Dict[str, Any], users: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a tweet into a consistent format."""
+    author = users.get(tweet.get("author_id"), {})
+    username = author.get("username", "unknown")
+    author_name = author.get("name", username)
+
+    return {
+        "id": tweet.get("id"),
+        "text": tweet.get("text", ""),
+        "created_at": tweet.get("created_at"),
+        "score": _score_tweet(tweet.get("public_metrics", {})),
+        "author_name": author_name,
+        "author_handle": username,
+        "url": _build_tweet_url(username, tweet.get("id", "")),
+        "like_count": tweet.get("public_metrics", {}).get("like_count", 0),
+        "retweet_count": tweet.get("public_metrics", {}).get("retweet_count", 0),
+        "reply_count": tweet.get("public_metrics", {}).get("reply_count", 0),
+        "quote_count": tweet.get("public_metrics", {}).get("quote_count", 0),
+    }
+
+
+def _filter_by_time(tweets: List[Dict[str, Any]], lookback_hours: int) -> List[Dict[str, Any]]:
+    """Filter tweets by time window."""
+    if lookback_hours <= 0:
+        return tweets
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+
+    filtered = []
+    for tweet in tweets:
+        ts = tweet.get("created_at")
+        if not ts:
+            filtered.append(tweet)
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            filtered.append(tweet)
+            continue
+        if dt >= cutoff:
+            filtered.append(tweet)
+    return filtered
+
+
 def _score_tweet(metrics: Dict[str, Any]) -> float:
     if not metrics:
         return 0.0

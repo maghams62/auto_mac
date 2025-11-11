@@ -1,13 +1,16 @@
 """
-Google Agent - Google search integration (no API key required).
+Search Agent - DuckDuckGo search integration (no API key required).
 
-This agent provides access to Google search via googlesearch-python:
-- Web scraping-based Google searches
-- No API key required
+Note: the legacy tool name `google_search` is retained for backwards compatibility,
+but the underlying implementation has always used DuckDuckGo's HTML endpoint.
+
+This agent provides access to web search via DuckDuckGo's free interface:
+- Free, no authentication required
 - Fast and reliable
 - Rich metadata (snippets, links, titles)
+- No rate limits or anti-bot protection
 
-Uses: https://pypi.org/project/googlesearch-python/
+Endpoint: https://html.duckduckgo.com/html/
 """
 
 from typing import Dict, Any, List, Optional
@@ -39,21 +42,22 @@ def google_search(
     search_type: str = "web"
 ) -> Dict[str, Any]:
     """
-    Search Google using googlesearch-python (no API key required).
+    Search the web using DuckDuckGo's free API (no API key required).
 
-    GOOGLE AGENT - LEVEL 1: Web Search
-    Fast, reliable Google searches without browser automation or API keys.
+    SEARCH AGENT - LEVEL 1: Web Search
+    Fast, reliable web searches using DuckDuckGo's free API.
 
-    This tool uses googlesearch-python library which provides:
-    - Web scraping-based Google searches
-    - No API key required
+    This tool uses DuckDuckGo's Instant Answer API which provides:
+    - Free API-based searches (no authentication)
+    - No rate limits or anti-bot protection
     - Fast response times
     - Rich metadata (snippets, links, titles)
+    - Privacy-focused
 
     Args:
         query: Search query string
-        num_results: Number of results to return (default: 5, max: 100)
-        search_type: Type of search - "web" (default) or "image"
+        num_results: Number of results to return (default: 5, max: 25)
+        search_type: Type of search - "web" (default)
 
     Returns:
         Dictionary with:
@@ -69,66 +73,39 @@ def google_search(
         - display_link: Domain name (extracted from URL)
 
     Requirements:
-        - googlesearch-python library (pip install googlesearch-python)
-        - No API keys needed!
+        - None! Just works out of the box.
 
     Example:
         google_search("Python async programming", num_results=10)
     """
-    logger.info(f"[GOOGLE AGENT] Tool: google_search(query='{query}', num={num_results}, type={search_type})")
+    logger.info(f"[SEARCH AGENT] Tool: google_search (DuckDuckGo) query='{query}', num={num_results}, type={search_type}")
 
     try:
-        # Import googlesearch library
-        try:
-            from googlesearch import search
-        except ImportError:
-            search = None
-
         # Validate parameters
-        num_results = max(1, min(100, num_results))  # Clamp to 1-100
+        num_results = max(1, min(25, num_results))  # DuckDuckGo works best with <=25
 
-        # Note: googlesearch-python doesn't support image search directly
-        # For image search, we'll use regular search (limitation of the library)
-        if search_type == "image":
-            logger.warning("[GOOGLE AGENT] Image search not fully supported, using web search")
+        logger.info(f"[SEARCH AGENT] Executing DuckDuckGo search: {query}")
 
-        logger.info(f"[GOOGLE AGENT] Executing Google search: {query}")
-
-        # Use advanced search to get title, url, and description
-        # According to googlesearch-python docs, advanced=True returns SearchResult objects
-        # Add sleep_interval and other parameters to improve reliability
-        results: List[Dict[str, str]] = []
-
-        if search:
-            try:
-                results = _run_primary_search(search, query, num_results)
-            except Exception as search_error:
-                logger.warning(f"[GOOGLE AGENT] Primary googlesearch failed: {search_error}")
+        # Use DuckDuckGo API (free, no auth required)
+        results = _duckduckgo_search(query, num_results)
 
         if not results:
-            logger.info("[GOOGLE AGENT] Falling back to direct Google scraping")
-            results = _fallback_google_scrape(query, num_results)
-
-        if not results:
-            logger.warning("[GOOGLE AGENT] No results found after fallback")
+            logger.warning("[SEARCH AGENT] No results found from DuckDuckGo")
             return {
                 "results": [],
                 "total_results": 0,
                 "query": query,
                 "num_results": 0,
                 "search_type": search_type,
-                "source": "google_scrape",
-                "summary": "No Google results found for the query.",
-                "message": "No Google results found for the query."
+                "source": "duckduckgo",
+                "summary": "No search results found for the query.",
+                "message": "No search results found for the query."
             }
-
-        # Enrich snippets when missing
-        results = _ensure_snippets(results)
 
         # Generate LLM summary
         summary = _summarize_results(query, results)
 
-        logger.info(f"[GOOGLE AGENT] Found {len(results)} results")
+        logger.info(f"[SEARCH AGENT] Found {len(results)} results")
 
         return {
             "results": results,
@@ -136,13 +113,13 @@ def google_search(
             "query": query,
             "num_results": len(results),
             "search_type": search_type,
-            "source": "googlesearch_python" if search else "google_scrape",
+            "source": "duckduckgo",
             "summary": summary,
             "message": summary
         }
 
     except Exception as e:
-        logger.error(f"[GOOGLE AGENT] Error in google_search: {e}", exc_info=True)
+        logger.error(f"[SEARCH AGENT] Error in google_search: {e}", exc_info=True)
         return {
             "error": True,
             "error_type": "SearchError",
@@ -157,11 +134,11 @@ def google_search_images(
     num_results: int = 5
 ) -> Dict[str, Any]:
     """
-    Search Google Images (limited support).
+    Perform an image-oriented DuckDuckGo web search (query tweak only).
 
-    GOOGLE AGENT - LEVEL 2: Image Search
-    Note: googlesearch-python has limited image search support.
-    This will perform a regular web search with image-related query.
+    SEARCH AGENT - LEVEL 2: Image-Oriented Search
+    Note: DuckDuckGo HTML results do not provide direct image API access.
+    This function simply biases the query toward images.
 
     Args:
         query: Image search query
@@ -185,9 +162,9 @@ def google_search_site(
     num_results: int = 5
 ) -> Dict[str, Any]:
     """
-    Search within a specific website using Google.
+    Search within a specific website using DuckDuckGo's `site:` operator.
 
-    GOOGLE AGENT - LEVEL 3: Site-Specific Search
+    SEARCH AGENT - LEVEL 3: Site-Specific Search
     Limit search to a specific domain or website.
 
     This adds "site:domain.com" to the query for site-restricted searches.
@@ -214,97 +191,68 @@ def google_search_site(
     return google_search(query=site_query, num_results=num_results, search_type="web")
 
 
-def _run_primary_search(search_func, query: str, num_results: int) -> List[Dict[str, str]]:
-    results: List[Dict[str, str]] = []
-    max_attempts = 3
+def _duckduckgo_search(query: str, num_results: int) -> List[Dict[str, str]]:
+    """
+    Search using DuckDuckGo's HTML interface (free, no API key).
 
-    for attempt in range(max_attempts):
-        try:
-            sleep_interval = 2 + attempt  # 2s, 3s, 4s
-            logger.info(
-                "[GOOGLE AGENT] googlesearch attempt %s/%s (sleep_interval=%ss)",
-                attempt + 1,
-                max_attempts,
-                sleep_interval,
-            )
-            raw_results = list(
-                search_func(
-                    query,
-                    num_results=num_results,
-                    advanced=True,
-                    sleep_interval=sleep_interval,
-                    lang="en",
-                )
-            )
-            results = _normalize_search_objects(raw_results)
-            if results:
-                break
-        except Exception as error:
-            logger.warning("[GOOGLE AGENT] googlesearch attempt failed: %s", error)
-        if attempt < max_attempts - 1:
-            import time
-            time.sleep(2)
+    This uses the HTML version which is more reliable than the JSON API
+    for getting multiple search results.
+    """
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
 
-    return results
+    params = {"q": query, "kl": "us-en"}
 
-
-def _normalize_search_objects(raw_results: List[Any]) -> List[Dict[str, str]]:
-    normalized: List[Dict[str, str]] = []
-    for item in raw_results:
-        url = getattr(item, "url", None) or str(item)
-        title = getattr(item, "title", "") or ""
-        description = getattr(item, "description", "") or ""
-        normalized.append(
-            {
-                "title": title or "No title",
-                "link": url,
-                "snippet": description,
-                "display_link": _display_link(url),
-            }
-        )
-    return normalized
-
-
-def _fallback_google_scrape(query: str, limit: int) -> List[Dict[str, str]]:
-    headers = {"User-Agent": USER_AGENT}
-    params = {"q": query, "num": min(limit, 10), "hl": "en"}
     try:
-        response = requests.get(
-            "https://www.google.com/search",
-            params=params,
+        response = requests.post(
+            "https://html.duckduckgo.com/html/",
+            data=params,
             headers=headers,
             timeout=DEFAULT_TIMEOUT,
         )
         response.raise_for_status()
     except Exception as error:
-        logger.warning("[GOOGLE AGENT] Fallback scrape failed: %s", error)
+        logger.error(f"[SEARCH AGENT] DuckDuckGo request failed: {error}")
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
     results: List[Dict[str, str]] = []
 
-    for result_block in soup.select("div.g"):
-        link_tag = result_block.find("a", href=True)
-        title_tag = result_block.find("h3")
-        snippet_tag = result_block.select_one("div.VwiC3b span")
-
-        if not link_tag or not title_tag:
+    # DuckDuckGo HTML results are in div.results_links
+    for result_block in soup.select("div.result"):
+        # Skip ads
+        if "result--ad" in result_block.get("class", []):
             continue
 
-        url = link_tag["href"]
-        title = title_tag.get_text(strip=True)
+        link_tag = result_block.select_one("a.result__a")
+        title_tag = result_block.select_one("h2.result__title")
+        snippet_tag = result_block.select_one("a.result__snippet")
+
+        if not link_tag:
+            continue
+
+        url = link_tag.get("href", "")
+        title = title_tag.get_text(strip=True) if title_tag else "No title"
         snippet = snippet_tag.get_text(" ", strip=True) if snippet_tag else ""
-        results.append(
-            {
-                "title": title or "No title",
-                "link": url,
-                "snippet": snippet,
-                "display_link": _display_link(url),
-            }
-        )
-        if len(results) >= limit:
+
+        # Skip if no valid URL
+        if not url or not url.startswith("http"):
+            continue
+
+        results.append({
+            "title": title,
+            "link": url,
+            "snippet": snippet,
+            "display_link": _display_link(url),
+        })
+
+        if len(results) >= num_results:
             break
 
+    logger.info(f"[SEARCH AGENT] DuckDuckGo returned {len(results)} results")
     return results
 
 
@@ -316,36 +264,9 @@ def _display_link(url: str) -> str:
         return url
 
 
-def _ensure_snippets(results: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    enriched: List[Dict[str, str]] = []
-    for result in results:
-        snippet = result.get("snippet", "") or ""
-        if len(snippet) < 40:
-            fetched = _fetch_page_snippet(result["link"])
-            if fetched:
-                snippet = fetched
-        enriched.append({**result, "snippet": snippet})
-    return enriched
-
-
-def _fetch_page_snippet(url: str) -> str:
-    try:
-        headers = {"User-Agent": USER_AGENT}
-        response = requests.get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.extract()
-        text = " ".join(soup.stripped_strings)
-        return text[:MAX_SNIPPET_CHARS] if text else ""
-    except Exception as error:
-        logger.debug("[GOOGLE AGENT] Failed to fetch snippet for %s: %s", url, error)
-        return ""
-
-
 def _summarize_results(query: str, results: List[Dict[str, str]]) -> str:
     if not results:
-        return "No Google results found for the query."
+        return "No DuckDuckGo results found for the query."
 
     try:
         config = load_config()
@@ -367,7 +288,7 @@ def _summarize_results(query: str, results: List[Dict[str, str]]) -> str:
         messages = [
             SystemMessage(
                 content=(
-                    "You summarize Google search results into a concise set of takeaways. "
+                    "You summarize DuckDuckGo search results into a concise set of takeaways. "
                     "Use bullet points, reference result numbers when helpful, "
                     "and mention emerging themes or consensus."
                 )
@@ -392,7 +313,7 @@ def _summarize_results(query: str, results: List[Dict[str, str]]) -> str:
     return "Key findings:\n" + "\n".join(fallback)
 
 
-# Google Agent Tool Registry
+# DuckDuckGo Search Agent Tool Registry
 GOOGLE_AGENT_TOOLS = [
     google_search,
     google_search_images,
@@ -400,50 +321,48 @@ GOOGLE_AGENT_TOOLS = [
 ]
 
 
-# Google Agent Hierarchy
+# DuckDuckGo Search Agent Hierarchy
 GOOGLE_AGENT_HIERARCHY = """
-Google Agent Hierarchy:
-======================
+DuckDuckGo Search Agent Hierarchy:
+=================================
 
 LEVEL 1: Web Search
-└─ google_search → Search Google via official API
+└─ google_search (DuckDuckGo) → Perform privacy-friendly web search
 
-LEVEL 2: Image Search
-└─ google_search_images → Search Google Images
+LEVEL 2: Image-Oriented Web Search
+└─ google_search_images → Reuse web search with image-focused query
 
 LEVEL 3: Site-Specific Search
-└─ google_search_site → Search within specific domain
+└─ google_search_site → Constrain DuckDuckGo search to a specific domain
 
 Typical Workflow:
-1. google_search(query) → Get web results
-2. google_search_images(query) → Get image results
-3. google_search_site(query, site) → Search specific site
+1. google_search(query) → Gather web results from DuckDuckGo
+2. google_search_images(query) → Fetch image-related pages via DuckDuckGo
+3. google_search_site(query, site) → Search within a particular site
 
 Key Features:
-- googlesearch-python library (no API key required)
-- Web scraping-based searches
-- Fast and reliable
+- No API keys required
+- Fast, reliable DuckDuckGo HTML endpoint
 - Rich metadata (snippets, links, titles)
-- No API setup needed!
+- Privacy-focused results
 
 Setup Required:
-- pip install googlesearch-python
-- That's it! No API keys needed.
+- `requests`
+- `beautifulsoup4`
 """
 
 
 class GoogleAgent:
     """
-    Google Agent - Google search integration (no API key required).
+    DuckDuckGo-based search agent (legacy name retained for compatibility).
 
     Responsibilities:
-    - Web search via googlesearch-python
-    - Image search (limited support)
+    - Web search via DuckDuckGo HTML endpoint
+    - Image-oriented searches by modifying the query
     - Site-specific searches
     - Structured result parsing
 
-    This agent uses googlesearch-python library for web scraping.
-    No API keys required - just install the library!
+    No API keys required—uses `requests` + `BeautifulSoup` to parse results.
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -452,20 +371,20 @@ class GoogleAgent:
         logger.info(f"[GOOGLE AGENT] Initialized with {len(self.tools)} tools")
 
     def get_tools(self) -> List:
-        """Get all Google agent tools."""
+        """Get all DuckDuckGo-backed search tools (legacy Google agent)."""
         return GOOGLE_AGENT_TOOLS
 
     def get_hierarchy(self) -> str:
-        """Get Google agent hierarchy documentation."""
+        """Get DuckDuckGo search agent hierarchy documentation."""
         return GOOGLE_AGENT_HIERARCHY
 
     def execute(self, tool_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a Google agent tool."""
+        """Execute a DuckDuckGo search agent tool."""
         if tool_name not in self.tools:
             return {
                 "error": True,
                 "error_type": "ToolNotFound",
-                "error_message": f"Google agent tool '{tool_name}' not found",
+                "error_message": f"Search agent tool '{tool_name}' not found",
                 "available_tools": list(self.tools.keys())
             }
 

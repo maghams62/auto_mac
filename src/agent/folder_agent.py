@@ -231,6 +231,71 @@ def folder_organize_by_type(
 
 
 @tool
+def folder_find_duplicates(
+    folder_path: Optional[str] = None,
+    recursive: bool = False
+) -> Dict[str, Any]:
+    """
+    Find duplicate files by content hash (SHA-256).
+
+    FOLDER AGENT - LEVEL 2: Analysis (READ-ONLY)
+    Use this when user asks to find, list, or identify duplicate files.
+
+    This is a read-only operation that identifies files with identical
+    content by computing SHA-256 hashes. Files are grouped by hash,
+    and the tool reports wasted disk space.
+
+    Behavior:
+    - Compares files by content (not just name or size)
+    - Groups duplicates together with metadata
+    - Calculates wasted disk space
+    - Can search recursively or just top-level
+
+    Args:
+        folder_path: Path to analyze (defaults to sandbox root: test_data)
+        recursive: Search subdirectories (default: False, top-level only)
+
+    Returns:
+        Dictionary with:
+        - duplicates: List of duplicate groups (hash, size, count, files)
+        - total_duplicate_files: Total count of duplicate files
+        - total_duplicate_groups: Number of duplicate groups
+        - wasted_space_bytes: Total bytes wasted
+        - wasted_space_mb: Wasted space in MB
+
+    Security:
+        - All paths validated against sandbox
+        - No write operations performed
+        - Skips hidden files and directories
+
+    Example workflow:
+    1. User: "Find duplicate files in my folder"
+    2. Agent: folder_find_duplicates(folder_path=None, recursive=False)
+    3. Agent: Summarize results and present to user
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_find_duplicates(folder_path='{folder_path}', recursive={recursive})")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.find_duplicates(folder_path, recursive)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_find_duplicates: {e}")
+        return {
+            "error": True,
+            "error_type": "DuplicateDetectionError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
 def folder_check_sandbox(path: str) -> Dict[str, Any]:
     """
     Verify a path is within the allowed sandbox.
@@ -284,6 +349,7 @@ def folder_check_sandbox(path: str) -> Dict[str, Any]:
 FOLDER_AGENT_TOOLS = [
     folder_check_sandbox,  # Level 0: Security
     folder_list,           # Level 1: Discovery
+    folder_find_duplicates,  # Level 2: Analysis (Duplicate detection)
     folder_plan_alpha,     # Level 2: Planning
     folder_apply,          # Level 3: Execution (Renames)
     folder_organize_by_type,  # Level 3: Execution (Type-based moves)

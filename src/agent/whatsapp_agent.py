@@ -18,15 +18,24 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 import logging
 
-from ..utils import load_config
+from src.config import get_config_context
+from src.config_validator import ConfigValidationError
 from ..automation.whatsapp_controller import WhatsAppController
 
 logger = logging.getLogger(__name__)
 
 
+def _load_whatsapp_runtime():
+    """Load config and validated WhatsApp settings."""
+    context = get_config_context()
+    accessor = context.accessor
+    whatsapp_settings = accessor.get_whatsapp_config()
+    return context.data, accessor, whatsapp_settings
+
+
 def _get_controller() -> WhatsAppController:
     """Get WhatsApp controller instance."""
-    config = load_config()
+    config, _, _ = _load_whatsapp_runtime()
     return WhatsAppController(config)
 
 
@@ -128,7 +137,15 @@ def whatsapp_ensure_session() -> Dict[str, Any]:
     is running or authenticated. Returns details about session status.
     """
     logger.info("[WHATSAPP AGENT] Tool: whatsapp_ensure_session()")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.ensure_session()
 
 
@@ -145,7 +162,15 @@ def whatsapp_navigate_to_chat(
         is_group: Whether this is a group chat (default: False)
     """
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_navigate_to_chat(contact='{contact_name}', is_group={is_group})")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.navigate_to_chat(contact_name, is_group)
 
 
@@ -164,7 +189,15 @@ def whatsapp_read_messages(
         is_group: Whether this is a group chat (default: False)
     """
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_read_messages(contact='{contact_name}', limit={limit}, is_group={is_group})")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.read_messages(contact_name, limit=limit, is_group=is_group)
 
 
@@ -183,7 +216,15 @@ def whatsapp_read_messages_from_sender(
         limit: Maximum number of messages to return (default: 20)
     """
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_read_messages_from_sender(contact='{contact_name}', sender='{sender_name}', limit={limit})")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.read_messages_from_sender(contact_name, sender_name, limit=limit, is_group=True)
 
 
@@ -200,7 +241,15 @@ def whatsapp_read_group_messages(
         limit: Maximum number of messages to return (most recent, default: 20)
     """
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_read_group_messages(group='{group_name}', limit={limit})")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.read_messages(group_name, limit=limit, is_group=True)
 
 
@@ -212,7 +261,15 @@ def whatsapp_detect_unread() -> Dict[str, Any]:
     Returns a list of chats that have unread indicators.
     """
     logger.info("[WHATSAPP AGENT] Tool: whatsapp_detect_unread()")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.detect_unread_chats()
 
 
@@ -224,7 +281,15 @@ def whatsapp_list_chats() -> Dict[str, Any]:
     Returns a list of all chats/groups visible in the chat list.
     """
     logger.info("[WHATSAPP AGENT] Tool: whatsapp_list_chats()")
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     return controller.get_chat_list()
 
 
@@ -245,16 +310,24 @@ def whatsapp_summarize_messages(
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_summarize_messages(contact='{contact_name}', is_group={is_group}, limit={limit})")
     
     try:
-        config = load_config()
-    except Exception as exc:
+        config, _, _ = _load_whatsapp_runtime()
+    except ConfigValidationError as exc:
         return {
             "error": True,
-            "error_type": "ConfigError",
-            "error_message": f"Unable to load configuration: {exc}",
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
             "retry_possible": False,
         }
     
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     read_result = controller.read_messages(contact_name, limit=limit, is_group=is_group)
     
     if read_result.get("error"):
@@ -299,16 +372,24 @@ def whatsapp_extract_action_items(
     logger.info(f"[WHATSAPP AGENT] Tool: whatsapp_extract_action_items(contact='{contact_name}', is_group={is_group}, limit={limit})")
     
     try:
-        config = load_config()
-    except Exception as exc:
+        config, _, _ = _load_whatsapp_runtime()
+    except ConfigValidationError as exc:
         return {
             "error": True,
-            "error_type": "ConfigError",
-            "error_message": f"Unable to load configuration: {exc}",
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
             "retry_possible": False,
         }
     
-    controller = _get_controller()
+    try:
+        controller = _get_controller()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
     read_result = controller.read_messages(contact_name, limit=limit, is_group=is_group)
     
     if read_result.get("error"):
@@ -418,4 +499,3 @@ class WhatsAppAgent:
                 "error_message": str(exc),
                 "retry_possible": False
             }
-

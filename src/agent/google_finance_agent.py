@@ -36,8 +36,8 @@ def search_google_finance_stock(company: str) -> Dict[str, Any]:
     logger.info(f"[GOOGLE FINANCE AGENT] Searching for: {company}")
 
     try:
-        from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.automation.web_browser import SyncWebBrowser
+        from src.utils import load_config
 
         config = load_config()
         # Use non-headless mode with realistic user agent to avoid CAPTCHAs
@@ -200,8 +200,8 @@ def extract_google_finance_data(url: str) -> Dict[str, Any]:
     logger.info(f"[GOOGLE FINANCE AGENT] Extracting data from: {url}")
 
     try:
-        from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.automation.web_browser import SyncWebBrowser
+        from src.utils import load_config
 
         config = load_config()
         browser = SyncWebBrowser(config, headless=False)
@@ -392,8 +392,8 @@ def capture_google_finance_chart(url: str, output_name: Optional[str] = None) ->
     logger.info(f"[GOOGLE FINANCE AGENT] Capturing chart from: {url}")
 
     try:
-        from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.automation.web_browser import SyncWebBrowser
+        from src.utils import load_config
         from pathlib import Path
 
         config = load_config()
@@ -572,7 +572,7 @@ def create_stock_report_from_google_finance(company: str, output_format: str = "
         else:
             # Create PDF report
             from automation.report_generator import ReportGenerator
-            from utils import load_config
+            from src.utils import load_config
 
             config = load_config()
             report_gen = ReportGenerator(config)

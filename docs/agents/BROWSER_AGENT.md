@@ -161,7 +161,7 @@ return {
 
 Browser tools are registered with a distinct `kind`:
 ```python
-"google_search": ToolSpec(
+"google_search": ToolSpec(  # DuckDuckGo-backed search
     name="google_search",
     kind="browser_tool",  # Different from "tool"
     io={...},
@@ -180,7 +180,7 @@ This allows the planner to:
 ### Network Errors
 ```python
 try:
-    result = browser.google_search(query)
+    result = browser.google_search(query)  # DuckDuckGo HTML endpoint
 except Exception as e:
     return {
         "error": True,

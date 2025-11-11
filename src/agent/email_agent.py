@@ -16,7 +16,23 @@ from langchain_core.tools import tool
 import logging
 from datetime import datetime
 
+from src.config import get_config_context
+from src.config_validator import ConfigValidationError
+
 logger = logging.getLogger(__name__)
+
+
+def _load_email_runtime():
+    """
+    Load config, accessor, and email settings for email operations.
+
+    Raises:
+        ConfigValidationError if required email settings are missing.
+    """
+    context = get_config_context()
+    accessor = context.accessor
+    email_settings = accessor.get_email_config()
+    return context.data, accessor, email_settings
 
 
 @tool
@@ -45,22 +61,44 @@ def compose_email(
     """
     logger.info(f"[EMAIL AGENT] Tool: compose_email(subject='{subject}', recipient='{recipient}', send={send})")
 
+    # Validate email content
+    if not body or not body.strip():
+        if not attachments or len(attachments) == 0:
+            logger.error("[EMAIL AGENT] ⚠️  VALIDATION FAILED: Email has empty body and no attachments!")
+            return {
+                "error": True,
+                "error_type": "ValidationError",
+                "error_message": "Email must have either body content or attachments (both cannot be empty)",
+                "retry_possible": True
+            }
+        else:
+            logger.warning("[EMAIL AGENT] Email body is empty but attachments are present - proceeding")
+
+    if attachments:
+        logger.info(f"[EMAIL AGENT] Email has {len(attachments)} attachment(s): {attachments}")
+
     try:
         from src.automation import MailComposer
-        from src.utils import load_config
 
-        config = load_config()
-        
+        try:
+            config, _, email_settings = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.error(f"[EMAIL AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
+
         # Handle "email to me" logic - use default recipient if recipient is None or contains "me"
         if recipient is None or not recipient or recipient.lower().strip() in ["me", "my email", "to me", "myself"]:
-            default_recipient = config.get('email', {}).get('default_recipient')
-            if default_recipient:
-                recipient = default_recipient
+            if email_settings.default_recipient:
+                recipient = email_settings.default_recipient
                 logger.info(f"[EMAIL AGENT] Using default recipient: {recipient}")
-            elif recipient is None or not recipient:
-                # If no default configured and recipient is None, create draft
-                logger.info("[EMAIL AGENT] No recipient specified and no default configured - creating draft")
-        
+            else:
+                logger.info("[EMAIL AGENT] No default recipient configured - creating draft without recipient")
+
         mail_composer = MailComposer(config)
 
         success = mail_composer.compose_email(
@@ -119,15 +157,20 @@ def read_latest_emails(
 
     try:
         from src.automation import MailReader
-        from src.utils import load_config
-        from src.config_validator import ConfigAccessor
 
-        config = load_config()
-        config_accessor = ConfigAccessor(config)
-        email_config = config_accessor.get_email_config()
+        try:
+            config, _, email_settings = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.error(f"[EMAIL AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
 
         # SECURITY: Get configured account to constrain email reading
-        account_email = email_config.get("account_email")
+        account_email = email_settings.account_email
         if not account_email:
             logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
 
@@ -184,15 +227,20 @@ def read_emails_by_sender(
 
     try:
         from src.automation import MailReader
-        from src.utils import load_config
-        from src.config_validator import ConfigAccessor
 
-        config = load_config()
-        config_accessor = ConfigAccessor(config)
-        email_config = config_accessor.get_email_config()
+        try:
+            config, _, email_settings = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.error(f"[EMAIL AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
 
         # SECURITY: Get configured account to constrain email reading
-        account_email = email_config.get("account_email")
+        account_email = email_settings.account_email
         if not account_email:
             logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
 
@@ -251,15 +299,20 @@ def read_emails_by_time(
 
     try:
         from src.automation import MailReader
-        from src.utils import load_config
-        from src.config_validator import ConfigAccessor
 
-        config = load_config()
-        config_accessor = ConfigAccessor(config)
-        email_config = config_accessor.get_email_config()
+        try:
+            config, _, email_settings = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.error(f"[EMAIL AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
 
         # SECURITY: Get configured account to constrain email reading
-        account_email = email_config.get("account_email")
+        account_email = email_settings.account_email
         if not account_email:
             logger.warning("[EMAIL AGENT] No account_email configured - reading may not be constrained!")
 
@@ -316,9 +369,18 @@ def reply_to_email(
 
     try:
         from src.automation import MailComposer
-        from src.utils import load_config
 
-        config = load_config()
+        try:
+            config, _, _ = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.error(f"[EMAIL AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
+
         mail_composer = MailComposer(config)
 
         # Add "Re: " prefix if not already present

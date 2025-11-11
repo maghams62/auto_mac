@@ -1,0 +1,17 @@
+# Testing Methodology Reminder
+
+⚠️ CRITICAL: All feature testing MUST follow browser-based UI testing methodology.
+
+See TESTING_METHODOLOGY.md for complete workflow.
+
+Quick checklist:
+- [ ] Start API server and frontend
+- [ ] Navigate to http://localhost:3000 in browser
+- [ ] Execute command/feature in actual UI
+- [ ] Verify results appear correctly
+- [ ] Check for proper error messages (never "Unknown error")
+- [ ] Use browser automation tools
+- [ ] Document results with snapshots
+- [ ] Clean up test servers
+
+Never skip browser testing!

@@ -2,11 +2,12 @@
 Browser Agent - Handles all web browsing operations.
 
 This agent is responsible for:
-- Web search (Google)
 - URL navigation
 - Content extraction with langextract
 - Screenshot capture
 - Browser resource management
+
+NOTE: For Google search, use Google Agent's google_search tool instead (faster, no browser overhead)
 
 Acts as a mini-orchestrator for browser-related operations.
 """
@@ -16,23 +17,42 @@ from langchain_core.tools import tool
 from pathlib import Path
 import logging
 
-from ..utils import load_config
+from src.config import get_config_context
+from src.config_validator import ConfigValidationError
 
 logger = logging.getLogger(__name__)
 
 
 # Lazy initialization of browser instance
 _browser_instance = None
+_browser_runtime_cache: Optional[Dict[str, Any]] = None
+
+
+def _load_browser_runtime():
+    """Load config, accessor, and browser settings."""
+    context = get_config_context()
+    accessor = context.accessor
+    browser_settings = accessor.get_browser_config()
+    return {
+        "config": context.data,
+        "accessor": accessor,
+        "settings": browser_settings,
+    }
 
 
 def get_browser():
     """Get or create browser instance."""
-    global _browser_instance
+    global _browser_instance, _browser_runtime_cache
+    if _browser_runtime_cache is None:
+        _browser_runtime_cache = _load_browser_runtime()
+
+    runtime = _browser_runtime_cache
+    config = runtime["config"]
+    settings = runtime["settings"]
+
     if _browser_instance is None:
         from ..automation.web_browser import SyncWebBrowser
-        config = load_config()
-        headless = config.get("browser", {}).get("headless", False)
-        _browser_instance = SyncWebBrowser(config, headless=headless)
+        _browser_instance = SyncWebBrowser(config, headless=settings.headless)
 
     return _browser_instance
 
@@ -61,47 +81,52 @@ def google_search(query: str, num_results: int = 5) -> Dict[str, Any]:
     logger.info(f"[BROWSER AGENT] Tool: google_search(query='{query}', num_results={num_results})")
 
     try:
-        config = load_config()
-        browser_config = config.get("browser", {}) or {}
-        use_unique_session = browser_config.get("unique_session_search", True)
-        headless = browser_config.get("headless", False)
+        runtime = _load_browser_runtime()
+    except ConfigValidationError as exc:
+        return {
+            "error": True,
+            "error_type": "ConfigurationError",
+            "error_message": str(exc),
+            "retry_possible": False
+        }
 
-        close_after = False
-        if use_unique_session:
-            from ..automation.web_browser import SyncWebBrowser
-            browser = SyncWebBrowser(config, headless=headless, unique_session=True)
-            close_after = True
-        else:
-            browser = get_browser()
+    config = runtime["config"]
+    settings = runtime["settings"]
 
-        try:
-            result = browser.google_search(query=query, num_results=num_results)
-        finally:
-            if close_after:
-                browser.close()
+    try:
+        use_unique_session = settings.unique_session_search
+        headless = settings.headless
+    except AttributeError:
+        use_unique_session = True
+        headless = False
 
-        if result.get("success"):
-            return {
-                "query": result["query"],
-                "results": result["results"],
-                "num_results": result["num_results"],
-                "message": f"Found {result['num_results']} results for '{query}'"
-            }
-        else:
-            return {
-                "error": True,
-                "error_type": "SearchError",
-                "error_message": result.get("error", "Google search failed"),
-                "retry_possible": True
-            }
+    close_after = False
+    if use_unique_session:
+        from ..automation.web_browser import SyncWebBrowser
+        browser = SyncWebBrowser(config, headless=headless, unique_session=True)
+        close_after = True
+    else:
+        browser = get_browser()
 
-    except Exception as e:
-        logger.error(f"[BROWSER AGENT] Error in google_search: {e}")
+    try:
+        result = browser.google_search(query=query, num_results=num_results)
+    finally:
+        if close_after:
+            browser.close()
+
+    if result.get("success"):
+        return {
+            "query": result["query"],
+            "results": result["results"],
+            "num_results": result["num_results"],
+            "message": f"Found {result['num_results']} results for '{query}'"
+        }
+    else:
         return {
             "error": True,
             "error_type": "SearchError",
-            "error_message": str(e),
-            "retry_possible": False
+            "error_message": result.get("error", "Google search failed"),
+            "retry_possible": True
         }
 
 
@@ -335,7 +360,7 @@ def close_browser() -> Dict[str, Any]:
 
 # Browser Agent Tool Registry
 BROWSER_AGENT_TOOLS = [
-    google_search,
+    # google_search removed - use Google Agent's google_search instead (faster, no browser)
     navigate_to_url,
     extract_page_content,
     take_web_screenshot,
@@ -351,21 +376,20 @@ BROWSER_AGENT_HIERARCHY = """
 Browser Agent Hierarchy:
 =======================
 
-LEVEL 1: Primary Search
-└─ google_search → Search Google for information
+NOTE: For Google search, use Google Agent's google_search tool (faster, no browser overhead)
 
-LEVEL 2: Navigation & Content Extraction
+LEVEL 1: Navigation & Content Extraction
 ├─ navigate_to_url → Go to a specific webpage
 └─ extract_page_content → Get clean text from webpage (uses langextract)
 
-LEVEL 3: Visual Capture
+LEVEL 2: Visual Capture
 └─ take_web_screenshot → Capture webpage as image
 
-LEVEL 4: Cleanup
+LEVEL 3: Cleanup
 └─ close_browser → Close browser and free resources
 
 Typical Workflow:
-1. google_search("topic") → Find relevant URLs
+1. Use Google Agent's google_search("topic") → Find relevant URLs
 2. navigate_to_url(url) → Visit specific page
 3. extract_page_content() → Get page content
 4. [Use LLM to analyze extracted content]

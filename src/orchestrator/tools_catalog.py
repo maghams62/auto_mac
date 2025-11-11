@@ -228,23 +228,42 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Search Bluesky for recent posts matching a query."
         ),
+        "get_bluesky_author_feed": ToolSpec(
+            name="get_bluesky_author_feed",
+            kind="tool",
+            io={
+                "in": ["actor: Optional[str]", "max_posts: int"],
+                "out": ["actor", "count", "posts"]
+            },
+            strengths=[
+                "Gets posts from a specific Bluesky user or authenticated user",
+                "Useful for queries like 'last 3 tweets' or 'my tweets'",
+                "Returns posts in chronological order (most recent first)"
+            ],
+            limits=[
+                "Requires Bluesky credentials (identifier + app password)",
+                "Limited to public posts from the specified user"
+            ],
+            description="Get posts from a specific Bluesky author/handle. If actor is None, gets posts from authenticated user."
+        ),
         "summarize_bluesky_posts": ToolSpec(
             name="summarize_bluesky_posts",
             kind="tool",
             io={
-                "in": ["query: str", "lookback_hours: Optional[int]", "max_items: Optional[int]"],
+                "in": ["query: str", "lookback_hours: Optional[int]", "max_items: Optional[int]", "actor: Optional[str]"],
                 "out": ["summary", "items", "query", "time_window"]
             },
             strengths=[
-                "Combines Bluesky search results with LLM summarization",
-                "Ranks posts by engagement before summarizing top highlights",
+                "Combines Bluesky search results or author feed with LLM summarization",
+                "Automatically detects queries like 'last N tweets' and fetches from user's feed",
+                "Ranks posts by engagement (for search) or chronologically (for author feed)",
                 "Supports time filtering for fresh updates"
             ],
             limits=[
                 "Dependent on Bluesky search quality and rate limits",
                 "Summaries rely on configured LLM (OpenAI)"
             ],
-            description="Gather and summarize top Bluesky posts for a query within an optional time window."
+            description="Gather and summarize top Bluesky posts for a query or from a specific author within an optional time window. Handles queries like 'last 3 tweets' or 'my tweets'."
         ),
         "post_bluesky_update": ToolSpec(
             name="post_bluesky_update",
@@ -327,17 +346,17 @@ def generate_tool_catalog() -> List[ToolSpec]:
                 "out": ["query", "results", "num_results", "message"]
             },
             strengths=[
-                "PRIMARY web search tool - use this first for finding information online",
+                "PRIMARY web search tool (DuckDuckGo HTML endpoint) - use this first for finding information online",
                 "Returns structured results with titles, links, and snippets",
-                "Fast and reliable Google search integration",
+                "Fast and reliable, no API keys required",
                 "Good for finding documentation, websites, and general information"
             ],
             limits=[
                 "Requires internet connection",
                 "Limited to search results (doesn't extract page content)",
-                "Subject to Google rate limiting"
+                "DuckDuckGo HTML payload occasionally omits snippets for certain pages"
             ],
-            description="Search Google and extract results. LEVEL 1 tool in browser hierarchy - use this first when you need to find information on the web."
+            description="Perform DuckDuckGo web searches and extract structured results. LEVEL 1 tool in browser hierarchy—use this first when you need to find information on the web."
         ),
         "navigate_to_url": ToolSpec(
             name="navigate_to_url",

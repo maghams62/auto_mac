@@ -9,14 +9,128 @@ import InputArea from "./InputArea";
 import Sidebar from "./Sidebar";
 import RecordingIndicator from "./RecordingIndicator";
 import { motion, AnimatePresence } from "framer-motion";
+import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
+import logger from "@/lib/logger";
 
-const WS_URL = "ws://localhost:8000/ws/chat";
-const API_URL = "http://localhost:8000";
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
 
 export default function ChatInterface() {
-  const { messages: allMessages, isConnected, sendMessage, sendCommand } = useWebSocket(WS_URL);
-  const { isRecording, startRecording, stopRecording, error: voiceError } = useVoiceRecorder();
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
+  const wsUrl = useMemo(() => getWebSocketUrl("/ws/chat"), []);
+  const { messages: allMessages, isConnected, sendMessage, sendCommand } = useWebSocket(wsUrl);
+  
+  const createAbortController = useCallback((timeoutMs: number) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    return { controller, timeoutId };
+  }, []);
+
+  const transcribeAudio = useCallback(async (audioBlob: Blob) => {
+    setIsTranscribing(true);
+    try {
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error("No audio data recorded");
+      }
+
+      logger.info("Starting audio transcription", {
+        audio_size_bytes: audioBlob.size,
+        audio_type: audioBlob.type,
+      });
+
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+
+      const { controller, timeoutId } = createAbortController(30000);
+      let response: Response;
+
+      try {
+        logger.debug("Sending transcription request to API");
+        response = await fetch(`${apiBaseUrl}/api/transcribe`, {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+
+      if (!response.ok) {
+        let errorMessage = `Transcription failed (${response.status})`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        logger.error("Transcription API error", new Error(errorMessage), {
+          status: response.status,
+          status_text: response.statusText,
+        });
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      logger.info("Transcription successful", {
+        transcript_length: data.text?.length || 0,
+        transcript_preview: data.text?.substring(0, 50),
+      });
+
+      if (data.text && data.text.trim()) {
+        sendMessage(data.text.trim());
+        return;
+      }
+
+      throw new Error("No transcription text returned");
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      logger.error("Error transcribing audio", error, {
+        error_name: error.name,
+        error_message: error.message,
+      });
+
+      // Attempt a quick health check to provide clearer feedback
+      let detailedMessage =
+        error.name === "AbortError"
+          ? "Transcription request timed out after 30 seconds"
+          : error.message;
+      try {
+        const { controller: healthController, timeoutId: healthTimeout } = createAbortController(5000);
+        try {
+          const healthCheck = await fetch(`${apiBaseUrl}/api/stats`, {
+            method: "GET",
+            signal: healthController.signal,
+          });
+
+          if (healthCheck.ok) {
+            detailedMessage += " (Server reachable, transcription endpoint returned an error)";
+          } else {
+            detailedMessage += ` (Server responded with status ${healthCheck.status})`;
+          }
+        } finally {
+          window.clearTimeout(healthTimeout);
+        }
+
+      } catch (healthErr) {
+        logger.error("Transcription health check failed", healthErr as Error, {
+          api_base_url: apiBaseUrl,
+        });
+        detailedMessage += ` (Cannot reach API server at ${apiBaseUrl})`;
+      }
+
+      sendMessage(`❌ **Transcription Error:** ${detailedMessage}. Please try typing instead.`);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, [apiBaseUrl, createAbortController, sendMessage]);
+
+  // Handle auto-stop transcription
+  const handleAutoStopTranscription = useCallback(async (audioBlob: Blob) => {
+    await transcribeAudio(audioBlob);
+  }, [transcribeAudio]);
+
+  const { isRecording, startRecording, stopRecording, error: voiceError } = useVoiceRecorder({
+    onAutoStop: handleAutoStopTranscription,
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -48,43 +162,19 @@ export default function ChatInterface() {
   // Handle voice recording
   const handleVoiceRecord = async () => {
     if (isRecording) {
-      // Stop recording and transcribe
-      setIsTranscribing(true);
       try {
         const audioBlob = await stopRecording();
-        if (!audioBlob) {
-          setIsTranscribing(false);
-          return;
-        }
-
-        // Send to backend for transcription
-        const formData = new FormData();
-        formData.append("audio", audioBlob, "recording.webm");
-
-        const response = await fetch(`${API_URL}/api/transcribe`, {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error("Transcription failed");
-        }
-
-        const data = await response.json();
-        if (data.text && data.text.trim()) {
-          // Send transcribed text as a message
-          sendMessage(data.text.trim());
-        }
+        if (!audioBlob) return;
+        await transcribeAudio(audioBlob);
       } catch (err) {
-        console.error("Error transcribing audio:", err);
-        // Add error message to chat
-        sendMessage("Error transcribing audio. Please try typing instead.");
-      } finally {
-        setIsTranscribing(false);
+        console.error("[TRANSCRIBE] Error completing recording:", err);
       }
     } else {
-      // Start recording
-      await startRecording();
+      try {
+        await startRecording();
+      } catch (err) {
+        console.error("[TRANSCRIBE] Error starting recording:", err);
+      }
     }
   };
 

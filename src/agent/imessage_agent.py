@@ -14,6 +14,9 @@ from langchain_core.tools import tool
 import logging
 import subprocess
 
+from src.config import get_config_context
+from src.config_validator import ConfigValidationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,15 +115,23 @@ def send_imessage(
     logger.info(f"[IMESSAGE AGENT] Tool: send_imessage(recipient='{recipient}')")
 
     try:
-        from ..utils import load_config
-
-        config = load_config()
+        try:
+            context = get_config_context()
+            accessor = context.accessor
+            imessage_settings = accessor.get_imessage_config()
+        except ConfigValidationError as exc:
+            logger.error(f"[IMESSAGE AGENT] Configuration error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
         
         # Handle "message to me" logic - use default recipient if recipient is None or contains "me"
         if recipient is None or not recipient or recipient.lower().strip() in ["me", "my phone", "to me", "myself", "my number"]:
-            default_recipient = config.get("imessage", {}).get("default_phone_number")
-            if default_recipient:
-                recipient = default_recipient
+            if imessage_settings.default_phone_number:
+                recipient = imessage_settings.default_phone_number
                 logger.info(f"[IMESSAGE AGENT] Using default recipient: {recipient}")
             elif recipient is None or not recipient:
                 # If no default configured and recipient is None, return error

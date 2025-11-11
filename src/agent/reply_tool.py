@@ -9,6 +9,41 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _format_duplicate_details(duplicates: List[Dict[str, Any]]) -> str:
+    """
+    Format duplicate file details into human-readable text.
+
+    Args:
+        duplicates: List of duplicate groups from folder_find_duplicates
+
+    Returns:
+        Formatted string with group details and file names
+    """
+    if not duplicates:
+        return "No duplicate groups found."
+
+    lines = []
+    for idx, group in enumerate(duplicates, 1):
+        files = group.get("files", [])
+        size = group.get("size", 0)
+        count = group.get("count", len(files))
+
+        # Format size
+        if size >= 1024 * 1024:
+            size_str = f"{size / (1024 * 1024):.2f} MB"
+        elif size >= 1024:
+            size_str = f"{size / 1024:.2f} KB"
+        else:
+            size_str = f"{size} bytes"
+
+        lines.append(f"\nGroup {idx} ({count} copies, {size_str} each):")
+        for file in files:
+            file_name = file.get("name", "unknown")
+            lines.append(f"  - {file_name}")
+
+    return "\n".join(lines)
+
+
 @tool
 def reply_to_user(
     message: str,
@@ -33,6 +68,18 @@ def reply_to_user(
         Structured payload recorded in step_results so the UI can render it.
     """
     artifacts = artifacts or []
+
+    # AUTO-FORMAT: If details is a list (structured data), format it nicely
+    if isinstance(details, list):
+        logger.info("[REPLY TOOL] Details is a list, checking if it needs formatting")
+
+        # Check if this looks like duplicate file data
+        if details and isinstance(details[0], dict) and "files" in details[0]:
+            logger.info("[REPLY TOOL] Detected duplicate file data, formatting...")
+            details = _format_duplicate_details(details)
+        else:
+            # Generic list formatting
+            details = "\n".join(f"  - {item}" for item in details)
 
     payload: Dict[str, Any] = {
         "type": "reply",

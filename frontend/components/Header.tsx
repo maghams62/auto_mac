@@ -1,20 +1,22 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 interface HeaderProps {
   isConnected?: boolean;
 }
 
 export default function Header({ isConnected = true }: HeaderProps) {
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
   const [stats, setStats] = useState<{ agents?: number; tools?: number } | null>(null);
 
   useEffect(() => {
     // Fetch system stats
     const fetchStats = async () => {
       try {
-        const response = await fetch("http://localhost:8000/api/stats");
+        const response = await fetch(`${apiBaseUrl}/api/stats`);
         if (response.ok) {
           const data = await response.json();
           setStats({
@@ -31,7 +33,7 @@ export default function Header({ isConnected = true }: HeaderProps) {
     // Refresh stats every 30 seconds
     const interval = setInterval(fetchStats, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [apiBaseUrl]);
 
   return (
     <motion.header

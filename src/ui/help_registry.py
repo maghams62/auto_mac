@@ -177,14 +177,14 @@ class HelpRegistry:
             name="/google",
             type="slash_command",
             category="web",
-            description="Google search - find information on the web",
-            long_description="Search Google and get structured results with titles, URLs, and snippets.",
+            description="DuckDuckGo search (legacy /google alias) - find information on the web",
+            long_description="Perform a DuckDuckGo web search and receive structured results with titles, URLs, and snippets. The command retains the historical /google alias for backwards compatibility.",
             examples=[
                 "/google Search for Claude AI assistant",
                 "/google Find Python documentation",
                 "/google Look up Mac automation tools"
             ],
-            tags=["google", "search", "web", "find"],
+            tags=["duckduckgo", "search", "web", "find"],
             related=["/browse", "/search"],
             agent="google",
             icon="🔍",

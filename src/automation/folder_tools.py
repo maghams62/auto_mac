@@ -599,3 +599,176 @@ class FolderTools:
                 "error_message": str(e),
                 "folder_path": folder_path
             }
+
+    def find_duplicates(
+        self,
+        folder_path: Optional[str] = None,
+        recursive: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Find duplicate files by content hash (SHA-256).
+
+        This is a deterministic read-only operation that identifies files
+        with identical content, grouped by hash.
+
+        Args:
+            folder_path: Path to analyze (defaults to sandbox root)
+            recursive: Whether to search subdirectories (default: False)
+
+        Returns:
+            Dictionary with:
+            - duplicates: List of duplicate groups (each group has hash, size, files list)
+            - total_duplicate_files: Count of duplicate files found
+            - total_duplicate_groups: Count of duplicate groups
+            - wasted_space_bytes: Total bytes wasted by duplicates
+            - folder_path: Path that was analyzed
+        """
+        try:
+            import hashlib
+            from collections import defaultdict
+
+            # Default to sandbox root
+            if folder_path is None:
+                folder_path = self.allowed_folder
+
+            # Validate path
+            resolved_path = self._validate_path(folder_path)
+
+            logger.info(f"[FOLDER TOOLS] Finding duplicates in {resolved_path} (recursive={recursive})")
+
+            # Collect all files with their hashes
+            file_hashes = defaultdict(list)
+
+            if recursive:
+                # Recursive search
+                for root, dirs, files in os.walk(resolved_path):
+                    # Skip hidden directories
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+                    for filename in files:
+                        # Skip hidden files
+                        if filename.startswith('.'):
+                            continue
+
+                        file_path = os.path.join(root, filename)
+                        try:
+                            # Get file size
+                            file_size = os.path.getsize(file_path)
+
+                            # Compute SHA-256 hash
+                            sha256 = hashlib.sha256()
+                            with open(file_path, 'rb') as f:
+                                for chunk in iter(lambda: f.read(8192), b''):
+                                    sha256.update(chunk)
+                            file_hash = sha256.hexdigest()
+
+                            # Store file info
+                            file_hashes[file_hash].append({
+                                "path": file_path,
+                                "relative_path": os.path.relpath(file_path, resolved_path),
+                                "name": filename,
+                                "size": file_size
+                            })
+                        except (OSError, IOError) as e:
+                            logger.warning(f"[FOLDER TOOLS] Cannot read {filename}: {e}")
+                            continue
+            else:
+                # Non-recursive (top-level only)
+                try:
+                    entries = os.listdir(resolved_path)
+                except OSError as e:
+                    return {
+                        "error": True,
+                        "error_type": "ListError",
+                        "error_message": f"Cannot list directory: {str(e)}",
+                        "folder_path": resolved_path
+                    }
+
+                for filename in entries:
+                    file_path = os.path.join(resolved_path, filename)
+
+                    # Skip directories and hidden files
+                    if not os.path.isfile(file_path) or filename.startswith('.'):
+                        continue
+
+                    try:
+                        # Get file size
+                        file_size = os.path.getsize(file_path)
+
+                        # Compute SHA-256 hash
+                        sha256 = hashlib.sha256()
+                        with open(file_path, 'rb') as f:
+                            for chunk in iter(lambda: f.read(8192), b''):
+                                sha256.update(chunk)
+                        file_hash = sha256.hexdigest()
+
+                        # Store file info
+                        file_hashes[file_hash].append({
+                            "path": file_path,
+                            "relative_path": os.path.relpath(file_path, resolved_path),
+                            "name": filename,
+                            "size": file_size
+                        })
+                    except (OSError, IOError) as e:
+                        logger.warning(f"[FOLDER TOOLS] Cannot read {filename}: {e}")
+                        continue
+
+            # Filter to only groups with duplicates (2+ files with same hash)
+            duplicate_groups = []
+            total_duplicate_files = 0
+            wasted_space = 0
+
+            for file_hash, files in file_hashes.items():
+                if len(files) > 1:
+                    # Sort by name for consistent ordering
+                    files_sorted = sorted(files, key=lambda x: x['name'])
+
+                    # Calculate wasted space (size * (count - 1))
+                    file_size = files_sorted[0]['size']
+                    wasted = file_size * (len(files_sorted) - 1)
+
+                    duplicate_groups.append({
+                        "hash": file_hash,
+                        "size": file_size,
+                        "count": len(files_sorted),
+                        "wasted_bytes": wasted,
+                        "files": files_sorted
+                    })
+
+                    total_duplicate_files += len(files_sorted)
+                    wasted_space += wasted
+
+            # Sort groups by wasted space (descending)
+            duplicate_groups.sort(key=lambda x: x['wasted_bytes'], reverse=True)
+
+            logger.info(
+                f"[FOLDER TOOLS] Found {len(duplicate_groups)} duplicate groups, "
+                f"{total_duplicate_files} files, {wasted_space} bytes wasted"
+            )
+
+            return {
+                "duplicates": duplicate_groups,
+                "total_duplicate_files": total_duplicate_files,
+                "total_duplicate_groups": len(duplicate_groups),
+                "wasted_space_bytes": wasted_space,
+                "wasted_space_mb": round(wasted_space / (1024 * 1024), 2),
+                "folder_path": resolved_path,
+                "recursive": recursive
+            }
+
+        except FolderSecurityError as e:
+            logger.error(f"[FOLDER TOOLS] Security error in find_duplicates: {e}")
+            return {
+                "error": True,
+                "error_type": "SecurityError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in find_duplicates: {e}")
+            return {
+                "error": True,
+                "error_type": "DuplicateDetectionError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }

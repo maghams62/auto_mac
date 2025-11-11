@@ -45,13 +45,34 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(title="Mac Automation Assistant API")
 
-# Configure CORS for frontend
+# Configure CORS for frontend (allow configurable origins with sensible defaults)
+default_allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://localhost:3000",
+    "https://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+allowed_origins_env = os.getenv("API_ALLOWED_ORIGINS")
+if allowed_origins_env:
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+else:
+    allowed_origins = default_allowed_origins
+
+allowed_origin_regex = os.getenv("API_ALLOWED_ORIGIN_REGEX", r"https?://(localhost|127\.0\.0\.1)(:\d+)?$")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Import global ConfigManager
@@ -166,7 +187,9 @@ def format_result_message(result: Dict[str, Any]) -> str:
     
     # Check for other structured results
     if result.get("error"):
-        return f"❌ **Error:** {result.get('error_message', 'Unknown error')}"
+        # Try error_message first, fall back to message, then generic
+        error_text = result.get('error_message') or result.get('message') or 'Unknown error'
+        return f"❌ **Error:** {error_text}"
     
     # Default formatting
     if "message" in result:
@@ -914,8 +937,23 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     
     Accepts audio files and returns transcribed text.
     """
+    tmp_file_path = None
     try:
-        logger.info(f"Received audio file for transcription: {audio.filename}")
+        # Log request details for debugging
+        import traceback
+        logger.info(f"[TRANSCRIBE] Request received from: {audio.filename}, content_type: {audio.content_type}")
+        logger.info(f"[TRANSCRIBE] Request headers available: {hasattr(audio, 'headers')}")
+        
+        # Validate file size (max 25MB for Whisper API)
+        content = await audio.read()
+        file_size = len(content)
+        logger.info(f"Audio file size: {file_size} bytes")
+        
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="Empty audio file received")
+        
+        if file_size > 25 * 1024 * 1024:  # 25MB limit
+            raise HTTPException(status_code=400, detail=f"Audio file too large: {file_size} bytes (max 25MB)")
         
         # Get OpenAI API key from config (already loaded at startup)
         api_key = config.get("openai", {}).get("api_key")
@@ -923,39 +961,61 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             # Fallback to environment variable
             api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+            logger.error("OpenAI API key not configured")
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable or configure it in config.yaml")
         
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
         
         # Save uploaded file temporarily
+        # Use .webm extension but Whisper should handle it
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
-            content = await audio.read()
             tmp_file.write(content)
             tmp_file_path = tmp_file.name
         
+        logger.info(f"Saved temporary file: {tmp_file_path}")
+        
         try:
             # Transcribe using OpenAI Whisper
+            # Whisper supports: mp3, mp4, mpeg, mpga, m4a, wav, webm
             with open(tmp_file_path, "rb") as audio_file:
+                logger.info("Calling OpenAI Whisper API...")
                 transcript = client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
                     language="en"  # Optional: specify language for better accuracy
                 )
             
-            logger.info(f"Transcription successful: {transcript.text[:100]}...")
+            transcript_text = transcript.text.strip()
+            logger.info(f"Transcription successful: {len(transcript_text)} characters - '{transcript_text[:100]}...'")
             
             return {
-                "text": transcript.text,
+                "text": transcript_text,
                 "status": "success"
             }
+        except Exception as whisper_error:
+            logger.error(f"OpenAI Whisper API error: {whisper_error}", exc_info=True)
+            error_msg = str(whisper_error)
+            if "Invalid file format" in error_msg or "unsupported" in error_msg.lower():
+                raise HTTPException(status_code=400, detail=f"Unsupported audio format. Error: {error_msg}")
+            elif "rate limit" in error_msg.lower():
+                raise HTTPException(status_code=429, detail="OpenAI API rate limit exceeded. Please try again later.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Whisper API error: {error_msg}")
         finally:
             # Clean up temporary file
-            if os.path.exists(tmp_file_path):
-                os.unlink(tmp_file_path)
+            if tmp_file_path and os.path.exists(tmp_file_path):
+                try:
+                    os.unlink(tmp_file_path)
+                    logger.info(f"Cleaned up temporary file: {tmp_file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
                 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        logger.error(f"Error transcribing audio: {e}")
+        logger.error(f"Error transcribing audio: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 

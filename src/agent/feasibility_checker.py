@@ -26,13 +26,24 @@ class FeasibilityChecker:
     automation step to the vision-assisted pipeline.
     """
 
-    def __init__(self, vision_config: Dict[str, Any]):
-        self.enabled: bool = vision_config.get("enabled", False)
-        self.min_confidence: float = float(vision_config.get("min_confidence", 0.6))
-        self.max_calls_per_session: int = int(vision_config.get("max_calls_per_session", 5))
-        self.max_calls_per_task: int = int(vision_config.get("max_calls_per_task", 2))
-        self.retry_threshold: int = int(vision_config.get("retry_threshold", 2))
-        self.eligible_tools = set(vision_config.get("eligible_tools", []))
+    def __init__(self, vision_config):
+        # Handle both dict and VisionSettings dataclass
+        if hasattr(vision_config, 'enabled'):
+            # It's a VisionSettings dataclass
+            self.enabled: bool = vision_config.enabled
+            self.min_confidence: float = float(vision_config.min_confidence)
+            self.max_calls_per_session: int = int(vision_config.max_calls_per_session)
+            self.max_calls_per_task: int = int(vision_config.max_calls_per_task)
+            self.retry_threshold: int = int(vision_config.retry_threshold)
+            self.eligible_tools = set(vision_config.eligible_tools)
+        else:
+            # It's a dict (backward compatibility)
+            self.enabled: bool = vision_config.get("enabled", False)
+            self.min_confidence: float = float(vision_config.get("min_confidence", 0.6))
+            self.max_calls_per_session: int = int(vision_config.get("max_calls_per_session", 5))
+            self.max_calls_per_task: int = int(vision_config.get("max_calls_per_task", 2))
+            self.retry_threshold: int = int(vision_config.get("retry_threshold", 2))
+            self.eligible_tools = set(vision_config.get("eligible_tools", []))
 
     def is_tool_eligible(self, tool_name: str) -> bool:
         if not self.enabled:

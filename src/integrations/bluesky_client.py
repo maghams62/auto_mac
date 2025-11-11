@@ -42,6 +42,7 @@ class BlueskyAPIClient:
         self.access_jwt: Optional[str] = None
         self.refresh_jwt: Optional[str] = None
         self.did: Optional[str] = None
+        self.handle: Optional[str] = None  # Store the handle from session
 
         self._authenticate()
 
@@ -60,8 +61,14 @@ class BlueskyAPIClient:
         response = self._get("app.bsky.feed.searchPosts", params=params)
         return response.json()
 
-    def get_author_feed(self, actor: str, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch posts from a specific author/handle."""
+    def get_author_feed(self, actor: Optional[str] = None, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch posts from a specific author/handle. If actor is None, uses authenticated user's handle."""
+        if actor is None:
+            # Use authenticated user's handle (prefer handle over identifier/email)
+            actor = self.handle or self.did or self.identifier
+            if not actor:
+                raise BlueskyAPIError("Cannot get author feed: no actor specified and no authenticated user handle available.")
+        
         params = {
             "actor": actor,
             "limit": max(1, min(limit, 100)),
@@ -71,6 +78,13 @@ class BlueskyAPIClient:
 
         response = self._get("app.bsky.feed.getAuthorFeed", params=params)
         return response.json()
+    
+    def get_my_handle(self) -> str:
+        """Get the authenticated user's handle."""
+        if not self.did:
+            raise BlueskyAPIError("Cannot get handle: not authenticated.")
+        # Return handle if available, otherwise fall back to DID or identifier
+        return self.handle or self.did or self.identifier
 
     def get_popular(self, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
         """Fetch globally popular posts (Bluesky curated)."""
@@ -125,6 +139,7 @@ class BlueskyAPIClient:
         self.access_jwt = data.get("accessJwt")
         self.refresh_jwt = data.get("refreshJwt")
         self.did = data.get("did")
+        self.handle = data.get("handle")  # Get handle from session response
 
         if not self.access_jwt or not self.did:
             raise BlueskyAPIError("Bluesky session missing token or DID.")

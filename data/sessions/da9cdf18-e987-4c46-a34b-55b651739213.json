@@ -1,0 +1,36 @@
+{
+  "session_id": "da9cdf18-e987-4c46-a34b-55b651739213",
+  "status": "active",
+  "created_at": "2025-11-11T02:31:12.785177",
+  "last_active_at": "2025-11-11T02:31:21.409103",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T02:31:21.409103",
+      "user_request": "/confetti",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: The request '/confetti' does not correspond to any actionable task or tool available in the current system. There are no tools related to confetti or similar effects.",
+        "missing_capabilities": "The request '/confetti' does not correspond to any actionable task or tool available in the current system. There are no tools related to confetti or similar effects."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

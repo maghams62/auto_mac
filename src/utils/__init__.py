@@ -161,3 +161,18 @@ def ensure_directories():
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
 
+
+# Export structured logger
+from .logger import StructuredLogger, setup_structured_logging, get_logger, RequestContext
+
+__all__ = [
+    'load_config',
+    'save_config',
+    'setup_logging',
+    'ensure_directories',
+    'StructuredLogger',
+    'setup_structured_logging',
+    'get_logger',
+    'RequestContext',
+]
+

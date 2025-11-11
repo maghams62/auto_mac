@@ -173,18 +173,73 @@ def search_bluesky_posts(query: str, max_posts: int = 10) -> Dict[str, Any]:
 
 
 @tool
+def get_bluesky_author_feed(actor: Optional[str] = None, max_posts: int = 10) -> Dict[str, Any]:
+    """
+    Get posts from a specific Bluesky author/handle. If actor is None, gets posts from authenticated user.
+
+    Args:
+        actor: Bluesky handle (e.g., "username.bsky.social") or None for authenticated user.
+        max_posts: Maximum number of posts to return (default 10, max 100).
+    """
+    limit = max(1, min(max_posts or 10, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_author_feed(actor=actor, limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky author feed error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # Author feed returns {"feed": [{"post": {...}, "reply": {...}, ...}]}
+    # We need to extract the "post" from each feed item
+    feed_items = raw.get("feed", [])
+    posts = []
+    actor_handle = actor
+    
+    for feed_item in feed_items:
+        # Feed items have structure: {"post": {...}, "reply": {...}, ...}
+        post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+        # Extract actor handle from first post if not provided
+        if not actor_handle and normalized.get("author_handle"):
+            actor_handle = normalized.get("author_handle")
+
+    return {
+        "actor": actor_handle or "authenticated user",
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
 def summarize_bluesky_posts(
     query: str,
     lookback_hours: Optional[int] = None,
     max_items: Optional[int] = None,
+    actor: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Summarize top Bluesky posts for a search query within an optional time window.
+    Summarize top Bluesky posts for a search query or from a specific author within an optional time window.
+    If query contains patterns like "last N tweets" or "my tweets", fetches from authenticated user's feed.
 
     Args:
-        query: Search keywords or phrase to focus on.
+        query: Search keywords or phrase to focus on, or patterns like "last 3 tweets", "my tweets".
         lookback_hours: Time window to filter posts (defaults to bluesky.default_lookback_hours or 24).
         max_items: Maximum number of highlights to summarize (defaults to bluesky.max_summary_items or 5).
+        actor: Optional Bluesky handle to get posts from specific user instead of searching.
     """
     if not query or not query.strip():
         return {
@@ -214,9 +269,51 @@ def summarize_bluesky_posts(
     max_highlights = max_items if max_items is not None else default_max_items
     max_highlights = max(1, min(max_highlights, 10))
 
+    # Detect if query is asking for author feed (e.g., "last 3 tweets", "my tweets", "tweets on bluesky")
+    query_lower = query.lower().strip()
+    use_author_feed = False
+    target_actor = actor
+    disable_time_filter = False  # For "last N tweets", don't filter by time
+    
+    # Patterns that indicate author feed request
+    author_feed_patterns = [
+        "last",
+        "my tweets",
+        "my posts",
+        "tweets on bluesky",
+        "posts on bluesky",
+        "recent tweets",
+        "recent posts",
+    ]
+    
+    # Check if query matches author feed patterns
+    if any(pattern in query_lower for pattern in author_feed_patterns):
+        use_author_feed = True
+        # Extract number if present (e.g., "last 3 tweets" -> 3)
+        import re
+        num_match = re.search(r'(\d+)', query_lower)
+        if num_match:
+            max_highlights = min(int(num_match.group(1)), max_highlights)
+        # For "last N tweets" queries, disable time filtering
+        if "last" in query_lower:
+            disable_time_filter = True
+
     try:
         client = BlueskyAPIClient()
-        raw = client.search_posts(query.strip(), limit=max_highlights * 5)
+        
+        if use_author_feed or target_actor is not None:
+            # Get posts from author feed
+            raw = client.get_author_feed(actor=target_actor, limit=max_highlights * 2)
+            # Author feed returns {"feed": [{"post": {...}, ...}]}
+            feed_items = raw.get("feed", [])
+            posts = []
+            for feed_item in feed_items:
+                post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+                posts.append(_normalize_post(post_data))
+        else:
+            # Search posts
+            raw = client.search_posts(query.strip(), limit=max_highlights * 5)
+            posts = [_normalize_post(post) for post in raw.get("posts", [])]
     except BlueskyAPIError as exc:
         return {
             "error": True,
@@ -233,8 +330,8 @@ def summarize_bluesky_posts(
             "retry_possible": False,
         }
 
-    posts = [_normalize_post(post) for post in raw.get("posts", [])]
-    if lookback:
+    # Apply time filter only if not disabled (e.g., for "last N tweets" queries)
+    if lookback and not disable_time_filter:
         posts = _filter_by_time(posts, lookback)
 
     if not posts:
@@ -247,7 +344,12 @@ def summarize_bluesky_posts(
             },
         }
 
-    posts.sort(key=lambda item: (item["score"], item.get("created_at", "")), reverse=True)
+    # Sort by creation date (most recent first) for author feeds, by score for search
+    if use_author_feed or target_actor is not None:
+        posts.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    else:
+        posts.sort(key=lambda item: (item["score"], item.get("created_at", "")), reverse=True)
+    
     highlights = posts[:max_highlights]
 
     summary_text = _summarize_posts(config, highlights)
@@ -291,6 +393,21 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
     try:
         client = BlueskyAPIClient()
         response = client.create_post(clean_text)
+
+        uri = (response.get("uri") or response.get("record", {}).get("uri") or "")
+        cid = (response.get("cid") or response.get("record", {}).get("cid") or "")
+
+        # Prefer the authenticated handle, but fall back gracefully.
+        handle = ""
+        if hasattr(client, "get_my_handle"):
+            try:
+                handle = client.get_my_handle() or ""
+            except Exception:
+                handle = ""
+        if not handle:
+            handle = getattr(client, "handle", None) or getattr(client, "identifier", "") or ""
+
+        url = _post_url(handle, uri) if uri and handle else ""
     except BlueskyAPIError as exc:
         return {
             "error": True,
@@ -307,12 +424,6 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
             "retry_possible": False,
         }
 
-    uri = (response.get("uri") or response.get("record", {}).get("uri") or "")
-    cid = (response.get("cid") or response.get("record", {}).get("cid") or "")
-    handle = response.get("handle")
-
-    url = _post_url(handle or "", uri) if uri and handle else ""
-
     return {
         "success": True,
         "uri": uri,
@@ -324,6 +435,7 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
 
 BLUESKY_AGENT_TOOLS = [
     search_bluesky_posts,
+    get_bluesky_author_feed,
     summarize_bluesky_posts,
     post_bluesky_update,
 ]
@@ -334,9 +446,10 @@ Bluesky Agent Hierarchy:
 
 LEVEL 1: Discovery
 └─ search_bluesky_posts(query, max_posts=10) → Search public posts for a query
+└─ get_bluesky_author_feed(actor=None, max_posts=10) → Get posts from specific author or authenticated user
 
 LEVEL 2: Summaries
-└─ summarize_bluesky_posts(query, lookback_hours=24, max_items=5) → Gather + summarize top posts
+└─ summarize_bluesky_posts(query, lookback_hours=24, max_items=5, actor=None) → Gather + summarize top posts or author feed
 
 LEVEL 3: Publishing
 └─ post_bluesky_update(message) → Publish a post via AT Protocol

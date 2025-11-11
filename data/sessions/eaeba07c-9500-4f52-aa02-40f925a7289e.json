@@ -1,0 +1,92 @@
+{
+  "session_id": "eaeba07c-9500-4f52-aa02-40f925a7289e",
+  "status": "active",
+  "created_at": "2025-11-11T09:45:34.858200",
+  "last_active_at": "2025-11-11T09:46:10.430950",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T09:46:10.430950",
+      "user_request": "Play music.",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing",
+            "tool": "play_music"
+          },
+          "2": {
+            "error": true,
+            "message": "1 validation error for reply_to_user\ndetails\n  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type",
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "partial_success"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start playing music in Spotify as requested by the user.",
+          "expected_output": "Music playback started in Spotify."
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": null,
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started.",
+          "expected_output": "User receives confirmation that music is playing."
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing",
+          "tool": "play_music"
+        },
+        "2": {
+          "error": true,
+          "message": "1 validation error for reply_to_user\ndetails\n  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type",
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 2,
+    "agents_used": [],
+    "tools_used": [
+      "play_music",
+      "reply_to_user"
+    ]
+  }
+}

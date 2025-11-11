@@ -18,6 +18,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 import json
 import re
 
+from ..config_validator import ConfigAccessor, ConfigValidationError
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ class FileOrganizer:
     - Handle naming conflicts
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, accessor: Optional[ConfigAccessor] = None):
         """
         Initialize the file organizer.
 
@@ -40,6 +42,7 @@ class FileOrganizer:
             config: Configuration dictionary
         """
         self.config = config
+        self.accessor = accessor or ConfigAccessor(config)
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
@@ -51,7 +54,7 @@ class FileOrganizer:
         self,
         category: str,
         target_folder: str,
-        source_directory: str,
+        source_directory: Optional[str] = None,
         search_engine: Any = None,
         move: bool = True
     ) -> Dict[str, Any]:
@@ -61,7 +64,7 @@ class FileOrganizer:
         Args:
             category: Category description (e.g., "music notes", "work documents")
             target_folder: Target folder name or path
-            source_directory: Source directory to scan
+            source_directory: Source directory to scan (defaults to primary document directory)
             search_engine: Optional search engine for embeddings
             move: If True, move files; if False, copy files
 
@@ -76,6 +79,23 @@ class FileOrganizer:
             }
         """
         logger.info(f"Organizing files for category: '{category}' into '{target_folder}'")
+
+        if source_directory is None:
+            try:
+                source_directory = self.accessor.get_primary_document_directory()
+            except ConfigValidationError as exc:
+                logger.error(f"Cannot resolve document directory: {exc}")
+                return {
+                    "success": False,
+                    "files_moved": [],
+                    "files_skipped": [],
+                    "target_path": "",
+                    "reasoning": {},
+                    "total_evaluated": 0,
+                    "error": True,
+                    "error_type": "ConfigurationError",
+                    "error_message": str(exc)
+                }
 
         # Get all files from source directory
         all_files = self._scan_directory(source_directory)

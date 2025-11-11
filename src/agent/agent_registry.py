@@ -205,8 +205,8 @@ class AgentRegistry:
         if self.session_manager:
             logger.info("[AGENT REGISTRY] Session management enabled")
 
-        # LAZY INITIALIZATION: Store agent classes, not instances
-        # Only instantiate agents when they're actually needed
+        # Agent class registry
+        # These will be eagerly instantiated at the end of __init__
         self._agent_classes = {
             "file": FileAgent,
             "folder": FolderAgent,
@@ -234,7 +234,7 @@ class AgentRegistry:
             "celebration": CelebrationAgent,
         }
 
-        # Cache for instantiated agents (lazy initialization)
+        # Registry of instantiated agents (populated during eager initialization)
         self.agents = {}
 
         # Create tool-to-agent mapping (using tool lists, not instances)
@@ -270,52 +270,50 @@ class AgentRegistry:
             for tool in tools:
                 self.tool_to_agent[tool.name] = agent_name
 
-        logger.info(f"[AGENT REGISTRY] Initialized with {len(self._agent_classes)} agent classes and {len(self.tool_to_agent)} tools (lazy loading enabled)")
+        # EAGER INITIALIZATION: Instantiate all agents at startup
+        # This ensures atomic, predictable behavior and prevents lazy loading issues
+        logger.info(f"[AGENT REGISTRY] Eagerly initializing {len(self._agent_classes)} agents...")
+        for agent_name, agent_class in self._agent_classes.items():
+            try:
+                self.agents[agent_name] = agent_class(self.config)
+                logger.debug(f"[AGENT REGISTRY] ✓ Initialized {agent_name} agent")
+            except Exception as e:
+                logger.error(f"[AGENT REGISTRY] ✗ Failed to initialize {agent_name} agent: {e}")
+                # Continue with other agents even if one fails
+
+        logger.info(f"[AGENT REGISTRY] Initialized {len(self.agents)}/{len(self._agent_classes)} agents with {len(self.tool_to_agent)} tools (eager loading enabled)")
 
     def get_agent(self, agent_name: str):
         """
-        Get a specific agent by name (lazy initialization).
+        Get a specific agent by name.
 
-        Only instantiates the agent if it hasn't been created yet.
-        Caches the instance for future use.
+        All agents are eagerly initialized at startup, so this is a simple lookup.
         """
-        # Check if already instantiated
         if agent_name in self.agents:
             return self.agents[agent_name]
-
-        # Lazy instantiation
-        if agent_name in self._agent_classes:
-            logger.info(f"[AGENT REGISTRY] Lazy initializing {agent_name} agent")
-            agent_class = self._agent_classes[agent_name]
-            agent_instance = agent_class(self.config)
-            self.agents[agent_name] = agent_instance
-            return agent_instance
 
         logger.warning(f"[AGENT REGISTRY] Unknown agent: {agent_name}")
         return None
 
     def get_agent_for_tool(self, tool_name: str):
-        """Get the agent responsible for a specific tool (lazy initialization)."""
+        """Get the agent responsible for a specific tool."""
         agent_name = self.tool_to_agent.get(tool_name)
         if agent_name:
-            return self.get_agent(agent_name)  # Use lazy loading
+            return self.get_agent(agent_name)
         return None
 
     def initialize_agents(self, agent_names: List[str]) -> None:
         """
         Pre-initialize specific agents (called by intent planner).
 
-        This allows the orchestrator to only initialize the agents
-        that are actually needed for the current request.
+        Note: With eager initialization enabled, all agents are already initialized
+        at startup, so this method is now a no-op kept for backwards compatibility.
 
         Args:
             agent_names: List of agent names to initialize
         """
-        for agent_name in agent_names:
-            if agent_name not in self.agents and agent_name in self._agent_classes:
-                logger.info(f"[AGENT REGISTRY] Pre-initializing {agent_name} agent")
-                agent_class = self._agent_classes[agent_name]
-                self.agents[agent_name] = agent_class(self.config)
+        # No-op: All agents are already eagerly initialized in __init__
+        logger.debug(f"[AGENT REGISTRY] initialize_agents() called but agents already initialized (eager mode)")
 
     def get_all_tools(self) -> List:
         """Get all tools from all agents."""

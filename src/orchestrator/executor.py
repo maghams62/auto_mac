@@ -7,6 +7,7 @@ Separation of Concerns:
 """
 
 import logging
+import re
 from typing import Dict, Any, List, Optional
 from enum import Enum
 
@@ -16,6 +17,7 @@ from .tools_catalog import build_tool_parameter_index
 
 
 logger = logging.getLogger(__name__)
+PLACEHOLDER_PATTERN = re.compile(r"\$step\d+[^\s]+")
 
 
 class ExecutionStatus(Enum):
@@ -110,6 +112,10 @@ class PlanExecutor:
             "status": ExecutionStatus.IN_PROGRESS
         }
 
+        success_steps = 0
+        failed_steps = 0
+        skipped_steps = 0
+
         # Execute steps
         for i, step in enumerate(plan):
             step_id = step.get("id", i)
@@ -123,16 +129,17 @@ class PlanExecutor:
                     "skipped": True,
                     "error_message": "Dependencies not met"
                 }
+                skipped_steps += 1
                 continue
 
             # Execute the step
             step_result = self._execute_step(step, state)
             state["step_results"][step_id] = step_result
+            step_success = self._log_step_outcome(step_id, step, step_result)
 
             # Check if step failed
             if step_result.get("error"):
                 logger.error(f"Step {step_id} failed: {step_result.get('error_message')}")
-
                 # Use Critic Agent to reflect on failure and suggest fixes
                 reflection = self._reflect_on_failure(step, step_result, state)
                 if reflection:
@@ -201,9 +208,20 @@ class PlanExecutor:
                         "replan_reason": f"Step {step_id} output doesn't match user intent: {verification.get('issues')}"
                     }
 
-            logger.info(f"Step {step_id} completed successfully")
+            if step_success:
+                success_steps += 1
+            else:
+                failed_steps += 1
 
         # All steps completed
+        logger.info(
+            "[EXECUTOR] Plan execution summary: total=%d, succeeded=%d, failed=%d, skipped=%d",
+            len(plan),
+            success_steps,
+            failed_steps,
+            skipped_steps,
+        )
+
         final_output = state["step_results"].get(plan[-1].get("id", len(plan) - 1)) if plan else None
 
         return {
@@ -290,13 +308,78 @@ class PlanExecutor:
                 "retry_possible": True
             }
 
+    def _log_step_outcome(self, step_id: Any, step: Dict[str, Any], result: Dict[str, Any]) -> bool:
+        """
+        Emit rich logging for step outcomes so CLI/UI discrepancies are easier to spot.
+
+        Returns True when the step is considered successful.
+        """
+        action = step.get("action", "unknown")
+        status = result.get("status") or ("error" if result.get("error") else "success")
+        success = not result.get("error") and status not in {"error", "failed", "failure"}
+        icon = "✅" if success else "❌"
+
+        summary_parts: List[str] = []
+        message = result.get("message")
+        if message:
+            summary_parts.append(f"message={self._compact_text(message)}")
+
+        error_message = result.get("error_message")
+        if error_message:
+            summary_parts.append(f"error={self._compact_text(error_message)}")
+        elif result.get("error"):
+            summary_parts.append("error flag set (no error_message)")
+
+        if result.get("skipped"):
+            summary_parts.append("skipped=True")
+
+        logger.info(
+            "[EXECUTOR] %s Step %s [%s] status=%s%s",
+            icon,
+            step_id,
+            action,
+            status,
+            f" | {' | '.join(summary_parts)}" if summary_parts else "",
+        )
+
+        if action == "reply_to_user":
+            details = result.get("details", "") or ""
+            if not (message or "").strip():
+                logger.warning("[EXECUTOR] reply_to_user produced an empty message payload")
+
+            combined_text = f"{message or ''} {details}"
+            unresolved = PLACEHOLDER_PATTERN.findall(combined_text)
+            if unresolved:
+                logger.warning(
+                    "[EXECUTOR] reply_to_user contains unresolved placeholders: %s",
+                    sorted(set(unresolved)),
+                )
+
+            if details:
+                logger.debug(
+                    "[EXECUTOR] reply_to_user details preview: %s",
+                    self._compact_text(details, limit=200),
+                )
+
+        return success
+
+    @staticmethod
+    def _compact_text(text: str, limit: int = 160) -> str:
+        """Compact text for logging by stripping whitespace and truncating."""
+        cleaned = " ".join(text.split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return f"{cleaned[:limit - 3]}..."
+
     def _resolve_parameters(
         self,
         parameters: Dict[str, Any],
         state: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Resolve parameter references like $step1.output.
+        Resolve parameter references like $step1.output and template strings like "Found {$step1.count} items".
+
+        Uses shared template resolver for consistency across all executors.
 
         Args:
             parameters: Parameters with potential references
@@ -305,38 +388,9 @@ class PlanExecutor:
         Returns:
             Parameters with references resolved
         """
-        resolved = {}
+        from ..utils.template_resolver import resolve_parameters as resolve_params
 
-        for key, value in parameters.items():
-            if isinstance(value, str) and value.startswith("$step"):
-                # Parse reference: $step1.field.subfield
-                parts = value[1:].split(".")  # Remove $ and split
-                step_ref = parts[0]  # "step1"
-                field_path = parts[1:]  # ["field", "subfield"]
-
-                # Extract step ID
-                step_id = int(step_ref.replace("step", ""))
-
-                # Get step result
-                step_result = state["step_results"].get(step_id)
-                if step_result:
-                    # Navigate field path
-                    current_value = step_result
-                    for field in field_path:
-                        if isinstance(current_value, dict):
-                            current_value = current_value.get(field)
-                        else:
-                            current_value = None
-                            break
-
-                    resolved[key] = current_value
-                else:
-                    logger.warning(f"Reference {value} points to non-existent step {step_id}")
-                    resolved[key] = None
-            else:
-                resolved[key] = value
-
-        return resolved
+        return resolve_params(parameters, state["step_results"])
 
     def _validate_parameters(
         self,

@@ -15,6 +15,8 @@ from langchain_core.tools import tool
 from pathlib import Path
 import logging
 
+from ..config import get_config_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +38,8 @@ def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
     logger.info(f"[FILE AGENT] Tool: search_documents(query='{query}')")
 
     try:
-        from documents import DocumentIndexer, SemanticSearch
-        from utils import load_config
+        from src.documents import DocumentIndexer, SemanticSearch
+        from src.utils import load_config
 
         config = load_config()
         indexer = DocumentIndexer(config)
@@ -104,8 +106,8 @@ def extract_section(doc_path: str, section: str) -> Dict[str, Any]:
     logger.info(f"[FILE AGENT] Tool: extract_section(doc_path='{doc_path}', section='{section}')")
 
     try:
-        from documents import DocumentParser, SemanticSearch, DocumentIndexer
-        from utils import load_config
+        from src.documents import DocumentParser, SemanticSearch, DocumentIndexer
+        from src.utils import load_config
 
         config = load_config()
         parser = DocumentParser(config)
@@ -294,15 +296,13 @@ def organize_files(
 
     try:
         from src.automation.file_organizer import FileOrganizer
-        from src.utils import load_config
         from src.documents.search import SemanticSearch
         from src.documents import DocumentIndexer
 
-        config = load_config()
-        organizer = FileOrganizer(config)
-
-        # Get source directory from config
-        source_directory = config.get('document_directory', './test_data')
+        context = get_config_context()
+        config = context.data
+        accessor = context.accessor
+        organizer = FileOrganizer(config, accessor)
 
         # Initialize search engine for content analysis
         search_engine = None
@@ -316,10 +316,17 @@ def organize_files(
         result = organizer.organize_files(
             category=category,
             target_folder=target_folder,
-            source_directory=source_directory,
             search_engine=search_engine,
             move=move_files
         )
+
+        if result.get('error'):
+            return {
+                "error": True,
+                "error_type": result.get('error_type', 'OrganizationError'),
+                "error_message": result.get('error_message', 'File organization failed'),
+                "retry_possible": False
+            }
 
         if result['success']:
             return {
@@ -384,16 +391,27 @@ def create_zip_archive(
         import os
         from pathlib import Path
         import fnmatch
-        from ..utils import load_config
+        from src.config_validator import ConfigValidationError
 
-        config = load_config()
+        context = get_config_context()
+        config = context.data
+        accessor = context.accessor
 
         # Ensure .zip extension
         if not zip_name.endswith('.zip'):
             zip_name += '.zip'
 
         # Resolve source path (default to document directory if not provided)
-        doc_dir = config.get('document_directory', './test_data')
+        try:
+            doc_dir = accessor.get_primary_document_directory()
+        except ConfigValidationError as exc:
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": str(exc),
+                "retry_possible": False
+            }
+
         source_path = source_path or doc_dir
 
         # Make path absolute

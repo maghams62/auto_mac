@@ -3,10 +3,12 @@
 # OpenAI API Configuration
 openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
-  model: "gpt-4o"  # GPT-4o for all LLM tasks
+  model: "o4-mini"  # o4-mini for all LLM tasks
   embedding_model: "text-embedding-3-small"
   temperature: 0.7
   max_tokens: 2000
+
+document_directory: "/Users/siddharthsuresh/Downloads/auto_mac/test_docs"
 
 # Document Configuration
 documents:
@@ -111,6 +113,9 @@ browser:
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   file: "data/app.log"
+  max_bytes: 10485760  # 10MB - max size before rotation
+  backup_count: 5  # Number of backup log files to keep
+  json_format: true  # Use JSON format for structured logging (true) or human-readable (false)
 
 # Twitter Configuration
 twitter:

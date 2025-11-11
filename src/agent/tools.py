@@ -11,6 +11,7 @@ import logging
 from src.documents import DocumentIndexer, DocumentParser, SemanticSearch
 from src.automation import MailComposer, KeynoteComposer, PagesComposer
 from src.utils import load_config
+from src.config import get_config_context
 
 logger = logging.getLogger(__name__)
 config = load_config()
@@ -554,15 +555,13 @@ def organize_files(
     """
     try:
         from ..automation.file_organizer import FileOrganizer
-        from ..utils import load_config
         from ..documents.search import SemanticSearch
         from ..documents import DocumentIndexer
 
-        config = load_config()
-        organizer = FileOrganizer(config)
-
-        # Get source directory from config
-        source_directory = config.get('document_directory', './test_data')
+        context = get_config_context()
+        config = context.data
+        accessor = context.accessor
+        organizer = FileOrganizer(config, accessor)
 
         # Initialize search engine for content analysis
         search_engine = None
@@ -578,10 +577,17 @@ def organize_files(
         result = organizer.organize_files(
             category=category,
             target_folder=target_folder,
-            source_directory=source_directory,
             search_engine=search_engine,
             move=move_files
         )
+
+        if result.get('error'):
+            return {
+                "error": True,
+                "error_type": result.get('error_type', 'OrganizationError'),
+                "error_message": result.get('error_message', 'File organization failed'),
+                "retry_possible": False
+            }
 
         if result['success']:
             return {

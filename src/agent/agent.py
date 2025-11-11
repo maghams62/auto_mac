@@ -71,10 +71,27 @@ class AutomationAgent:
         
         # Get OpenAI config through accessor (validates API key exists)
         openai_config = self.config_accessor.get_openai_config()
+        # Handle both dict and OpenAISettings dataclass
+        if hasattr(openai_config, 'model'):
+            # It's an OpenAISettings dataclass
+            model = openai_config.model
+            api_key = openai_config.api_key
+            temperature = openai_config.temperature if hasattr(openai_config, 'temperature') else 0.7
+        else:
+            # It's a dict (backward compatibility)
+            model = openai_config["model"]
+            api_key = openai_config["api_key"]
+            temperature = openai_config.get("temperature", 0.7)
+
+        # o-series models (o1, o3, o4) only support temperature=1
+        if model and model.startswith(("o1", "o3", "o4")):
+            temperature = 1
+            logger.info(f"[AUTOMATION AGENT] Using temperature=1 for o-series model: {model}")
+
         self.llm = ChatOpenAI(
-            model=openai_config["model"],
-            temperature=0.0,
-            api_key=openai_config["api_key"]
+            model=model,
+            temperature=temperature,
+            api_key=api_key
         )
 
         # Session management
@@ -92,16 +109,38 @@ class AutomationAgent:
         self.graph = self._build_graph()
 
     def _load_prompts(self) -> Dict[str, str]:
-        """Load prompt templates from markdown files."""
+        """
+        Load prompt templates from markdown files.
+
+        Core prompts (system, task_decomposition) are loaded directly.
+        Few-shot examples are loaded via PromptRepository for modular, agent-scoped loading.
+        """
         prompts_dir = Path(__file__).parent.parent.parent / "prompts"
 
         prompts = {}
-        for prompt_file in ["system.md", "task_decomposition.md", "few_shot_examples.md"]:
+        # Load core prompts directly
+        for prompt_file in ["system.md", "task_decomposition.md"]:
             path = prompts_dir / prompt_file
             if path.exists():
                 prompts[prompt_file.replace(".md", "")] = path.read_text()
             else:
                 logger.warning(f"Prompt file not found: {path}")
+
+        # Load few-shot examples via PromptRepository (modular, agent-scoped)
+        # For the automation agent (main planner), load "automation" agent examples
+        try:
+            from src.prompt_repository import PromptRepository
+            repo = PromptRepository()
+            few_shot_content = repo.to_prompt_block("automation")
+            prompts["few_shot_examples"] = few_shot_content
+            logger.info(f"[PROMPT LOADING] Loaded agent-scoped examples for 'automation' agent via PromptRepository")
+        except Exception as exc:
+            logger.warning(f"Failed to load few-shot examples via PromptRepository: {exc}")
+            # Fallback to monolithic file if PromptRepository fails
+            fallback_path = prompts_dir / "few_shot_examples.md"
+            if fallback_path.exists():
+                prompts["few_shot_examples"] = fallback_path.read_text()
+                logger.info("[PROMPT LOADING] Fell back to monolithic few_shot_examples.md")
 
         return prompts
 
@@ -149,8 +188,8 @@ class AutomationAgent:
             return state
         
         # Safety check: reject /clear commands (should be handled by WebSocket handler)
-        user_request = state.get('user_request', '').strip().lower()
-        if user_request == '/clear' or user_request == 'clear':
+        user_request_lowercase_only = state.get('user_request', '').strip().lower()
+        if user_request_lowercase_only == '/clear' or user_request_lowercase_only == 'clear':
             logger.warning("Received /clear command in agent - this should be handled by WebSocket handler")
             state["status"] = "error"
             state["final_result"] = {
@@ -161,12 +200,29 @@ class AutomationAgent:
             return state
         
         logger.info("=== PLANNING PHASE ===")
-        logger.info(f"User request: {state['user_request']}")
+        full_user_request = state.get("user_request", "")
+        logger.info(f"User request: {full_user_request}")
+        state["original_user_request"] = full_user_request
 
         # Build planning prompt
         system_prompt = self.prompts.get("system", "")
         task_decomp_prompt = self.prompts.get("task_decomposition", "")
         few_shot_examples = self.prompts.get("few_shot_examples", "")
+        user_request_lower = full_user_request.lower()
+
+        delivery_keywords = [" email", "email ", " send", "send ", " mail", "mail ", " attach", "attach "]
+        needs_email_delivery = any(keyword in user_request_lower for keyword in delivery_keywords)
+
+        delivery_guidance = ""
+        if needs_email_delivery:
+            delivery_guidance = """
+DELIVERY REQUIREMENT (AUTO-DETECTED):
+- The user explicitly asked to email or send the results.
+- Your plan MUST include a `compose_email` step (before the final `reply_to_user` step).
+- Reference outputs from earlier steps (e.g., `$stepN.summary`, `$stepN.file_path`, `$stepN.zip_path`) in the email body/attachments.
+- Set `"send": true` and rely on the default recipient when the user does not specify one.
+- The final `reply_to_user` step must confirm that the email was sent and summarize what was delivered.
+"""
         
         # Inject user context from config (constrains LLM to only use configured data)
         user_context = self.config_accessor.get_user_context_for_llm()
@@ -207,12 +263,14 @@ class AutomationAgent:
 
 {user_context}
 
+{delivery_guidance}
+
 AVAILABLE TOOLS (COMPLETE LIST - DO NOT HALLUCINATE OTHER TOOLS):
 {available_tools_list}
 
 {few_shot_examples}
 
-User Request: "{state['user_request']}"
+User Request: "{full_user_request}"
 
 CRITICAL REQUIREMENTS:
 1. **Tool Validation**: You may ONLY use tools from the list above. Any tool not listed does NOT exist.
@@ -281,13 +339,48 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             if plan.get('complexity') == 'impossible':
                 reason = plan.get('reason', 'Unknown reason')
                 logger.warning(f"Task deemed impossible: {reason}")
-                state["status"] = "error"
-                state["final_result"] = {
-                    "error": True,
-                    "message": f"Cannot complete request: {reason}",
-                    "missing_capabilities": reason
-                }
-                return state
+
+                # GUARD: Check if this is a false negative for known supported workflows
+                available_tools = {tool.name for tool in ALL_AGENT_TOOLS}
+
+                # Check for common false negatives
+                false_negative = False
+
+                # 1. Duplicate detection + email (both tools exist)
+                if ('duplicate' in user_request_lower and 'email' in user_request_lower):
+                    if 'folder_find_duplicates' in available_tools and 'compose_email' in available_tools:
+                        logger.warning(
+                            "[GUARD] LLM incorrectly marked duplicate-email workflow as impossible. "
+                            "Both folder_find_duplicates and compose_email are available!"
+                        )
+                        false_negative = True
+
+                # 2. Duplicate detection + send (both tools exist)
+                if ('duplicate' in user_request_lower and 'send' in user_request_lower):
+                    if 'folder_find_duplicates' in available_tools and 'compose_email' in available_tools:
+                        logger.warning(
+                            "[GUARD] LLM incorrectly marked duplicate-send workflow as impossible. "
+                            "Both folder_find_duplicates and compose_email are available!"
+                        )
+                        false_negative = True
+
+                if false_negative:
+                    # Don't return error, let the LLM try again with stronger prompt
+                    logger.error(
+                        "[GUARD] Forcing re-plan: LLM incorrectly determined supported workflow is impossible. "
+                        "This is a prompt alignment issue that needs fixing."
+                    )
+                    # Fall through to the next validation - don't mark as error
+
+                else:
+                    # Legitimate impossible case
+                    state["status"] = "error"
+                    state["final_result"] = {
+                        "error": True,
+                        "message": f"Cannot complete request: {reason}",
+                        "missing_capabilities": reason
+                    }
+                    return state
 
             # CRITICAL VALIDATION: Reject hallucinated tools
             valid_tool_names = {tool.name for tool in ALL_AGENT_TOOLS}
@@ -307,6 +400,28 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     "message": f"Plan validation failed: hallucinated tools {invalid_tools}. Valid tools: {sorted(valid_tool_names)}"
                 }
                 return state
+
+            if needs_email_delivery:
+                has_compose_email_step = any(
+                    step.get("action") == "compose_email" for step in plan.get("steps", [])
+                )
+                if not has_compose_email_step:
+                    logger.error(
+                        "[DELIVERY GUARD] Plan missing required 'compose_email' step despite email/send intent. "
+                        "Rejecting plan so planner can align with delivery requirement."
+                    )
+                    state["status"] = "error"
+                    state["final_result"] = {
+                        "error": True,
+                        "message": (
+                            "Plan validation failed: the request asked to email the results, but the generated plan omitted "
+                            "the compose_email step. Re-run the request so the planner can include the delivery step."
+                        )
+                    }
+                    return state
+
+            # PLAN VALIDATION & AUTO-CORRECTION: Fix known bad patterns before execution
+            plan = self._validate_and_fix_plan(plan, full_user_request)
 
             state["goal"] = plan["goal"]
             state["steps"] = plan["steps"]
@@ -518,10 +633,110 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             if reply_payload.get("artifacts"):
                 summary["artifacts"] = reply_payload["artifacts"]
 
+        # Always check step_results for richer message if current message is generic/short
+        # This handles cases where reply agent gives generic message but search has detailed summary
+        current_message = summary.get("message", "")
+        if step_results and len(current_message) < 100:
+            # Look through all step results for message/summary/content
+            for step_id in sorted(step_results.keys()):
+                step_result = step_results[step_id]
+                if isinstance(step_result, dict) and step_result.get("type") != "reply":
+                    # Skip reply payloads, look for actual tool results
+                    # Extract message using same logic as slash commands
+                    extracted_message = (
+                        step_result.get("summary") or  # Try summary first (search results)
+                        step_result.get("message") or
+                        step_result.get("content") or
+                        step_result.get("response") or
+                        None
+                    )
+                    # Use this if it's longer/more detailed than current message
+                    if extracted_message and len(extracted_message) > len(current_message):
+                        summary["message"] = extracted_message
+                        logger.info(f"[FINALIZE] Using richer message from step {step_id} ({len(extracted_message)} chars)")
+                        break  # Use first substantive message found
+
+        delivery_verbs = ["email", "send", "mail", "attach"]
+        request_lower = (state.get("original_user_request") or state.get("user_request") or "").lower()
+
+        email_result = None
+        for step_id, step_result in step_results.items():
+            if isinstance(step_result, dict) and step_result.get("tool") == "compose_email":
+                email_result = step_result
+                summary["compose_email_step_id"] = step_id
+                break
+
+        if email_result:
+            email_status_value = (email_result.get("status") or "").lower()
+            email_message = email_result.get("message") or ""
+            base_message = summary.get("message", "")
+
+            if email_status_value == "sent":
+                if base_message:
+                    if "email" not in base_message.lower() and "sent" not in base_message.lower():
+                        summary["message"] = f"{base_message.rstrip('. ')}. Email sent as requested."
+                else:
+                    summary["message"] = email_message or "Email sent with the requested information."
+            elif email_status_value in {"draft", "drafted"}:
+                summary["status"] = "partial_success"
+                draft_note = email_message or "Email drafted for your review. Please confirm and send it manually."
+                if base_message:
+                    summary["message"] = f"{base_message.rstrip('. ')}. {draft_note}"
+                else:
+                    summary["message"] = draft_note
+            else:
+                if any(verb in request_lower for verb in delivery_verbs):
+                    summary["status"] = "partial_success"
+                    failure_note = email_message or "Attempted to prepare the email, but delivery status is unclear."
+                    if base_message:
+                        summary["message"] = f"{base_message.rstrip('. ')}. {failure_note}"
+                    else:
+                        summary["message"] = failure_note
+        else:
+            if any(verb in request_lower for verb in delivery_verbs):
+                base_message = summary.get("message", "")
+                summary["status"] = "partial_success"
+                note = "Email step was not executed. Please retry the request."
+                if base_message:
+                    summary["message"] = f"{base_message.rstrip('. ')}. {note}"
+                else:
+                    summary["message"] = note
+
         state["final_result"] = summary
         state["status"] = "completed"
 
         logger.info(f"Final status: {summary['status']}")
+
+        # CRITICAL: Check for unresolved template placeholders (regression detection)
+        message = summary.get("message", "")
+        details = summary.get("details", "")
+        combined = f"{message} {details}"
+
+        # Detect orphaned braces (sign of partial template resolution)
+        import re
+        if re.search(r'\{[\d.]+\}', combined):
+            logger.error(
+                "[FINALIZE] ❌ REGRESSION: Message contains orphaned braces (partial template resolution)! "
+                f"Message: {message[:100]}"
+            )
+
+        # Detect unresolved template placeholders
+        if "{$step" in combined or re.search(r'\$step\d+\.', combined):
+            logger.error(
+                "[FINALIZE] ❌ REGRESSION: Message contains unresolved template placeholders! "
+                f"Message: {message[:100]}"
+            )
+
+        # Detect invalid placeholder patterns like {file1.name} or {fileX.field}
+        # These are NOT part of the template language and indicate the planner
+        # is copying the wrong example from the prompt
+        invalid_placeholders = re.findall(r'\{(file\d+\.[a-z_]+|[a-z]+\d+\.[a-z_]+)\}', combined, re.IGNORECASE)
+        if invalid_placeholders:
+            logger.error(
+                "[FINALIZE] ❌ REGRESSION: Message contains invalid placeholder patterns! "
+                f"Found: {invalid_placeholders}. These are not valid template syntax. "
+                f"Message: {message[:100]}"
+            )
 
         return state
 
@@ -550,6 +765,206 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             return True
         return False
 
+    def _validate_and_fix_plan(self, plan: Dict[str, Any], user_request: str) -> Dict[str, Any]:
+        """
+        Validate and auto-correct known bad patterns in plans before execution.
+
+        This prevents regressions where the planner uses invalid placeholder syntax
+        that was fixed in prompts but occasionally reappears.
+
+        Args:
+            plan: The parsed plan from the LLM
+            user_request: Original user request for context
+
+        Returns:
+            Corrected plan with invalid patterns fixed
+        """
+        import re
+
+        fixed_steps = []
+        corrections_made = []
+        warnings = []
+
+        # Track what tools are used in the plan
+        has_keynote_creation = False
+        has_email = False
+        keynote_step_id = None
+        has_writing_tool = False
+        candidate_body_steps: List[int] = []
+
+        steps = plan.get("steps", [])
+
+        # First pass: Identify tool usage patterns
+        for step in steps:
+            action = step.get("action", "")
+            if action in ["create_keynote", "create_keynote_with_images"]:
+                has_keynote_creation = True
+                keynote_step_id = step.get("id")
+            if action == "compose_email":
+                has_email = True
+            if action in ["synthesize_content", "create_detailed_report", "format_writing"]:
+                has_writing_tool = True
+            step_id = step.get("id")
+            if step_id is not None and action not in ["compose_email", "reply_to_user"]:
+                candidate_body_steps.append(step_id)
+
+        # Second pass: Validate and fix each step
+        for step in steps:
+            step_fixed = False
+            action = step.get("action", "")
+            params = step.get("parameters", {})
+            step_id = step.get("id")
+
+            # VALIDATION 1: reply_to_user with invalid placeholders
+            if action == "reply_to_user":
+                # Check details field for invalid placeholder patterns
+                details = params.get("details", "")
+                if isinstance(details, str):
+                    # Detect invalid patterns like {file1.name}, {file2.name}, etc.
+                    invalid_pattern = re.search(r'\{(file\d+\.[a-z_]+|[a-z]+\d+\.[a-z_]+)\}', details, re.IGNORECASE)
+
+                    if invalid_pattern:
+                        logger.warning(
+                            f"[PLAN VALIDATION] ❌ Step {step.get('id')} has invalid placeholder pattern: {invalid_pattern.group(0)}"
+                        )
+
+                        # Auto-fix: Replace with correct pattern based on context
+                        if "duplicate" in user_request.lower():
+                            # For duplicate queries, use $step1.duplicates
+                            dup_step_id = None
+                            for s in steps:
+                                if s.get("action") == "folder_find_duplicates":
+                                    dup_step_id = s.get("id")
+                                    break
+
+                            if dup_step_id:
+                                params["details"] = f"$step{dup_step_id}.duplicates"
+                                step_fixed = True
+                                corrections_made.append(
+                                    f"Step {step.get('id')}: Changed invalid placeholder details to '$step{dup_step_id}.duplicates'"
+                                )
+                                logger.info(
+                                    f"[PLAN VALIDATION] ✅ Auto-corrected: details=\"$step{dup_step_id}.duplicates\""
+                                )
+
+            # VALIDATION 2: compose_email after keynote creation should reference the artifact
+            if action == "compose_email" and has_keynote_creation and keynote_step_id:
+                attachments = params.get("attachments", [])
+                # Check if attachments reference the keynote step
+                has_keynote_ref = any(
+                    isinstance(att, str) and f"$step{keynote_step_id}" in att
+                    for att in attachments
+                )
+
+                if not has_keynote_ref and not attachments:
+                    # Auto-fix: Add keynote artifact as attachment
+                    params["attachments"] = [f"$step{keynote_step_id}.file_path"]
+                    step_fixed = True
+                    corrections_made.append(
+                        f"Step {step.get('id')}: Added missing keynote attachment from step {keynote_step_id}"
+                    )
+                    logger.info(
+                        f"[PLAN VALIDATION] ✅ Auto-corrected: Added attachments=['$step{keynote_step_id}.file_path']"
+                    )
+                elif not has_keynote_ref and attachments:
+                    warnings.append(
+                        f"Step {step.get('id')}: Email has attachments but doesn't reference keynote from step {keynote_step_id}"
+                    )
+
+            # VALIDATION 2b: compose_email must send immediately when user requested delivery
+            if action == "compose_email":
+                send_flag = params.get("send")
+                if send_flag is None or send_flag is False:
+                    params["send"] = True
+                    step_fixed = True
+                    corrections_made.append(
+                        f"Step {step_id}: Enforced send=true for compose_email to satisfy delivery request"
+                    )
+                    logger.info(
+                        f"[PLAN VALIDATION] ✅ Auto-corrected: Step {step_id} now sets send=true for compose_email"
+                    )
+
+                body_value = params.get("body")
+                if not isinstance(body_value, str) or not body_value.strip():
+                    body_set = False
+                    for candidate_step_id in reversed(candidate_body_steps):
+                        for field in ["summary", "message", "content", "response"]:
+                            params["body"] = f"$step{candidate_step_id}.{field}"
+                            body_set = True
+                            step_fixed = True
+                            corrections_made.append(
+                                f"Step {step_id}: Added email body reference '$step{candidate_step_id}.{field}'"
+                            )
+                            logger.info(
+                                f"[PLAN VALIDATION] ✅ Auto-corrected: compose_email body now references $step{candidate_step_id}.{field}"
+                            )
+                            break
+                        if body_set:
+                            break
+                    if not body_set:
+                        params["body"] = "Summary of requested results."
+                        step_fixed = True
+                        corrections_made.append(
+                            f"Step {step_id}: Set fallback email body text because no suitable step references were available"
+                        )
+                        logger.info(
+                            f"[PLAN VALIDATION] ✅ Auto-corrected: compose_email body set to fallback summary text"
+                        )
+
+            fixed_steps.append(step)
+
+        # VALIDATION 3: Report/summary requests should use writing tools
+        report_keywords = ["report", "summary", "summarize", "digest", "analysis", "analyze"]
+        is_report_request = any(keyword in user_request.lower() for keyword in report_keywords)
+
+        # Check if we have social media fetching
+        has_social_fetch = any(
+            step.get("action", "").startswith(("fetch_twitter", "fetch_bluesky", "fetch_social"))
+            for step in steps
+        )
+
+        # Check if plan has reply_to_user
+        has_reply = any(s.get("action") == "reply_to_user" for s in steps)
+
+        if is_report_request and (has_email or has_reply) and not has_writing_tool:
+            if has_social_fetch:
+                warnings.append(
+                    "⚠️  CRITICAL: Social media digest/summary detected but plan skips Writing Agent! "
+                    "Required workflow: fetch_posts → synthesize_content → reply_to_user/compose_email. "
+                    "Raw post data lacks analysis and formatting."
+                )
+            else:
+                warnings.append(
+                    "Request appears to need a report/summary but plan skips writing tools. "
+                    "Consider using synthesize_content or create_detailed_report before email/reply."
+                )
+
+        # VALIDATION 4: Delivery intent detection - email/send/mail/attach verbs
+        delivery_verbs = ["email", "send", "mail", "attach"]
+        has_delivery_intent = any(verb in user_request.lower() for verb in delivery_verbs)
+
+        if has_delivery_intent and not has_email:
+            warnings.append(
+                "⚠️  CRITICAL: Request includes delivery intent ('email', 'send', 'mail', 'attach') "
+                "but plan is missing compose_email step! "
+                "Required pattern: [work_step] → compose_email → reply_to_user"
+            )
+
+        if corrections_made:
+            logger.warning(
+                f"[PLAN VALIDATION] Made {len(corrections_made)} corrections to plan:\n" +
+                "\n".join(f"  - {c}" for c in corrections_made)
+            )
+
+        if warnings:
+            logger.warning(
+                f"[PLAN VALIDATION] Potential issues detected:\n" +
+                "\n".join(f"  ⚠️  {w}" for w in warnings)
+            )
+
+        plan["steps"] = fixed_steps
+        return plan
+
     def _resolve_parameters(
         self,
         params: Dict[str, Any],
@@ -558,61 +973,16 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         Resolve context variables in parameters.
 
+        Uses shared template resolver for consistency across all executors.
+
         Handles both standalone variables and inline interpolation:
         - "$step1.doc_path" -> "/path/to/doc.pdf"
         - "Price is $step1.current_price" -> "Price is 225.50"
+        - "Found {$step1.count} items" -> "Found 5 items"
         """
-        resolved = {}
+        from ..utils.template_resolver import resolve_parameters as resolve_params
 
-        for key, value in params.items():
-            if isinstance(value, str):
-                # Check if entire value is a single context variable
-                if value.startswith("$step") and "." in value:
-                    parts = value[1:].split(".")
-                    if len(parts) == 2:
-                        step_ref, field = parts
-                        try:
-                            step_id = int(step_ref.replace("step", ""))
-                            if step_id in step_results:
-                                result = step_results[step_id]
-                                resolved[key] = result.get(field, value)
-                            else:
-                                logger.warning(f"Step {step_id} result not found for {value}")
-                                resolved[key] = value
-                        except ValueError:
-                            resolved[key] = value
-                    else:
-                        resolved[key] = value
-                else:
-                    # Handle inline variable interpolation using regex
-                    import re
-                    def replace_var(match):
-                        var_name = match.group(0)  # e.g., "$step1.current_price"
-                        parts = var_name[1:].split(".")  # ["step1", "current_price"]
-                        if len(parts) == 2:
-                            step_ref, field = parts
-                            try:
-                                step_id = int(step_ref.replace("step", ""))
-                                if step_id in step_results:
-                                    result = step_results[step_id]
-                                    field_value = result.get(field, var_name)
-                                    # Convert to string representation
-                                    return str(field_value) if field_value is not None else var_name
-                            except (ValueError, KeyError):
-                                pass
-                        return var_name
-
-                    # Replace all $stepN.field patterns
-                    resolved[key] = re.sub(r'\$step\d+\.\w+', replace_var, value)
-            elif isinstance(value, list):
-                # Handle lists (e.g., attachments)
-                resolved[key] = [
-                    self._resolve_single_value(v, step_results) for v in value
-                ]
-            else:
-                resolved[key] = value
-
-        return resolved
+        return resolve_params(params, step_results)
 
     def _resolve_single_value(self, value: Any, step_results: Dict[int, Any]) -> Any:
         """
@@ -791,9 +1161,23 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 if isinstance(result, dict):
                     if result.get("type") == "result":
                         tool_result = result.get("result", {})
+                        # Extract message from various possible fields (message, summary, content, etc.)
+                        message = (
+                            tool_result.get("message") or
+                            tool_result.get("summary") or
+                            tool_result.get("content") or
+                            tool_result.get("response") or
+                            "Command executed"
+                        )
+                        # Determine status: only mark as error if there's an explicit error field
+                        # Otherwise, default to success if we have a message/summary/content
+                        is_error = tool_result.get("error") is True
+                        has_content = bool(message and message != "Command executed")
+                        status = "error" if is_error else ("success" if has_content else "completed")
+
                         return {
-                            "status": "success" if tool_result.get("success") else "error",
-                            "message": tool_result.get("message", "Command executed"),
+                            "status": status,
+                            "message": message,
                             "final_result": tool_result,
                             "results": {1: tool_result}
                         }

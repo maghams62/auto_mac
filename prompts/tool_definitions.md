@@ -191,13 +191,24 @@ Complete specification of available tools for the automation agent.
   "body": "string - Email body (supports markdown)",
   "recipient": "string | null - Email address. If null, empty, or contains 'me'/'to me'/'my email', will use default_recipient from config.yaml (null = draft only if no default)",
   "attachments": "list[string] - File paths to attach",
-  "send": "bool - If true, send immediately; if false, open draft"
+  "send": "bool - CRITICAL: Set to true when user says 'email/send to me', false when user says 'create/draft email'"
 }
 ```
+
+**CRITICAL - Intent Detection for `send` parameter:**
+- ✅ **Use `send: true`** when user says:
+  - "email it to me" / "send it to me"
+  - "email the [content] to [recipient]"
+  - Any phrase indicating they want it sent automatically
+- ❌ **Use `send: false`** when user says:
+  - "create an email" / "draft an email"
+  - "compose an email" / "prepare an email"
+  - Any phrase indicating they want to review before sending
 
 **Special Behavior:**
 - If recipient is None, empty string, "me", "to me", "my email", or "myself", the tool automatically uses the `default_recipient` email address from config.yaml
 - This allows users to say "email the link to me" and it will use their configured default email (e.g., `your-email@example.com` from config.yaml)
+- When user says "email it to me", ALWAYS set `send: true` - they expect it to be sent automatically!
 
 **Returns:**
 ```json

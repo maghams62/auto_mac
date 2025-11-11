@@ -1,0 +1,206 @@
+{
+  "categories": {
+    "maps": [
+      "maps/01_example_13_maps_agent_simple_trip_with_fuel_stops_new.md",
+      "maps/02_example_14_maps_agent_trip_with_food_stops_new.md",
+      "maps/03_example_15_maps_agent_trip_with_fuel_and_food_stops_new.md",
+      "maps/04_example_16_maps_agent_trip_planning_with_google_maps_new.md",
+      "maps/05_example_17_maps_agent_open_maps_with_existing_route_new.md",
+      "maps/06_example_18_maps_agent_complex_trip_planning_new.md",
+      "maps/07_example_19_maps_agent_trip_planning_without_opening_maps_new.md",
+      "maps/08_example_20_maps_agent_international_trip_planning_new.md",
+      "maps/09_example_20a_maps_agent_transit_directions_with_google_maps_api_new_recommended.md",
+      "maps/10_example_20b_maps_agent_bicycle_directions_new_multi_modal.md",
+      "maps/11_example_20c_maps_agent_walking_directions_new_multi_modal.md",
+      "maps/12_example_20d_maps_agent_driving_directions_new_multi_modal.md",
+      "maps/13_maps_agent_tool_selection_decision_tree.md"
+    ],
+    "core": [
+      "core/01_preface.md",
+      "core/02_critical_planning_rules_read_first.md",
+      "core/03_example_0_capability_assessment_rejection_learn_this_pattern.md",
+      "core/04_pattern_recognition.md",
+      "core/05_common_mistakes_to_avoid.md",
+      "core/06_context_passing_syntax.md",
+      "core/07_comprehensive_tool_selection_decision_tree.md"
+    ],
+    "file": [
+      "file/01_example_21_file_agent_zip_non_music_files_and_email_new.md"
+    ],
+    "general": [
+      "general/01_example_1_simple_task_2_steps.md",
+      "general/02_example_2_screenshot_section_email_4_steps.md",
+      "general/03_example_3_specific_page_screenshot_email_3_steps.md",
+      "general/04_example_3_screenshot_presentation_email_5_steps.md",
+      "general/05_example_4_medium_complex_task_5_steps.md",
+      "general/06_example_4_complex_task_7_steps.md",
+      "general/07_example_5_parallel_execution_complex.md",
+      "general/08_example_search_and_email.md"
+    ],
+    "web": [
+      "web/01_example_29_web_local_research_with_bluesky_signals_new.md"
+    ],
+    "stocks": [
+      "stocks/01_example_10_stock_agent_stock_analysis_slide_deck_new.md",
+      "stocks/02_example_11_stock_agent_compare_multiple_stocks_new.md",
+      "stocks/03_example_11a_stock_comparison_slide_deck_correct_pattern.md"
+    ],
+    "cross_domain": [
+      "cross_domain/01_example_28_cross_domain_report_slides_email_new.md",
+      "cross_domain/02_example_bluesky_posts_to_slideshow_email.md"
+    ],
+    "safety": [
+      "safety/01_example_30_safety_guardrail_unsupported_media_edit_new.md"
+    ],
+    "screen": [
+      "screen/01_example_12_screen_agent_stock_analysis_with_screenshot_new.md"
+    ],
+    "email": [
+      "email/01_example_22_email_agent_read_latest_emails_new.md",
+      "email/02_example_23_email_agent_read_emails_by_sender_new.md",
+      "email/03_example_24_email_agent_summarize_recent_emails_new.md",
+      "email/04_example_25_email_agent_read_summarize_with_focus_new.md",
+      "email/05_example_26_email_agent_multi_step_email_workflow_new.md",
+      "email/06_example_27_email_agent_reply_to_email_new.md",
+      "email/07_email_agent_tool_selection_guide.md"
+    ],
+    "writing": [
+      "writing/01_example_6_writing_agent_create_slide_deck_on_topic_new.md",
+      "writing/02_example_7_writing_agent_multi_source_research_report_new.md",
+      "writing/03_example_8_writing_agent_web_research_to_presentation_new.md",
+      "writing/04_example_9_writing_agent_meeting_notes_new.md"
+    ]
+  },
+  "agents": {
+    "automation": [
+      "core",
+      "general",
+      "safety",
+      "cross_domain"
+    ],
+    "file": [
+      "core",
+      "general",
+      "file"
+    ],
+    "folder": [
+      "core",
+      "general",
+      "file"
+    ],
+    "google": [
+      "core",
+      "general",
+      "web"
+    ],
+    "browser": [
+      "core",
+      "general",
+      "web"
+    ],
+    "presentation": [
+      "core",
+      "general",
+      "cross_domain"
+    ],
+    "email": [
+      "core",
+      "general",
+      "email",
+      "cross_domain"
+    ],
+    "writing": [
+      "core",
+      "general",
+      "writing",
+      "cross_domain"
+    ],
+    "critic": [
+      "core",
+      "general",
+      "safety"
+    ],
+    "report": [
+      "core",
+      "general",
+      "writing",
+      "cross_domain"
+    ],
+    "google_finance": [
+      "core",
+      "general",
+      "stocks"
+    ],
+    "maps": [
+      "core",
+      "general",
+      "maps"
+    ],
+    "imessage": [
+      "core",
+      "general"
+    ],
+    "discord": [
+      "core",
+      "general"
+    ],
+    "reddit": [
+      "core",
+      "general",
+      "web"
+    ],
+    "twitter": [
+      "core",
+      "general",
+      "web"
+    ],
+    "notifications": [
+      "core",
+      "general"
+    ],
+    "micro_actions": [
+      "core",
+      "general"
+    ],
+    "voice": [
+      "core",
+      "general"
+    ],
+    "vision": [
+      "core",
+      "general",
+      "safety"
+    ],
+    "bluesky": [
+      "core",
+      "general",
+      "web"
+    ],
+    "whatsapp": [
+      "core",
+      "general"
+    ],
+    "reply": [
+      "core",
+      "general"
+    ],
+    "spotify": [
+      "core",
+      "general"
+    ],
+    "celebration": [
+      "core",
+      "general"
+    ],
+    "stock": [
+      "core",
+      "general",
+      "stocks",
+      "screen"
+    ],
+    "screen": [
+      "core",
+      "screen"
+    ]
+  }
+}
