@@ -64,13 +64,37 @@ Given a user request, break it down into a sequence of executable steps using av
   - Structuring informal notes
   - Workflow: `search` → `extract_section` → `create_meeting_notes` → `create_pages_doc` or `compose_email`
 
+**For Real-Time Information Queries (CRITICAL!):**
+- ✅ **ALWAYS use `google_search` for queries requiring current/real-time information:**
+  - Sports scores, game results, match outcomes
+  - Latest news, current events, breaking news
+  - Current weather, live data
+  - Recent events, today's happenings
+  - Any query asking for "latest", "current", "last", "recent", "today", "now"
+  
+- 📋 **Standard workflow for real-time queries:**
+  1. `google_search("<query>", num_results=5)` - Search for the information
+  2. `navigate_to_url` (optional) - Navigate to top result if more detail needed
+  3. `extract_page_content` (optional) - Extract detailed content if needed
+  4. `reply_to_user` - Present the search results to the user
+  
+- ✅ **Examples:**
+  - "Arsenal's last game score" → `google_search("Arsenal last game score", num_results=5)` → `reply_to_user` with actual score extracted from `$step1.results[0].snippet`
+  - "Latest news about AI" → `google_search("latest AI news", num_results=5)` → `reply_to_user` with actual news content from `$step1.results[0].snippet`
+  - "What happened today?" → `google_search("news today", num_results=5)` → `reply_to_user` with actual news from `$step1.results[0].snippet`
+  
+- ❌ **NEVER** return a generic message like "Here are the search results" without actually running `google_search` first!
+- ❌ **NEVER** assume you know current information - always search for it!
+- ❌ **NEVER** say "Here is the score" without including the actual score from search results!
+- ✅ **ALWAYS extract the actual answer** from `$step1.results[0].snippet` - it contains the information the user asked for!
+
 **For Stock Data/Analysis (CRITICAL!):**
 - ✅ **ALWAYS use Stock Agent tools for stock/finance data** after you have a confirmed ticker
 - 🕵️ **Step 0 – Mandatory Browser Research (Playwright):**
   - Unless the user explicitly supplies a valid ticker symbol (e.g., "MSFT", "AAPL", "BOSCHLTD.NS"), you MUST use the Browser Agent (Playwright) to discover/verify the ticker via allowlisted finance sites **before** touching stock tools.
   - Standard ticker pattern:
     1. `google_search("Bosch stock ticker", num_results=3)`
-    2. `navigate_to_url` on an allowed finance domain (finance.yahoo.com, bloomberg.com, etc.)
+    2. `navigate_to_url` on an allowed finance domain from config.yaml (see browser.allowed_domains)
     3. `extract_page_content` to read the page and capture the precise ticker string
   - Capture the ticker from the extracted text and use that value for all subsequent stock tools.
 - 🗞️ **Step 0b – Latest News Harvest (ALWAYS):**
@@ -150,7 +174,7 @@ If a user query matches one of these shapes, **any extra action steps are a bug*
     "action": "organize_files",
     "parameters": {
       "category": "non-PDF files",
-      "target_folder": "misc_folder",
+      "target_folder": "misc_folder",  // Use user-specified folder name
       "move_files": true
     }
   }
@@ -167,8 +191,10 @@ If a user query matches one of these shapes, **any extra action steps are a bug*
   1. Run `organize_files` (or another LLM-driven classifier) to gather the requested subset into a dedicated folder without destroying the originals (set `move_files=false` when you only need a copy).
   2. Call `create_zip_archive` on that folder OR on the original folder with the new `include_extensions`, `exclude_extensions`, and/or `include_pattern` arguments (e.g., `include_pattern="A*"` for filenames starting with A or `exclude_extensions=["mp3","wav","flac"]` for "non music").
   3. If the user wants the archive emailed, finish with `compose_email`, attaching `$stepN.zip_path`.
+  4. **CRITICAL: Set `send: true` when user says "email X to me" or "send X"** - they want it sent, not drafted!
 - ❌ Do NOT zip the entire source when the user asked for a filtered subset.
 - ❌ Do NOT omit the email step when the user explicitly asked to send the archive.
+- ❌ Do NOT use `send: false` when user says "email to me" or "send" - use `send: true`!
 
 ## Planning Process (Follow This Order!)
 
@@ -244,4 +270,4 @@ If a user query matches one of these shapes, **any extra action steps are a bug*
 
 ## Few-Shot Examples
 
-See [few_shot_examples.md](./few_shot_examples.md) for detailed examples of task decomposition.
+See the agent-scoped library in [examples/README.md](./examples/README.md) for detailed task decomposition patterns.

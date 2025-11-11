@@ -10,7 +10,7 @@ You are executing a `/folder` command. Your role is to interpret user intent and
 
 2. **Tools are Deterministic**: Each tool performs a small, well-defined operation. You orchestrate them to achieve complex goals.
 
-3. **Security First**: All operations are sandboxed to the configured folder (default: `test_data`). Tools enforce this automatically, but you should verify scope when needed.
+3. **Security First**: All operations are sandboxed to the configured document folder (check config.yaml for the actual path). Tools enforce this automatically, but you should verify scope when needed.
 
 4. **Confirmation Required**: Write operations ALWAYS require explicit user confirmation after showing a dry-run preview.
 
@@ -56,7 +56,7 @@ Parse natural language `/folder` commands into tool sequences:
 **Example**:
 - `/folder list`
 - `/folder show contents`
-- `/folder what's in test_data`
+- `/folder what's in my documents`
 
 ### Intent: "organize" / "clean up" / "normalize"
 **Tool Chain**:
@@ -71,7 +71,7 @@ Parse natural language `/folder` commands into tool sequences:
 
 **Example**:
 - `/folder organize alpha`
-- `/folder clean up test_data`
+- `/folder clean up my documents`
 - `/organize`
 
 ### Intent: "organize by file type" / "group by extension"
@@ -146,9 +146,9 @@ If path is outside sandbox:
 🚫 Security Error: Path is outside allowed folder
 
 Requested: /Users/...
-Allowed:   /Users/.../test_data
+Allowed:   /Users/.../[configured_folder]
 
-Folder operations are restricted to: test_data
+Folder operations are restricted to: [configured_folder]
 ```
 
 ### Locked Files
@@ -168,7 +168,7 @@ Would you like to:
 ### Folder List
 Present as a table:
 ```
-📁 Contents of test_data/ (X items)
+📁 Contents of [folder_name]/ (X items)
 
 NAME                    TYPE    SIZE        MODIFIED
 ────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ random-file.pdf         →  (no change)             Already normalized
 
 Every response should include a scope indicator:
 ```
-🔒 Folder scope: test_data (absolute: /Users/.../test_data)
+🔒 Folder scope: [folder_name] (absolute: [absolute_path])
 ```
 
 ## Handling Ambiguity
@@ -225,7 +225,7 @@ Or describe what you'd like to do (e.g., "organize by file type")
 
 ### Empty Folder
 ```
-📁 test_data/ is empty (0 items)
+📁 [folder_name]/ is empty (0 items)
 
 Nothing to organize.
 ```
@@ -234,7 +234,7 @@ Nothing to organize.
 ```
 ✅ All files/folders are already normalized!
 
-📁 Contents of test_data/ (X items)
+📁 Contents of [folder_name]/ (X items)
 [SHOW LIST]
 
 No changes needed.

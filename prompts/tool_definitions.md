@@ -172,7 +172,7 @@ Complete specification of available tools for the automation agent.
 {
   "action": "take_screenshot",
   "parameters": {
-    "doc_path": "/Users/me/Documents/report.pdf",
+    "doc_path": "$step1.doc_path",
     "pages": [3, 5, 7]
   }
 }
@@ -197,7 +197,7 @@ Complete specification of available tools for the automation agent.
 
 **Special Behavior:**
 - If recipient is None, empty string, "me", "to me", "my email", or "myself", the tool automatically uses the `default_recipient` email address from config.yaml
-- This allows users to say "email the link to me" and it will use their configured default email (spamstuff062@gmail.com)
+- This allows users to say "email the link to me" and it will use their configured default email (e.g., `your-email@example.com` from config.yaml)
 
 **Returns:**
 ```json
@@ -215,7 +215,7 @@ Complete specification of available tools for the automation agent.
     "subject": "Q3 Report",
     "body": "Please find the Q3 earnings report attached.",
     "recipient": "john@example.com",
-    "attachments": ["/Users/me/Documents/q3.pdf"],
+    "attachments": ["$step1.doc_path"],
     "send": true
   }
 }
@@ -433,15 +433,14 @@ Complete specification of available tools for the automation agent.
 {
   "action": "create_zip_archive",
   "parameters": {
-    "source_path": "test_data",
-    "zip_name": "study_stuff.zip",
+    "zip_name": "study_stuff.zip",  // Use user-specified name from request
     "exclude_extensions": ["mp3", "wav", "flac"]
   }
 }
 ```
 
 **Planner Tips:**
-- If `source_path` is omitted, the tool automatically zips from the primary document directory.
+- **IMPORTANT**: If `source_path` is omitted or null, the tool automatically zips from the primary configured document directory. Only specify source_path if the user explicitly mentions a specific subfolder.
 - Use `include_pattern` for filename patterns (e.g., "A*" for files starting with "A").
 - Use `exclude_extensions` for requests like "zip all non-music files".
 - Use `include_extensions` to target specific file types (e.g., only PDFs).
@@ -1841,7 +1840,7 @@ Each slide object contains:
   "parameters": {
     "message": "Summaries delivered! Check the attachment.",
     "details": "- Converted the report to Pages\n- Drafted the email for review",
-    "artifacts": ["~/Documents/reports/Q3_summary.pages"],
+    "artifacts": ["$step5.pages_path"],
     "status": "success"
   },
   "reasoning": "Provide the user-friendly wrap-up referencing earlier outputs"
