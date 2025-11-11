@@ -67,6 +67,11 @@ We are now perfecting the agents one at a time. Each cycle follows the same reci
 - **Domain**: Official Twitter list ingestion and summarization
 - **LEVEL 1** hierarchy
 
+### 7. BLUESKY AGENT (`src/agent/bluesky_agent.py`)
+- **3 tools**: search_bluesky_posts, summarize_bluesky_posts, post_bluesky_update
+- **Domain**: Bluesky (AT Protocol) discovery, summarization, and publishing
+- **LEVEL 1-3** hierarchy
+
 ## Architecture
 
 ```
@@ -79,9 +84,9 @@ We are now perfecting the agents one at a time. Each cycle follows the same reci
    FileAgent         BrowserAgent         PresentationAgent     EmailAgent
    WritingAgent      CriticAgent          ReportAgent           GoogleFinanceAgent
    MapsAgent         iMessageAgent        DiscordAgent          RedditAgent
-   TwitterAgent      (Stock/Screen tools registering next…)
+   TwitterAgent      BlueskyAgent         (Stock/Screen tools registering next…)
 
-Total (currently wired): 12 agents, 23 tools
+Total (currently wired): 13 agents, 26 tools
 ```
 
 ## Key Features

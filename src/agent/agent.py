@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 from . import ALL_AGENT_TOOLS
+from .feasibility_checker import FeasibilityChecker
 from .verifier import OutputVerifier
 from ..memory import SessionManager
 
@@ -36,6 +37,9 @@ class AgentState(TypedDict):
     # Session context (NEW)
     session_id: Optional[str]
     session_context: Optional[Dict[str, Any]]
+    tool_attempts: Dict[str, int]
+    vision_usage: Dict[str, Any]
+    recent_errors: Dict[str, List[str]]
 
     # Output
     final_result: Optional[Dict[str, Any]]
@@ -60,6 +64,10 @@ class AutomationAgent:
         # Initialize config accessor for safe, validated access
         from ..config_validator import ConfigAccessor
         self.config_accessor = ConfigAccessor(config)
+
+        # Vision / feasibility configuration
+        self.vision_config = self.config_accessor.get_vision_config()
+        self.feasibility_checker = FeasibilityChecker(self.vision_config)
         
         # Get OpenAI config through accessor (validates API key exists)
         openai_config = self.config_accessor.get_openai_config()
@@ -218,6 +226,7 @@ PLANNING GUIDELINES:
 - "create_keynote" is ONLY for text-based presentations
 - IMPORTANT: If a step uses "$stepX.field" in parameters, you MUST list X in the "dependencies" array
 - If a step depends on another step's output, list that step ID in "dependencies"
+- After all work steps are complete, add a FINAL step that calls "reply_to_user" to deliver a polished summary referencing prior outputs
 
 If you CANNOT complete the request with available tools, respond with:
 {{
@@ -362,20 +371,66 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
         # Get tool
         tool_name = step["action"]
-        tool = next((t for t in ALL_AGENT_TOOLS if t.name == tool_name), None)
+        tool_attempts = state.setdefault("tool_attempts", {})
+        attempt = tool_attempts.get(tool_name, 0) + 1
+        tool_attempts[tool_name] = attempt
+
+        recent_error_history = state.get("recent_errors", {}).get(tool_name, [])
+        vision_usage = state.setdefault("vision_usage", {"count": 0, "session_count": 0})
+
+        if self.feasibility_checker and self.feasibility_checker.enabled:
+            decision = self.feasibility_checker.should_use_vision(
+                tool_name=tool_name,
+                attempt_count=attempt,
+                recent_errors=recent_error_history,
+                vision_usage=vision_usage
+            )
+            if decision.use_vision:
+                vision_result = self._run_vision_pipeline(
+                    state=state,
+                    step=step,
+                    decision=decision,
+                    attempt=attempt
+                )
+                vision_result.setdefault("tool", tool_name)
+                state["step_results"][step["id"]] = vision_result
+                vision_usage["count"] = vision_usage.get("count", 0) + 1
+                vision_usage["session_count"] = vision_usage.get("session_count", 0) + 1
+
+                if vision_result.get("error"):
+                    self._record_tool_error(
+                        state,
+                        tool_name,
+                        vision_result.get("error_message", "Vision analysis failed")
+                    )
+                else:
+                    self._clear_tool_errors(state, tool_name)
+
+                state["current_step"] = current_idx + 1
+                return state
+
+        tool = self._get_tool_by_name(tool_name)
 
         if not tool:
             logger.error(f"Tool not found: {tool_name}")
             state["step_results"][step["id"]] = {
                 "error": True,
-                "message": f"Tool '{tool_name}' not found"
+                "message": f"Tool '{tool_name}' not found",
+                "tool": tool_name
             }
+            self._record_tool_error(state, tool_name, "Tool not found in registry")
         else:
             # Execute tool
             try:
                 result = tool.invoke(resolved_params)
                 logger.info(f"Step {step['id']} result: {result}")
+                result.setdefault("tool", tool_name)
                 state["step_results"][step["id"]] = result
+
+                if result.get("error"):
+                    self._record_tool_error(state, tool_name, result.get("error_message", "Unknown error"))
+                else:
+                    self._clear_tool_errors(state, tool_name)
 
                 # Verify output for critical steps (screenshots, attachments, etc.)
                 if self._should_verify_step(step):
@@ -400,8 +455,10 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 logger.error(f"Error executing step {step['id']}: {e}")
                 state["step_results"][step["id"]] = {
                     "error": True,
-                    "message": str(e)
+                    "message": str(e),
+                    "tool": tool_name
                 }
+                self._record_tool_error(state, tool_name, str(e))
 
         # Move to next step
         state["current_step"] = current_idx + 1
@@ -443,6 +500,23 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 not r.get("error", False) for r in state.get("step_results", {}).values()
             ) else "partial_success"
         }
+
+        # Prefer dedicated reply payload for user-facing communication
+        step_results = state.get("step_results", {})
+        reply_payload = None
+        for step_id, step_result in step_results.items():
+            if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                reply_payload = step_result
+                summary["reply_step_id"] = step_id
+                break
+
+        if reply_payload:
+            summary["status"] = reply_payload.get("status", summary["status"])
+            summary["message"] = reply_payload.get("message", "")
+            if reply_payload.get("details"):
+                summary["details"] = reply_payload["details"]
+            if reply_payload.get("artifacts"):
+                summary["artifacts"] = reply_payload["artifacts"]
 
         state["final_result"] = summary
         state["status"] = "completed"
@@ -580,6 +654,91 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
         return value
 
+    def _get_tool_by_name(self, tool_name: str):
+        return next((t for t in ALL_AGENT_TOOLS if t.name == tool_name), None)
+
+    def _record_tool_error(self, state: AgentState, tool_name: str, message: str):
+        if not message:
+            return
+        errors = state.setdefault("recent_errors", {})
+        history = errors.setdefault(tool_name, [])
+        history.append(message)
+        if len(history) > 5:
+            history.pop(0)
+
+    def _clear_tool_errors(self, state: AgentState, tool_name: str):
+        errors = state.get("recent_errors")
+        if errors and tool_name in errors:
+            errors.pop(tool_name, None)
+
+    def _run_vision_pipeline(
+        self,
+        state: AgentState,
+        step: Dict[str, Any],
+        decision,
+        attempt: int
+    ) -> Dict[str, Any]:
+        tool_name = step.get("action")
+        logger.info(
+            "[VISION PIPELINE] Escalating step %s (%s) with decision=%s",
+            step.get("id"),
+            tool_name,
+            decision.reason
+        )
+
+        screenshot_tool = self._get_tool_by_name("capture_screenshot")
+        if not screenshot_tool:
+            return {
+                "error": True,
+                "error_type": "VisionPipelineError",
+                "error_message": "capture_screenshot tool unavailable",
+                "escalated_to_vision": True,
+            }
+
+        target_app = step.get("parameters", {}).get("app_name")
+        screenshot_params = {
+            "output_name": f"vision_{tool_name}_{attempt}"
+        }
+        if target_app:
+            screenshot_params["app_name"] = target_app
+
+        screenshot_result = screenshot_tool.invoke(screenshot_params)
+        if screenshot_result.get("error"):
+            return {
+                **screenshot_result,
+                "escalated_to_vision": True
+            }
+
+        screenshot_path = screenshot_result.get("screenshot_path")
+
+        vision_tool = self._get_tool_by_name("analyze_ui_screenshot")
+        if not vision_tool:
+            return {
+                "error": True,
+                "error_type": "VisionPipelineError",
+                "error_message": "analyze_ui_screenshot tool unavailable",
+                "screenshot_path": screenshot_path,
+                "escalated_to_vision": True,
+            }
+
+        vision_payload = {
+            "screenshot_path": screenshot_path,
+            "goal": state.get("goal") or state.get("user_request"),
+            "tool_name": tool_name,
+            "recent_errors": state.get("recent_errors", {}).get(tool_name, []),
+            "attempt": attempt
+        }
+
+        analysis = vision_tool.invoke(vision_payload)
+        analysis.setdefault("status", "action_required")
+        analysis["screenshot_path"] = screenshot_path
+        analysis["escalated_to_vision"] = True
+        analysis["vision_decision"] = {
+            "confidence": decision.confidence,
+            "reason": decision.reason
+        }
+        return analysis
+
     def _should_verify_step(self, step: Dict[str, Any]) -> bool:
         """
         Determine if a step's output should be verified.
@@ -618,11 +777,52 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         logger.info(f"Starting agent for request: {user_request}")
 
+        # Check if this is a slash command and handle it directly
+        if user_request.strip().startswith('/'):
+            from ..ui.slash_commands import SlashCommandHandler
+            from ..agent.agent_registry import AgentRegistry
+            
+            registry = AgentRegistry(self.config, session_manager=self.session_manager)
+            handler = SlashCommandHandler(registry, self.config)
+            is_command, result = handler.handle(user_request, session_id=session_id)
+            
+            if is_command:
+                # Format result to match agent.run() return format
+                if isinstance(result, dict):
+                    if result.get("type") == "result":
+                        tool_result = result.get("result", {})
+                        return {
+                            "status": "success" if tool_result.get("success") else "error",
+                            "message": tool_result.get("message", "Command executed"),
+                            "final_result": tool_result,
+                            "results": {1: tool_result}
+                        }
+                    elif result.get("type") == "error":
+                        return {
+                            "status": "error",
+                            "message": result.get("content", "Command failed"),
+                            "final_result": {"error": True, "error_message": result.get("content")}
+                        }
+                    else:
+                        # Help or other types - return as is
+                        return {
+                            "status": "success",
+                            "message": result.get("content", str(result)),
+                            "final_result": result
+                        }
+                return {
+                    "status": "success",
+                    "message": str(result),
+                    "final_result": result
+                }
+
         # Get session context if available
         session_context = None
         if self.session_manager and session_id:
             session_context = self.session_manager.get_langgraph_context(session_id)
             logger.info(f"[SESSION] Loaded context for session: {session_id}")
+        shared_context = (session_context or {}).get("shared_context", {})
+        session_vision_count = shared_context.get("vision_session_count", 0)
 
         # Initialize state
         initial_state = {
@@ -639,7 +839,13 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             "status": "planning",
             "cancel_event": cancel_event,
             "cancelled": False,
-            "cancellation_reason": None
+            "cancellation_reason": None,
+            "tool_attempts": {},
+            "vision_usage": {
+                "count": 0,
+                "session_count": session_vision_count
+            },
+            "recent_errors": {}
         }
 
         # Run graph
@@ -650,6 +856,9 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             # Record interaction in session memory
             if self.session_manager and session_id:
                 memory = self.session_manager.get_or_create_session(session_id)
+                vision_usage = final_state.get("vision_usage", {})
+                if vision_usage:
+                    memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
                 memory.add_interaction(
                     user_request=user_request,
                     agent_response=result,

@@ -29,6 +29,9 @@ def build_agent_capabilities(registry) -> List[Dict[str, Any]]:
     from ..agent.reddit_agent import REDDIT_AGENT_HIERARCHY
     from ..agent.twitter_agent import TWITTER_AGENT_HIERARCHY
     from ..agent.notifications_agent import NOTIFICATIONS_AGENT_HIERARCHY
+    from ..agent.spotify_agent import SPOTIFY_AGENT_HIERARCHY
+    from ..agent.whatsapp_agent import WHATSAPP_AGENT_HIERARCHY
+    from ..agent.celebration_agent import CELEBRATION_AGENT_HIERARCHY
 
     # Map agent names to their static hierarchy documentation
     hierarchy_map = {
@@ -48,6 +51,9 @@ def build_agent_capabilities(registry) -> List[Dict[str, Any]]:
         "reddit": REDDIT_AGENT_HIERARCHY,
         "twitter": TWITTER_AGENT_HIERARCHY,
         "notifications": NOTIFICATIONS_AGENT_HIERARCHY,
+        "spotify": SPOTIFY_AGENT_HIERARCHY,
+        "whatsapp": WHATSAPP_AGENT_HIERARCHY,
+        "celebration": CELEBRATION_AGENT_HIERARCHY,
     }
 
     capabilities: List[Dict[str, Any]] = []

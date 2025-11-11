@@ -233,21 +233,71 @@ def extract_google_finance_data(url: str) -> Dict[str, Any]:
                 "retry_possible": True
             }
 
-        # Extract stock price
+        # Extract stock price - try multiple selectors for robustness
         price_data = {}
         try:
-            # Price element
+            # Try primary price selector
             price_elem = page.locator('div[class*="YMlKec fxKbKc"]').first
-            if price_elem:
-                price_data["price"] = price_elem.text_content().strip()
+            try:
+                price_text = price_elem.text_content(timeout=2000)
+                if price_text and price_text.strip():
+                    price_data["price"] = price_text.strip()
+                    logger.info(f"[GOOGLE FINANCE AGENT] Extracted price: {price_data['price']}")
+            except:
+                pass
 
-            # Change element
+            # Try alternative price selectors if primary failed
+            if not price_data.get("price"):
+                alt_selectors = [
+                    'div[data-field="regularMarketPrice"]',
+                    'span[data-field="regularMarketPrice"]',
+                    'div[jsname="vWLAgc"]',
+                    '[data-last-price]'
+                ]
+                for selector in alt_selectors:
+                    try:
+                        alt_elem = page.locator(selector).first
+                        price_text = alt_elem.text_content(timeout=1000)
+                        if price_text and price_text.strip():
+                            price_data["price"] = price_text.strip()
+                            logger.info(f"[GOOGLE FINANCE AGENT] Extracted price via {selector}: {price_data['price']}")
+                            break
+                    except:
+                        continue
+
+            # Extract change element
             change_elem = page.locator('div[class*="JwB6zf"]').first
-            if change_elem:
-                price_data["change"] = change_elem.text_content().strip()
+            try:
+                change_text = change_elem.text_content(timeout=2000)
+                if change_text and change_text.strip():
+                    price_data["change"] = change_text.strip()
+                    logger.info(f"[GOOGLE FINANCE AGENT] Extracted change: {price_data['change']}")
+            except:
+                pass
+
+            # Try alternative change selectors
+            if not price_data.get("change"):
+                change_selectors = [
+                    'div[data-field="regularMarketChangePercent"]',
+                    'span[data-field="regularMarketChangePercent"]',
+                    'div[jsname="qRSVye"]'
+                ]
+                for selector in change_selectors:
+                    try:
+                        alt_elem = page.locator(selector).first
+                        change_text = alt_elem.text_content(timeout=1000)
+                        if change_text and change_text.strip():
+                            price_data["change"] = change_text.strip()
+                            logger.info(f"[GOOGLE FINANCE AGENT] Extracted change via {selector}: {price_data['change']}")
+                            break
+                    except:
+                        continue
+
+            if not price_data:
+                logger.warning(f"[GOOGLE FINANCE AGENT] Could not extract price data - selectors may have changed")
 
         except Exception as e:
-            logger.warning(f"[GOOGLE FINANCE AGENT] Could not extract price: {e}")
+            logger.warning(f"[GOOGLE FINANCE AGENT] Error extracting price: {e}")
 
         # Extract AI Research section
         research_text = None
@@ -456,42 +506,66 @@ def create_stock_report_from_google_finance(company: str, output_format: str = "
             from .presentation_agent import create_keynote_with_images
             from .writing_agent import create_slide_deck_content
 
-            # Format content for slides
+            # Format content for slides - ensure price data is prominently included
             content_parts = [f"{company_name} ({ticker}) Stock Analysis"]
 
-            if data_result.get("price_data"):
-                price_info = data_result["price_data"]
-                content_parts.append(f"\nCurrent Price: {price_info.get('price', 'N/A')}")
-                content_parts.append(f"Change: {price_info.get('change', 'N/A')}")
+            # Extract and include price data if available
+            price_info = data_result.get("price_data", {})
+            if price_info and (price_info.get("price") or price_info.get("change")):
+                # Make price information explicit and prominent
+                price_str = price_info.get("price", "N/A")
+                change_str = price_info.get("change", "N/A")
+                content_parts.append(f"\nSTOCK PRICE INFORMATION:")
+                content_parts.append(f"Current Price: {price_str}")
+                content_parts.append(f"Price Change: {change_str}")
+
+            # Include statistics if available
+            stats = data_result.get("statistics", {})
+            if stats:
+                content_parts.append(f"\nKEY STATISTICS:")
+                for key, value in list(stats.items())[:5]:  # Limit to top 5 stats
+                    content_parts.append(f"{key}: {value}")
 
             if data_result.get("research"):
-                content_parts.append(f"\n{data_result['research'][:500]}")
+                content_parts.append(f"\nMARKET ANALYSIS:")
+                content_parts.append(f"{data_result['research'][:500]}")
 
             content_text = "\n".join(content_parts)
 
-            # Generate slide content
+            # Generate slide content with explicit instruction to preserve price data
             slide_content_result = create_slide_deck_content.invoke({
                 "content": content_text,
                 "title": f"{company_name} Stock Analysis",
-                "num_slides": 3
+                "num_slides": 4  # Increased to ensure price info gets its own slide
             })
+
+            # Use formatted_content (the correct key) and fallback to original content with price info
+            formatted_slide_content = slide_content_result.get("formatted_content", "")
+            
+            # If formatted content doesn't include price, prepend it explicitly
+            if price_info and (price_info.get("price") or price_info.get("change")):
+                price_slide = f"\n\nSTOCK PRICE\n• Current Price: {price_info.get('price', 'N/A')}\n• Change: {price_info.get('change', 'N/A')}"
+                # Check if price is already in formatted content
+                if price_info.get("price") and price_info.get("price") not in formatted_slide_content:
+                    formatted_slide_content = price_slide + formatted_slide_content
 
             # Create presentation
             pres_result = create_keynote_with_images.invoke({
                 "title": f"{company_name} Stock Analysis",
-                "content": slide_content_result.get("content", content_text),
+                "content": formatted_slide_content if formatted_slide_content else content_text,
                 "image_paths": [chart_path] if chart_path else []
             })
 
             return {
                 "success": True,
                 "output_format": "presentation",
-                "presentation_path": pres_result.get("file_path"),
+                "presentation_path": pres_result.get("keynote_path") or pres_result.get("file_path"),
                 "chart_path": chart_path,
                 "company": company_name,
                 "ticker": ticker,
                 "google_finance_url": url,
                 "data_extracted": data_result,
+                "price_data": price_info,  # Include price data in return for verification
                 "message": f"Presentation created for {company_name} ({ticker})"
             }
 

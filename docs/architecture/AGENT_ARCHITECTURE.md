@@ -210,6 +210,18 @@ and create a Keynote presentation from the summary section"
       },
       "dependencies": [4],
       "reasoning": "Create presentation from summary"
+    },
+    {
+      "id": 6,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Presentation created and email drafted.",
+        "details": "- Draft email ready in Mail.app\n- Keynote saved with summary content",
+        "artifacts": ["$step2.screenshot_paths", "$step5.keynote_path"],
+        "status": "success"
+      },
+      "dependencies": [2, 5],
+      "reasoning": "Deliver a polished update with links to generated assets"
     }
   ]
 }
@@ -242,6 +254,16 @@ Step 5: create_keynote("Tesla Autopilot Summary", ...)
   ✓ Depends on: Step 4 ✓
   ✓ Resolved: $step4.extracted_text → "Summary content..."
   ✓ Result: {keynote_path: "/Documents/presentation.key"}
+
+Step 6: reply_to_user(...)
+  ✓ Depends on: Steps 2 & 5 ✓
+  ✓ Resolved: $step2.screenshot_paths → ["/tmp/page3.png"]
+              $step5.keynote_path → "/Documents/presentation.key"
+  ✓ Result: {
+      type: "reply",
+      message: "Presentation created and email drafted.",
+      artifacts: ["/tmp/page3.png", "/Documents/presentation.key"]
+    }
 ```
 
 ### 3. Finalization
@@ -250,15 +272,23 @@ Step 5: create_keynote("Tesla Autopilot Summary", ...)
 ```json
 {
   "goal": "Find document, capture screenshot, create presentation",
-  "steps_executed": 5,
+  "steps_executed": 6,
   "results": {
     "1": {"doc_path": "/Documents/tesla.pdf"},
     "2": {"screenshot_paths": ["/tmp/page3.png"]},
     "3": {"status": "draft"},
     "4": {"extracted_text": "..."},
-    "5": {"keynote_path": "/Documents/presentation.key"}
+    "5": {"keynote_path": "/Documents/presentation.key"},
+    "6": {
+      "type": "reply",
+      "message": "Presentation created and email drafted.",
+      "artifacts": ["/tmp/page3.png", "/Documents/presentation.key"],
+      "status": "success"
+    }
   },
-  "status": "success"
+  "status": "success",
+  "message": "Presentation created and email drafted.",
+  "artifacts": ["/tmp/page3.png", "/Documents/presentation.key"]
 }
 ```
 

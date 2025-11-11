@@ -277,12 +277,51 @@ def main():
                             logger.warning(f"Could not auto-open Maps URL: {e}")
                             ui.show_message(f"💡 Click the URL above or run: open '{maps_url}'", style="yellow")
                     else:
-                        # Show task completion and step results only if it's not a Maps result
-                        ui.show_message("✅ Task completed successfully!", style="green")
+                        # Prefer human-friendly reply payload if present
+                        step_results = result.get("results", {}) or {}
+                        reply_payload = None
+
+                        reply_step_id = result.get("reply_step_id")
+                        if reply_step_id is not None and step_results.get(reply_step_id):
+                            reply_payload = step_results.get(reply_step_id)
+                        else:
+                            for candidate in step_results.values():
+                                if isinstance(candidate, dict) and candidate.get("type") == "reply":
+                                    reply_payload = candidate
+                                    break
+
+                        if reply_payload:
+                            status_map = {
+                                "success": ("✅", "green"),
+                                "partial_success": ("⚠", "yellow"),
+                                "info": ("ℹ", "cyan"),
+                                "error": ("❌", "red"),
+                            }
+                            status = reply_payload.get("status", result.get("status", "success"))
+                            icon, style = status_map.get(status, ("✅", "green"))
+                            message_text = reply_payload.get("message") or "Task completed."
+                            ui.show_message(f"{icon} {message_text}", style=style)
+
+                            details_text = (reply_payload.get("details") or "").strip()
+                            if details_text:
+                                from rich.panel import Panel
+                                from rich.markdown import Markdown
+                                ui.console.print(Panel(Markdown(details_text), border_style="blue", title="Details"))
+
+                            artifacts = [a for a in reply_payload.get("artifacts", []) if a]
+                            if artifacts:
+                                from rich.panel import Panel
+                                artifact_lines = "\n".join(f"- {artifact}" for artifact in artifacts)
+                                ui.console.print(Panel(artifact_lines, border_style="cyan", title="📎 Artifacts"))
+                        else:
+                            ui.show_message("✅ Task completed successfully!", style="green")
+
                         ui.show_message(f"Goal: {result.get('goal', 'N/A')}", style="cyan")
                         ui.show_message(f"Steps executed: {result.get('steps_executed', 0)}", style="cyan")
                         
-                        for step_id, step_result in result.get("results", {}).items():
+                        for step_id, step_result in step_results.items():
+                            if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                                continue
                             if step_result.get("error"):
                                 ui.show_message(f"❌ Step {step_id}: {step_result.get('message', 'Error')}", style="red")
                             else:

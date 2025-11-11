@@ -43,6 +43,14 @@ from .discord_agent import DiscordAgent, DISCORD_AGENT_TOOLS, DISCORD_AGENT_HIER
 from .reddit_agent import RedditAgent, REDDIT_AGENT_TOOLS, REDDIT_AGENT_HIERARCHY
 from .twitter_agent import TwitterAgent, TWITTER_AGENT_TOOLS, TWITTER_AGENT_HIERARCHY
 from .notifications_agent import NotificationsAgent, NOTIFICATIONS_AGENT_TOOLS, NOTIFICATIONS_AGENT_HIERARCHY
+from .vision_agent import VisionAgent, VISION_AGENT_TOOLS, VISION_AGENT_HIERARCHY
+from .micro_actions_agent import MicroActionsAgent, MICRO_ACTIONS_AGENT_TOOLS, MICRO_ACTIONS_AGENT_HIERARCHY
+from .voice_agent import VoiceAgent, VOICE_AGENT_TOOLS, VOICE_AGENT_HIERARCHY
+from .bluesky_agent import BlueskyAgent, BLUESKY_AGENT_TOOLS, BLUESKY_AGENT_HIERARCHY
+from .whatsapp_agent import WhatsAppAgent, WHATSAPP_AGENT_TOOLS, WHATSAPP_AGENT_HIERARCHY
+from .reply_tool import ReplyAgent, REPLY_AGENT_TOOLS, REPLY_AGENT_HIERARCHY
+from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIERARCHY
+from .celebration_agent import CelebrationAgent, CELEBRATION_AGENT_TOOLS, CELEBRATION_AGENT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +74,15 @@ ALL_AGENT_TOOLS = (
     DISCORD_AGENT_TOOLS +
     REDDIT_AGENT_TOOLS +
     TWITTER_AGENT_TOOLS +
-    NOTIFICATIONS_AGENT_TOOLS
+    BLUESKY_AGENT_TOOLS +
+    NOTIFICATIONS_AGENT_TOOLS +
+    VISION_AGENT_TOOLS +
+    MICRO_ACTIONS_AGENT_TOOLS +
+    VOICE_AGENT_TOOLS +
+    WHATSAPP_AGENT_TOOLS +
+    REPLY_AGENT_TOOLS +
+    SPOTIFY_AGENT_TOOLS +
+    CELEBRATION_AGENT_TOOLS
 )
 # Legacy compatibility
 ALL_TOOLS = FILE_AGENT_TOOLS + PRESENTATION_AGENT_TOOLS + EMAIL_AGENT_TOOLS
@@ -93,9 +109,9 @@ for its domain:
    └─ Domain: Presentation and document creation
    └─ Tools: create_keynote, create_keynote_with_images, create_pages_doc
 
-4. EMAIL AGENT (1 tool)
+4. EMAIL AGENT (6 tools)
    └─ Domain: Email operations
-   └─ Tools: compose_email
+   └─ Tools: compose_email, reply_to_email, read_latest_emails, read_emails_by_sender, read_emails_by_time, summarize_emails
 
 5. WRITING AGENT (4 tools)
    └─ Domain: Content synthesis and writing
@@ -109,12 +125,51 @@ for its domain:
    └─ Domain: Twitter list ingestion/summarization
    └─ Tools: summarize_list_activity
 
-8. MAPS AGENT (2 tools)
+8. BLUESKY AGENT (3 tools)
+   └─ Domain: Bluesky social discovery, summaries, and posting
+   └─ Tools: search_bluesky_posts, summarize_bluesky_posts, post_bluesky_update
+
+9. MAPS AGENT (2 tools)
    └─ Domain: Apple Maps trip planning and navigation
    └─ Tools: plan_trip_with_stops, open_maps_with_route
    └─ Integration: Uses AppleScript automation (MapsAutomation) for native macOS Maps.app control
 
-Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 50+ tools (and growing).
+10. MICRO ACTIONS AGENT (3 tools)
+   └─ Domain: Lightweight everyday utilities
+   └─ Tools: launch_app, copy_snippet, set_timer
+   └─ Integration: Built on simple AppleScript/open calls for fast micro-actions
+
+11. VISION AGENT (1 tool)
+   └─ Domain: Vision-assisted UI disambiguation
+   └─ Tools: analyze_ui_screenshot
+   └─ Purpose: Inspect screenshots when scripted flows fail or become ambiguous
+
+12. VOICE AGENT (2 tools)
+   └─ Domain: Speech-to-text and text-to-speech
+   └─ Tools: transcribe_audio_file, text_to_speech
+   └─ Integration: Uses OpenAI Whisper API for STT and OpenAI TTS API for speech generation
+
+13. WHATSAPP AGENT (9 tools)
+   └─ Domain: WhatsApp message reading and analysis
+   └─ Tools: whatsapp_ensure_session, whatsapp_navigate_to_chat, whatsapp_read_messages, whatsapp_read_messages_from_sender, whatsapp_read_group_messages, whatsapp_detect_unread, whatsapp_list_chats, whatsapp_summarize_messages, whatsapp_extract_action_items
+   └─ Integration: Uses macOS UI automation (AppleScript/System Events) for WhatsApp Desktop, similar to Discord agent pattern
+
+14. REPLY AGENT (1 tool)
+   └─ Domain: User communication
+   └─ Tools: reply_to_user
+   └─ Purpose: Centralizes UI-facing messaging so agents deliver polished summaries instead of raw JSON payloads
+
+15. SPOTIFY AGENT (3 tools)
+   └─ Domain: Music playback control
+   └─ Tools: play_music, pause_music, get_spotify_status
+   └─ Integration: Uses AppleScript to control Spotify desktop app on macOS
+
+16. CELEBRATION AGENT (1 tool)
+   └─ Domain: Celebratory effects and fun interactions
+   └─ Tools: trigger_confetti
+   └─ Integration: Uses AppleScript to trigger macOS celebration effects
+
+Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 60+ tools (and growing).
 
 Each agent:
 - Has a clear domain of responsibility
@@ -169,6 +224,14 @@ class AgentRegistry:
             "reddit": RedditAgent,
             "twitter": TwitterAgent,
             "notifications": NotificationsAgent,
+            "micro_actions": MicroActionsAgent,
+            "voice": VoiceAgent,
+            "vision": VisionAgent,
+            "bluesky": BlueskyAgent,
+            "whatsapp": WhatsAppAgent,
+            "reply": ReplyAgent,
+            "spotify": SpotifyAgent,
+            "celebration": CelebrationAgent,
         }
 
         # Cache for instantiated agents (lazy initialization)
@@ -193,6 +256,14 @@ class AgentRegistry:
             "reddit": REDDIT_AGENT_TOOLS,
             "twitter": TWITTER_AGENT_TOOLS,
             "notifications": NOTIFICATIONS_AGENT_TOOLS,
+            "micro_actions": MICRO_ACTIONS_AGENT_TOOLS,
+            "voice": VOICE_AGENT_TOOLS,
+            "vision": VISION_AGENT_TOOLS,
+            "bluesky": BLUESKY_AGENT_TOOLS,
+            "whatsapp": WHATSAPP_AGENT_TOOLS,
+            "reply": REPLY_AGENT_TOOLS,
+            "spotify": SPOTIFY_AGENT_TOOLS,
+            "celebration": CELEBRATION_AGENT_TOOLS,
         }
 
         for agent_name, tools in tool_lists.items():
@@ -311,16 +382,32 @@ class AgentRegistry:
 
         result = agent.execute(tool_name, inputs)
 
+        # Ensure result is a dictionary (defensive programming)
+        if not isinstance(result, dict):
+            logger.warning(f"[AGENT REGISTRY] Tool {tool_name} returned non-dict result: {type(result)}")
+            result = {"output": result, "error": False}
+
         # Store result in session context if needed
         if self.session_manager and session_id and not result.get("error"):
             memory = self.session_manager.get_or_create_session(session_id)
-            # Store commonly referenced results
+            # Store commonly referenced results (with defensive .get() calls)
             if tool_name == "take_screenshot":
-                memory.set_context("last_screenshot_path", result.get("screenshot_path"))
+                screenshot_path = result.get("screenshot_path")
+                if not screenshot_path:
+                    # Try alternative field name
+                    screenshot_paths = result.get("screenshot_paths", [])
+                    if isinstance(screenshot_paths, list) and len(screenshot_paths) > 0:
+                        screenshot_path = screenshot_paths[0]
+                if screenshot_path:
+                    memory.set_context("last_screenshot_path", screenshot_path)
             elif tool_name == "create_keynote" or tool_name == "create_keynote_with_images":
-                memory.set_context("last_presentation_path", result.get("file_path"))
+                file_path = result.get("file_path") or result.get("keynote_path")
+                if file_path:
+                    memory.set_context("last_presentation_path", file_path)
             elif tool_name == "search_documents":
-                memory.set_context("last_search_results", result.get("documents", []))
+                documents = result.get("documents", [])
+                if documents:
+                    memory.set_context("last_search_results", documents)
 
         return result
 
@@ -399,6 +486,15 @@ def get_agent_tool_mapping() -> Dict[str, str]:
 
     for tool in TWITTER_AGENT_TOOLS:
         mapping[tool.name] = "twitter"
+
+    for tool in NOTIFICATIONS_AGENT_TOOLS:
+        mapping[tool.name] = "notifications"
+
+    for tool in MICRO_ACTIONS_AGENT_TOOLS:
+        mapping[tool.name] = "micro_actions"
+
+    for tool in VOICE_AGENT_TOOLS:
+        mapping[tool.name] = "voice"
 
     return mapping
 

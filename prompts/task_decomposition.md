@@ -109,23 +109,23 @@ Given a user request, break it down into a sequence of executable steps using av
 Some workflows—especially those backed by AppleScript or native macOS automation—are intentionally **single-step**. Planning must not inflate them into multi-step chains or hallucinate follow-ups.
 
 **Do this:**
-1. **Return a one-step plan** when the user asks for document metadata, a single Google search, a standalone screenshot, or a Reddit scan with summary-only output.
+1. **Return the single action step plus a final `reply_to_user` step** when the user asks for document metadata, a single Google search, a standalone screenshot, or a Reddit scan with summary-only output.
 2. **Match agent responsibilities** precisely: File Agent for metadata, Browser Agent for search-only, Screen Agent for captures, Reddit Agent for subreddit summaries.
 3. **Skip critic/reflection steps** unless failure occurs or the user explicitly asks for validation.
-4. **Stop after the deterministic tool** completes—no unsolicited extraction, synthesis, or emailing.
+4. **Stop after the deterministic tool** completes—no unsolicited extraction, synthesis, or emailing. The only follow-up should be the reply.
 
 **Short examples (keep them literal):**
 
 - *Request:* "Find the 'EV Readiness Memo' and tell me where it lives."  
-  *Plan:* Single step using `search_documents` with reasoning "Return metadata only."
+  *Plan:* `search_documents` → `reply_to_user` (return metadata, then summarize for the user).
 - *Request:* "Run a Google search for 'WWDC 2024 keynote recap' and list the top domains."  
-  *Plan:* Single `google_search` step; no navigation, screenshots, or writing tools unless the user asks for deeper analysis.
+  *Plan:* `google_search` → `reply_to_user`; no navigation, screenshots, or writing tools unless the user asks for deeper analysis.
 - *Request:* "Capture whatever is on my main display as 'status_check'."  
-  *Plan:* Single `capture_screenshot` call with `output_name="status_check"`. Do not add verification steps.
+  *Plan:* `capture_screenshot` → `reply_to_user` with the saved path. Do not add verification steps.
 - *Request:* "Scan r/electricvehicles (hot, limit 5) and summarize the post titles only."  
-  *Plan:* Single `scan_subreddit_posts` step with provided parameters.
+  *Plan:* `scan_subreddit_posts` → `reply_to_user`.
 
-If a user query matches one of these shapes, **any extra steps are a bug**—simplify the plan instead of improvising.
+If a user query matches one of these shapes, **any extra action steps are a bug**—keep it to the single tool plus the required `reply_to_user`.
 
 **For File Organization:**
 - ✅ Use `organize_files` when:
@@ -207,6 +207,7 @@ If a user query matches one of these shapes, **any extra steps are a bug**—sim
 5. **Validate parameters** - check types, required fields, context variables
 6. **Create ordered execution plan** with explicit dependencies
 7. **Include reasoning** for each step
+8. **Add a final `reply_to_user` step** that summarizes the outcome and highlights artifacts using `$stepN.field` references
 
 ## Output Format
 
@@ -238,6 +239,7 @@ If a user query matches one of these shapes, **any extra steps are a bug**—sim
 - Always start with search if document needs to be found
 - Extract before processing (screenshots, content)
 - Compose/create actions come last (they consume earlier outputs)
+- Finish every successful plan with `reply_to_user` so the UI receives a polished summary (even for single-action tasks)
 - Use context passing between steps
 
 ## Few-Shot Examples

@@ -68,8 +68,11 @@ reddit:
 # Maps Configuration
 maps:
   max_stops: 20  # Maximum total stops (fuel + food combined) - can be increased if needed
-  default_maps_service: "apple"  # "apple" or "google" - which Maps service to use by default (LLM can override based on user query)
+  default_maps_service: "google"  # "apple" or "google" - which Maps service to use by default (LLM can override based on user query)
   stop_suggestion_max_tokens: 1000  # Max tokens for LLM stop suggestion (increased for international routes)
+
+  # Google Maps API configuration
+  google_maps_api_key: "${GOOGLE_MAPS_API_KEY}"  # Set in environment variable
 
 # UI Configuration
 ui:
@@ -116,3 +119,35 @@ twitter:
   lists:
     # Map logical names to actual Twitter List IDs (replace with your own)
     product_watch: "72719839"
+
+# Bluesky Configuration
+bluesky:
+  default_lookback_hours: 24           # Used when summarizing posts without explicit timeframe
+  max_summary_items: 5                 # Maximum posts to summarize
+  default_search_limit: 10             # Default number of posts to return for search
+  default_query: ""                    # Optional fallback query when none provided (leave empty to require explicit query)
+
+# Voice Configuration
+voice:
+  default_voice: "alloy"               # Default TTS voice: alloy, echo, fable, onyx, nova, shimmer
+  default_speed: 1.0                   # Default speech speed (0.25 to 4.0)
+  tts_model: "tts-1"                   # TTS model: "tts-1" (faster) or "tts-1-hd" (higher quality)
+  stt_model: "whisper-1"               # Speech-to-text model (Whisper)
+  audio_output_dir: "data/audio"       # Directory for generated audio files
+
+# WhatsApp Configuration
+whatsapp:
+  screenshot_dir: "data/screenshots"   # Directory for WhatsApp screenshots
+
+# Vision-Assisted UI Navigation
+vision:
+  enabled: false                       # Enable vision-based fallback path
+  min_confidence: 0.65                 # Confidence needed before using vision
+  max_calls_per_session: 5             # Limit per session to control cost
+  max_calls_per_task: 2                # Limit per automation run
+  retry_threshold: 2                   # Escalate after N scripted failures
+  eligible_tools:                      # Tools allowed to route through vision path
+    - open_maps_with_route
+    - plan_trip_with_stops
+    - launch_app
+    - send_whatsapp_message

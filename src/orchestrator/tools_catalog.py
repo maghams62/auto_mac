@@ -192,6 +192,78 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Create Pages documents from content"
         ),
+        "reply_to_user": ToolSpec(
+            name="reply_to_user",
+            kind="tool",
+            io={
+                "in": ["message: str", "details: Optional[str]", "artifacts: Optional[List[str]]", "status: str"],
+                "out": ["message", "details", "artifacts", "status"]
+            },
+            strengths=[
+                "Produces consistent, human-friendly responses",
+                "Allows agents to highlight key artifacts and context",
+                "Encodes status metadata for the UI"
+            ],
+            limits=[
+                "Must be supplied with meaningful content from prior steps",
+                "Does not execute actions—purely communication oriented"
+            ],
+            description="Compose the final user-facing reply with optional details and artifacts."
+        ),
+        "search_bluesky_posts": ToolSpec(
+            name="search_bluesky_posts",
+            kind="tool",
+            io={
+                "in": ["query: str", "max_posts: int"],
+                "out": ["query", "count", "posts"]
+            },
+            strengths=[
+                "Quickly discovers public Bluesky posts for a keyword or phrase",
+                "Returns metadata including author, engagement, and direct URLs",
+                "Supports configurable limits for lightweight investigations"
+            ],
+            limits=[
+                "Requires Bluesky credentials (identifier + app password)",
+                "Search is limited to public posts and current API constraints"
+            ],
+            description="Search Bluesky for recent posts matching a query."
+        ),
+        "summarize_bluesky_posts": ToolSpec(
+            name="summarize_bluesky_posts",
+            kind="tool",
+            io={
+                "in": ["query: str", "lookback_hours: Optional[int]", "max_items: Optional[int]"],
+                "out": ["summary", "items", "query", "time_window"]
+            },
+            strengths=[
+                "Combines Bluesky search results with LLM summarization",
+                "Ranks posts by engagement before summarizing top highlights",
+                "Supports time filtering for fresh updates"
+            ],
+            limits=[
+                "Dependent on Bluesky search quality and rate limits",
+                "Summaries rely on configured LLM (OpenAI)"
+            ],
+            description="Gather and summarize top Bluesky posts for a query within an optional time window."
+        ),
+        "post_bluesky_update": ToolSpec(
+            name="post_bluesky_update",
+            kind="tool",
+            io={
+                "in": ["message: str"],
+                "out": ["uri", "cid", "url", "message"]
+            },
+            strengths=[
+                "Publishes posts directly via AT Protocol",
+                "Returns canonical URI and web URL for sharing",
+                "Validates content length for Bluesky limits"
+            ],
+            limits=[
+                "Requires Bluesky credentials",
+                "Posts limited to 300 characters (no media attachments via this tool)"
+            ],
+            description="Publish a status update to Bluesky using the configured account."
+        ),
         "organize_files": ToolSpec(
             name="organize_files",
             kind="tool",

@@ -187,6 +187,38 @@ class ConfigAccessor:
             "lists": twitter_config.get("lists", {}),
         }
 
+    def get_bluesky_config(self) -> Dict[str, Any]:
+        """
+        Get Bluesky configuration.
+
+        Returns:
+            Bluesky config dict
+        """
+        bluesky_config = self.get("bluesky", {})
+        return {
+            "default_lookback_hours": bluesky_config.get("default_lookback_hours", 24),
+            "max_summary_items": bluesky_config.get("max_summary_items", 5),
+            "default_search_limit": bluesky_config.get("default_search_limit", 10),
+            "default_query": bluesky_config.get("default_query"),
+        }
+
+    def get_vision_config(self) -> Dict[str, Any]:
+        """
+        Get configuration for vision-assisted UI navigation.
+
+        Returns:
+            Vision config dict
+        """
+        vision_config = self.get("vision", {})
+        return {
+            "enabled": vision_config.get("enabled", False),
+            "min_confidence": vision_config.get("min_confidence", 0.6),
+            "max_calls_per_session": vision_config.get("max_calls_per_session", 5),
+            "max_calls_per_task": vision_config.get("max_calls_per_task", 2),
+            "retry_threshold": vision_config.get("retry_threshold", 2),
+            "eligible_tools": vision_config.get("eligible_tools", []),
+        }
+
     def get_browser_config(self) -> Dict[str, Any]:
         """
         Get browser configuration.
@@ -287,6 +319,22 @@ class ConfigAccessor:
         if twitter_config.get("default_list"):
             lines.append(f"Twitter Default List: {twitter_config['default_list']}")
         lines.append("")
+
+        # Bluesky config
+        bluesky_config = self.get_bluesky_config()
+        default_query = bluesky_config.get("default_query") or "N/A"
+        lines.append(f"Bluesky Default Summary Limit: {bluesky_config.get('max_summary_items', 5)}")
+        lines.append(f"Bluesky Default Query (optional): {default_query}")
+        lines.append("")
+
+        # Vision config
+        vision_config = self.get_vision_config()
+        vision_status = "enabled" if vision_config.get("enabled") else "disabled"
+        lines.append(f"Vision Path: {vision_status} (min_confidence={vision_config.get('min_confidence')})")
+        eligible = vision_config.get("eligible_tools") or []
+        if eligible:
+            lines.append(f"Vision Eligible Tools: {', '.join(eligible)}")
+        lines.append("")
         
         lines.append("=== IMPORTANT ===")
         lines.append("- ONLY use folders listed above for file operations")
@@ -366,4 +414,3 @@ def get_config_accessor(config: Optional[Dict[str, Any]] = None) -> ConfigAccess
         config = load_config()
     
     return ConfigAccessor(config)
-

@@ -45,6 +45,8 @@ AI-powered automation with multi-agent coordination and LLM-driven decisions.
 - `/browse <task>` - Web browsing and content extraction
 - `/present <task>` - Create presentations and documents
 - `/email <task>` - Compose and send emails
+- `/twitter <task>` - Summarize Twitter lists or post updates
+- `/bluesky <task>` - Search, summarize, and post on Bluesky
 - `/maps <task>` - Plan trips with stops
 - `/stock <task>` - Get stock prices and charts
 - Type `/help` for all commands
@@ -348,6 +350,33 @@ AI-powered automation with multi-agent coordination and LLM-driven decisions.
             agent = result.get("agent", "unknown")
             command = result.get("command", "unknown")
             exec_result = result.get("result", {})
+            mode = result.get("mode")
+            raw_result = result.get("raw")
+
+            if isinstance(exec_result, dict) and exec_result.get("type") == "reply":
+                self._display_reply(exec_result, title=f"/{command}")
+                return
+
+            if agent == "bluesky":
+                if exec_result.get("error"):
+                    self.show_message(f"Bluesky error: {exec_result.get('error_message', 'Unknown error')}", style="red")
+                    return
+
+                if mode == "search":
+                    self.show_bluesky_posts(exec_result)
+                elif mode == "summary":
+                    self.show_bluesky_summary(exec_result)
+                elif mode == "post":
+                    lines = [
+                        "✅ Bluesky post published!",
+                        f"URI: {exec_result.get('uri', 'N/A')}",
+                    ]
+                    if exec_result.get("url"):
+                        lines.append(f"Link: {exec_result['url']}")
+                    self.console.print(Panel("\n".join(lines), border_style="cyan", title="Bluesky"))
+                else:
+                    self._show_agent_success(agent, command, exec_result)
+                return
 
             # Format based on result type
             if exec_result.get("error"):
@@ -499,3 +528,90 @@ AI-powered automation with multi-agent coordination and LLM-driven decisions.
             )
 
         self.console.print(table)
+
+    def show_bluesky_posts(self, result: dict, title: str = "Bluesky Posts"):
+        """Display raw Bluesky post search results."""
+        if result.get("error"):
+            self.show_message(f"Bluesky error: {result.get('error_message', 'Unknown error')}", style="red")
+            return
+
+        posts = result.get("posts") or []
+        if not posts:
+            self.show_message("No Bluesky posts found for that query.", style="yellow")
+            return
+
+        header = f"# {title}\n\n**Query:** {result.get('query', 'N/A')} ({len(posts)} posts)"
+        self.console.print(Panel(Markdown(header), border_style="cyan"))
+
+        table = Table(title="Posts", box=box.ROUNDED, show_header=True)
+        table.add_column("#", style="cyan", no_wrap=True)
+        table.add_column("Author", style="magenta")
+        table.add_column("Score", style="green")
+        table.add_column("Created", style="yellow")
+        table.add_column("Link", style="blue")
+
+        for idx, post in enumerate(posts, start=1):
+            table.add_row(
+                str(idx),
+                f"{post.get('author_name', '')} (@{post.get('author_handle', '')})",
+                f"{post.get('score', 0):.1f}",
+                (post.get("created_at") or "")[:19],
+                post.get("url", ""),
+            )
+
+        self.console.print(table)
+
+    def show_bluesky_summary(self, result: dict):
+        """Display Bluesky summary output."""
+        if result.get("error"):
+            self.show_message(f"Bluesky summary error: {result.get('error_message', 'Unknown error')}", style="red")
+            return
+
+        query = result.get("query", "bluesky")
+        header = f"# Bluesky Summary — {query}\n\n{result.get('summary', '').strip()}"
+        self.console.print(Panel(Markdown(header), border_style="cyan"))
+
+        items = result.get("items") or []
+        if not items:
+            return
+
+        table = Table(title="Highlighted Posts", box=box.ROUNDED, show_header=True)
+        table.add_column("#", style="cyan", no_wrap=True)
+        table.add_column("Author", style="magenta")
+        table.add_column("Score", style="green")
+        table.add_column("Created", style="yellow")
+        table.add_column("Link", style="blue")
+
+        for idx, item in enumerate(items, start=1):
+            table.add_row(
+                str(idx),
+                f"{item.get('author_name', '')} (@{item.get('author_handle', '')})",
+                f"{item.get('score', 0):.1f}",
+                (item.get("created_at") or "")[:19],
+                item.get("url", ""),
+            )
+
+        self.console.print(table)
+
+    def _display_reply(self, payload: dict, title: str = "Reply"):
+        """Render reply_to_user payloads in the UI."""
+        status_map = {
+            "success": ("✅", "green"),
+            "partial_success": ("⚠", "yellow"),
+            "info": ("ℹ", "cyan"),
+            "error": ("❌", "red"),
+        }
+        status = payload.get("status", "success")
+        icon, style = status_map.get(status, ("✅", "green"))
+
+        message_text = payload.get("message") or "Task completed."
+        self.show_message(f"{icon} {message_text}", style=style)
+
+        details_text = (payload.get("details") or "").strip()
+        if details_text:
+            self.console.print(Panel(Markdown(details_text), border_style="blue", title=title))
+
+        artifacts = [a for a in payload.get("artifacts", []) if a]
+        if artifacts:
+            artifact_lines = "\n".join(f"- {artifact}" for artifact in artifacts)
+            self.console.print(Panel(artifact_lines, border_style="cyan", title="📎 Artifacts"))

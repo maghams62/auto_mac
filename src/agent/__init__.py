@@ -19,7 +19,11 @@ try:
 except ImportError:
     SCREEN_AGENT_TOOLS = []
 from .twitter_agent import TwitterAgent, TWITTER_AGENT_TOOLS
+from .bluesky_agent import BlueskyAgent, BLUESKY_AGENT_TOOLS
 from .notifications_agent import NotificationsAgent, NOTIFICATIONS_AGENT_TOOLS
+from .vision_agent import VisionAgent, VISION_AGENT_TOOLS
+from .reply_tool import ReplyAgent, REPLY_AGENT_TOOLS, REPLY_AGENT_HIERARCHY
+from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIERARCHY
 
 # Import registry
 from .agent_registry import (
@@ -45,7 +49,11 @@ __all__ = [
     "WritingAgent",
     "CriticAgent",
     "TwitterAgent",
+    "BlueskyAgent",
     "NotificationsAgent",
+    "VisionAgent",
+    "ReplyAgent",
+    "SpotifyAgent",
 
     # Agent registry
     "AgentRegistry",
@@ -60,7 +68,11 @@ __all__ = [
     "WRITING_AGENT_TOOLS",
     "CRITIC_AGENT_TOOLS",
     "TWITTER_AGENT_TOOLS",
+    "BLUESKY_AGENT_TOOLS",
     "NOTIFICATIONS_AGENT_TOOLS",
+    "VISION_AGENT_TOOLS",
+    "REPLY_AGENT_TOOLS",
+    "SPOTIFY_AGENT_TOOLS",
     "STOCK_AGENT_TOOLS",
     "SCREEN_AGENT_TOOLS",
     "ALL_AGENT_TOOLS",
@@ -74,4 +86,5 @@ __all__ = [
     "AGENT_HIERARCHY_DOCS",
     "get_agent_tool_mapping",
     "print_agent_hierarchy",
+    "REPLY_AGENT_HIERARCHY",
 ]

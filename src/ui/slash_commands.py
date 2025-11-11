@@ -15,6 +15,13 @@ Available Commands:
     /discord <task>         - Talk directly to Discord Agent
     /reddit <task>          - Talk directly to Reddit Agent
     /twitter <task>         - Talk directly to Twitter Agent
+    /bluesky <task>         - Talk directly to Bluesky Agent
+    /spotify <task>         - Control Spotify playback (play/pause)
+    /music <task>           - Control Spotify playback (alias)
+    /whatsapp <task>        - Read and analyze WhatsApp messages
+    /wa <task>              - WhatsApp (alias)
+    /confetti               - Trigger celebratory confetti effects
+    /notify <task>          - Send system notifications
     /report <task>          - Generate PDF reports from local files
     /help [command]         - Show help for commands
     /agents                 - List all available agents
@@ -22,10 +29,22 @@ Available Commands:
 """
 
 import logging
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 import re
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_quoted_text(text: str) -> Optional[str]:
+    """Extract first quoted substring from text."""
+    match = re.search(r'"([^"]+)"', text)
+    if match:
+        return match.group(1)
+    match = re.search(r"'([^']+)'", text)
+    if match:
+        return match.group(1)
+    return None
 
 
 class SlashCommandParser:
@@ -64,14 +83,26 @@ class SlashCommandParser:
         "reddit": "reddit",
         "twitter": "twitter",
         "x": "twitter",  # Quick alias for Twitter summaries
+        "bluesky": "bluesky",
+        "sky": "bluesky",
         "report": "report",
         "notify": "notifications",
         "notification": "notifications",
         "alert": "notifications",
+        "spotify": "spotify",
+        "music": "spotify",
+        "whatsapp": "whatsapp",
+        "wa": "whatsapp",
+        "confetti": "celebration",
+        "celebrate": "celebration",
+        "party": "celebration",
     }
 
     # Special system commands (not agent-related)
     SYSTEM_COMMANDS = ["help", "agents", "clear"]
+    
+    # Commands that can execute without a task (execute immediately)
+    NO_TASK_COMMANDS = ["confetti", "celebrate", "party"]
 
     # Quick palette entries (primary commands only)
     COMMAND_TOOLTIPS = [
@@ -79,7 +110,7 @@ class SlashCommandParser:
         {"command": "/folder", "label": "Folder Agent", "description": "List & reorganize folders"},
         {"command": "/browse", "label": "Browser", "description": "Search the web & extract content"},
         {"command": "/present", "label": "Presentations", "description": "Create Keynote/Pages docs"},
-        {"command": "/email", "label": "Email", "description": "Draft messages in Mail.app"},
+        {"command": "/email", "label": "Email", "description": "Read, summarize & draft emails"},
         {"command": "/write", "label": "Writing", "description": "Generate reports, notes, slides"},
         {"command": "/maps", "label": "Maps", "description": "Plan trips & routes"},
         {"command": "/stock", "label": "Stocks", "description": "Prices, charts, Google Finance"},
@@ -89,7 +120,11 @@ class SlashCommandParser:
         {"command": "/reddit", "label": "Reddit", "description": "Scan subreddits"},
         {"command": "/twitter", "label": "Twitter", "description": "Summarize lists"},
         {"command": "/x", "label": "X/Twitter", "description": "Quick Twitter summaries"},
+        {"command": "/bluesky", "label": "Bluesky", "description": "Search, summarize, and post updates"},
         {"command": "/notify", "label": "Notifications", "description": "Send system notifications"},
+        {"command": "/spotify", "label": "Spotify", "description": "Play and pause music"},
+        {"command": "/whatsapp", "label": "WhatsApp", "description": "Read and analyze WhatsApp messages"},
+        {"command": "/confetti", "label": "Confetti", "description": "Trigger celebratory confetti effects"},
     ]
 
     # Agent descriptions for help
@@ -99,7 +134,7 @@ class SlashCommandParser:
         "google": "Google search via official API (fast, structured results, no browser)",
         "browser": "Web browsing: search Google, navigate URLs, extract content",
         "presentation": "Create presentations: Keynote, Pages documents",
-        "email": "Compose and send emails via Mail.app",
+        "email": "Read, compose, send, and summarize emails via Mail.app",
         "writing": "Generate content: reports, slide decks, meeting notes",
         "maps": "Plan trips with stops, get directions, open Maps",
         "google_finance": "Get stock data, prices, charts from Google Finance",
@@ -108,7 +143,11 @@ class SlashCommandParser:
         "discord": "Monitor Discord channels and mentions",
         "reddit": "Scan Reddit for mentions and posts",
         "twitter": "Track Twitter lists and activity",
+        "bluesky": "Search Bluesky posts, summarize activity, and publish updates",
         "report": "Create PDF reports strictly from local files (or stock data when requested)",
+        "spotify": "Control Spotify playback: play music, pause music, get status",
+        "whatsapp": "Read WhatsApp messages, summarize conversations, extract action items",
+        "celebration": "Trigger celebratory confetti effects with emoji notifications",
     }
 
     # Example commands
@@ -141,6 +180,9 @@ class SlashCommandParser:
             '/present Make a Pages document with this report',
         ],
         "email": [
+            '/email Read the latest 10 emails',
+            '/email Show emails from john@example.com',
+            '/email Summarize emails from the past hour',
             '/email Draft an email about project status',
             '/email Send meeting notes to team@company.com',
         ],
@@ -168,10 +210,32 @@ class SlashCommandParser:
             '/notify alert Email sent successfully with sound Glass',
             '/notify notification Background processing finished',
         ],
+        "spotify": [
+            '/spotify play',
+            '/spotify pause',
+            '/spotify play music',
+            '/music pause',
+        ],
+        "whatsapp": [
+            '/whatsapp Read messages from John',
+            '/whatsapp List all chats',
+            '/whatsapp Summarize messages from Family group',
+            '/whatsapp Detect unread messages',
+        ],
+        "celebration": [
+            '/confetti',
+            '/celebrate',
+            '/party',
+        ],
         "x": [
             '/x summarize last 1h',
             '/x what happened on Twitter in the past hour',
             '/x tweet Launch day! 🚀',
+        ],
+        "bluesky": [
+            '/bluesky search "agent ecosystems" limit:8',
+            '/bluesky summarize "mac automation" 12h',
+            '/bluesky post "Testing the Bluesky integration ✨"',
         ],
     }
 
@@ -235,22 +299,81 @@ class SlashCommandParser:
             }
 
         # Check for help on specific command
-        help_match = re.match(r'^/help\s+(\w+)$', message.strip())
+        help_match = re.match(r'^/help\s+(.+)$', message.strip())
         if help_match:
-            return {
-                "is_command": True,
-                "command": "help",
-                "agent": help_match.group(1),
-                "task": None
-            }
+            help_arg = help_match.group(1).strip()
+            # Check if it's a search query
+            if help_arg.startswith('search '):
+                return {
+                    "is_command": True,
+                    "command": "help",
+                    "agent": None,
+                    "task": None,
+                    "help_mode": "search",
+                    "search_query": help_arg[7:].strip()  # Remove "search " prefix
+                }
+            # Check for category filter
+            elif help_arg.startswith('--category '):
+                return {
+                    "is_command": True,
+                    "command": "help",
+                    "agent": None,
+                    "task": None,
+                    "help_mode": "category",
+                    "category": help_arg[11:].strip()  # Remove "--category " prefix
+                }
+            # Otherwise it's help for a specific command
+            else:
+                return {
+                    "is_command": True,
+                    "command": "help",
+                    "agent": help_arg,
+                    "task": None
+                }
 
         # Parse regular command
         match = self.pattern.match(message.strip())
         if not match:
+            # Check if it's a standalone command (e.g., /email with no task)
+            standalone_match = re.match(r'^/(\w+)$', message.strip())
+            if standalone_match:
+                command = standalone_match.group(1).lower()
+                # Check if it's a command that can execute without a task
+                if command in self.NO_TASK_COMMANDS and command in self.COMMAND_MAP:
+                    # Execute immediately without task
+                    return {
+                        "is_command": True,
+                        "command": command,
+                        "agent": self.COMMAND_MAP[command],
+                        "task": None
+                    }
+                # Check if it's a valid command
+                elif command in self.COMMAND_MAP:
+                    # Return help for this command instead of error
+                    return {
+                        "is_command": True,
+                        "command": "help",
+                        "agent": command,
+                        "task": None
+                    }
+                else:
+                    # Unknown command - provide suggestions
+                    from difflib import get_close_matches
+                    suggestions = get_close_matches(command, self.COMMAND_MAP.keys(), n=3, cutoff=0.6)
+                    error_msg = f"Unknown command: /{command}."
+                    if suggestions:
+                        error_msg += f"\n\nDid you mean:\n" + "\n".join([f"  • /{s}" for s in suggestions])
+                    error_msg += "\n\nType /help for all available commands."
+                    return {
+                        "is_command": True,
+                        "command": "invalid",
+                        "error": error_msg
+                    }
+
             return {
                 "is_command": True,
                 "command": "invalid",
-                "error": "Invalid command format. Use: /command <task>"
+                "error": "Invalid command format. Use: /command <task>\nType /help for available commands."
             }
 
         command = match.group(1).lower()
@@ -260,10 +383,17 @@ class SlashCommandParser:
         agent = self.COMMAND_MAP.get(command)
 
         if not agent:
+            # Provide suggestions for unknown commands
+            from difflib import get_close_matches
+            suggestions = get_close_matches(command, self.COMMAND_MAP.keys(), n=3, cutoff=0.6)
+            error_msg = f"Unknown command: /{command}."
+            if suggestions:
+                error_msg += f"\n\nDid you mean:\n" + "\n".join([f"  • /{s}" for s in suggestions])
+            error_msg += "\n\nType /help for all available commands."
             return {
                 "is_command": True,
                 "command": "invalid",
-                "error": f"Unknown command: /{command}. Type /help for available commands."
+                "error": error_msg
             }
 
         return {
@@ -291,16 +421,185 @@ class SlashCommandParser:
 
         return "\n".join(lines)
 
-    def get_help(self, command: Optional[str] = None) -> str:
+    def get_help(self, command: Optional[str] = None, help_mode: Optional[str] = None,
+                 search_query: Optional[str] = None, category: Optional[str] = None,
+                 agent_registry=None) -> str:
         """
-        Get help text for commands.
+        Get help text for commands using HelpRegistry.
 
         Args:
             command: Specific command to get help for, or None for general help
+            help_mode: 'search' or 'category' for filtered help
+            search_query: Search query when help_mode is 'search'
+            category: Category name when help_mode is 'category'
+            agent_registry: Optional AgentRegistry for dynamic help
 
         Returns:
             Formatted help text
         """
+        try:
+            from .help_registry import HelpRegistry
+            help_registry = HelpRegistry(agent_registry)
+        except Exception as e:
+            logger.warning(f"Could not load HelpRegistry: {e}, falling back to static help")
+            return self._get_static_help(command)
+
+        # Search mode
+        if help_mode == "search" and search_query:
+            results = help_registry.search(search_query, limit=10)
+            if not results:
+                return f"🔍 No results found for: {search_query}\n\nTry different keywords or type /help to see all commands."
+
+            help_text = [
+                f"🔍 Search Results for: {search_query}",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"",
+                f"Found {len(results)} result(s):",
+                f"",
+            ]
+
+            for entry in results:
+                help_text.append(f"{entry.icon} **{entry.name}**")
+                help_text.append(f"   {entry.description}")
+                if entry.examples:
+                    help_text.append(f"   Example: {entry.examples[0]}")
+                help_text.append("")
+
+            help_text.append("💡 Tip: Use `/help <command>` for detailed help on a specific command.")
+            return "\n".join(help_text)
+
+        # Category mode
+        if help_mode == "category" and category:
+            entries = help_registry.get_by_category(category)
+            if not entries:
+                categories = help_registry.get_all_categories()
+                cat_names = [c.name for c in categories]
+                return f"❌ Unknown category: {category}\n\nAvailable categories:\n" + "\n".join([f"  • {c}" for c in cat_names])
+
+            cat_info = help_registry.categories.get(category)
+            help_text = [
+                f"{cat_info.icon} **{cat_info.display_name}**",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"",
+                f"{cat_info.description}",
+                f"",
+                f"**Commands ({len(entries)}):**",
+                f"",
+            ]
+
+            for entry in entries:
+                if entry.type == "slash_command":
+                    help_text.append(f"{entry.icon} {entry.name:<15} {entry.description}")
+
+            return "\n".join(help_text)
+
+        # Specific command help
+        if command:
+            entry = help_registry.get_entry(f"/{command}")
+            if not entry:
+                # Try without slash
+                entry = help_registry.get_entry(command)
+
+            if not entry:
+                # Command not found - provide suggestions
+                suggestions = help_registry.get_suggestions(f"/{command}")
+                error_text = [f"❌ Unknown command: /{command}", ""]
+                if suggestions:
+                    error_text.append("Did you mean:")
+                    for sug in suggestions:
+                        error_text.append(f"  • {sug}")
+                    error_text.append("")
+                error_text.append("Type /help to see all available commands.")
+                return "\n".join(error_text)
+
+            # Format detailed help for command
+            help_text = [
+                f"{entry.icon} **{entry.name}**",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"",
+                f"{entry.description}",
+                f"",
+            ]
+
+            if entry.long_description:
+                help_text.append(f"{entry.long_description}")
+                help_text.append("")
+
+            help_text.append(f"**Usage:** {entry.name} <your task>")
+            help_text.append("")
+
+            if entry.examples:
+                help_text.append("**Examples:**")
+                for example in entry.examples[:5]:
+                    help_text.append(f"  {example}")
+                help_text.append("")
+
+            if entry.agent:
+                help_text.append(f"**Agent:** {entry.agent}")
+                help_text.append("")
+
+            if entry.related:
+                help_text.append(f"**Related:** {', '.join(entry.related)}")
+                help_text.append("")
+
+            help_text.append("💡 **Tip:** Type the command without a task to see this help.")
+
+            return "\n".join(help_text)
+
+        # General help - show categories
+        return self._get_general_help(help_registry)
+
+    def _get_general_help(self, help_registry) -> str:
+        """Generate general help text with categories."""
+        categories = help_registry.get_all_categories()
+
+        help_text = [
+            "🎯 Slash Commands - Quick Access",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+            "Slash commands let you talk directly to agents for faster execution.",
+            "",
+            "**Quick Search:**",
+            "  /help search <query>      - Search all commands",
+            "  /help --category <name>   - Filter by category",
+            "  /help <command>           - Detailed help for a command",
+            "",
+        ]
+
+        # Show commands by category
+        for cat in categories:
+            if cat.command_count == 0:
+                continue
+
+            help_text.append(f"{cat.icon} **{cat.display_name}** ({cat.command_count} commands)")
+
+            # Get commands in this category
+            entries = help_registry.get_by_category(cat.name)
+            slash_commands = [e for e in entries if e.type == "slash_command"]
+
+            for entry in slash_commands[:3]:  # Show top 3
+                help_text.append(f"   {entry.name:<15} {entry.description}")
+
+            if len(slash_commands) > 3:
+                help_text.append(f"   ... and {len(slash_commands) - 3} more")
+
+            help_text.append("")
+
+        help_text.extend([
+            "**Examples:**",
+            "  /files Organize my PDFs by topic",
+            "  /email Read my latest 5 emails",
+            "  /maps Plan trip from LA to SF",
+            "  /help email           # Detailed email help",
+            "  /help search stock    # Search for stock commands",
+            "",
+            "💡 **Tip:** Type any command alone (e.g., `/email`) to see its help!",
+        ])
+
+        return "\n".join(help_text)
+
+    def _get_static_help(self, command: Optional[str] = None) -> str:
+        """Fallback to static help if HelpRegistry fails."""
         if command:
             # Help for specific command
             agent = self.COMMAND_MAP.get(command)
@@ -367,6 +666,7 @@ class SlashCommandParser:
             "  /discord <task>       - Monitor Discord",
             "  /reddit <task>        - Scan Reddit",
             "  /twitter <task>       - Track Twitter",
+            "  /bluesky <task>       - Search & post on Bluesky",
             "",
             "ℹ️ **Help & Info:**",
             "  /help [command]       - Show help (optionally for specific command)",
@@ -401,7 +701,7 @@ class SlashCommandParser:
             "File & Document Operations": ["file"],
             "Web & Content": ["browser", "writing"],
             "Presentations & Documents": ["presentation"],
-            "Communication": ["email", "imessage", "discord", "reddit", "twitter"],
+            "Communication": ["email", "imessage", "discord", "reddit", "twitter", "bluesky"],
             "Travel & Location": ["maps"],
             "Finance & Stocks": ["google_finance", "report"],
         }
@@ -489,17 +789,79 @@ class SlashCommandHandler:
             return True, {"type": "error", "content": parsed.get("error")}
 
         # Execute agent command
+        original_agent = parsed["agent"]
         agent_name = parsed["agent"]
         task = parsed["task"]
+        task_lower = (task or "").lower().strip()
+
+        if original_agent == "folder" and any(
+            keyword in task_lower for keyword in ["summarize", "summarise", "summary"]
+        ):
+            folder_path = self._extract_folder_path(task or "")
+            params: Dict[str, Any] = {}
+            if folder_path:
+                params["folder_path"] = folder_path
+
+            listing = self.registry.execute_tool("folder_list", params, session_id=session_id)
+            if listing.get("error"):
+                return True, {
+                    "type": "result",
+                    "agent": "folder",
+                    "original_agent": "folder",
+                    "command": parsed["command"],
+                    "result": listing,
+                    "raw": listing,
+                }
+
+            reply_payload = self._format_folder_result(listing, task, session_id=session_id)
+            if reply_payload:
+                reply_payload.setdefault("_raw_result", listing)
+                return True, {
+                    "type": "result",
+                    "agent": "folder",
+                    "original_agent": "folder",
+                    "command": parsed["command"],
+                    "result": reply_payload,
+                    "raw": listing,
+                }
+
+        # Direct handling for Bluesky to avoid LLM routing ambiguity
+        if agent_name == "bluesky":
+            try:
+                mode, params = self._parse_bluesky_task(task)
+            except ValueError as exc:
+                return True, {
+                    "type": "error",
+                    "content": f"⚠ {exc}"
+                }
+
+            tool_map = {
+                "search": "search_bluesky_posts",
+                "summary": "summarize_bluesky_posts",
+                "post": "post_bluesky_update",
+            }
+
+            tool_name = tool_map[mode]
+            logger.info(f"[SLASH COMMAND] /{parsed['command']} -> bluesky ({mode})")
+            logger.info(f"[SLASH COMMAND] Parameters: {params}")
+
+            result = self.registry.execute_tool(tool_name, params, session_id=session_id)
+
+            return True, {
+                "type": "result",
+                "agent": "bluesky",
+                "command": parsed["command"],
+                "mode": mode,
+                "params": params,
+                "result": result,
+            }
 
         # Special handling: /folder for explanation tasks should route to file agent
         if agent_name == "folder" and parsed["command"] in ["folder", "folders"]:
             # Check if task is about explaining/listing files (not folder management)
             explanation_keywords = ["explain", "list", "show", "what", "summarize", "describe", "overview"]
             management_keywords = ["organize", "rename", "plan", "apply", "normalize", "reorganize"]
-            
-            task_lower = task.lower().strip() if task else ""
-            
+
             # Route to file agent if:
             # 1. Task is empty (explain all files)
             # 2. Contains explanation keywords
@@ -527,16 +889,30 @@ class SlashCommandHandler:
                     "content": f"❌ Agent '{agent_name}' not found"
                 }
 
-            # Execute through agent
-            # For now, we'll use the agent's primary tool
-            # In future, could add agent-level "handle_task" method
-            result = self._execute_agent_task(agent, agent_name, task)
+            # Special handling for celebration agent when no task (direct execution)
+            if agent_name == "celebration" and (not task or not task.strip()):
+                result = agent.execute("trigger_confetti", {})
+            else:
+                # Execute through agent
+                # For now, we'll use the agent's primary tool
+                # In future, could add agent-level "handle_task" method
+                result = self._execute_agent_task(agent, agent_name, task)
+
+            formatted_result = result
+
+            if original_agent == "folder" and not result.get("error"):
+                reply_payload = self._format_folder_result(result, task, session_id=session_id)
+                if reply_payload:
+                    formatted_result = reply_payload
+                    formatted_result.setdefault("_raw_result", result)
 
             return True, {
                 "type": "result",
                 "agent": agent_name,
+                "original_agent": original_agent,
                 "command": parsed["command"],
-                "result": result
+                "result": formatted_result,
+                "raw": result
             }
 
         except Exception as e:
@@ -545,6 +921,319 @@ class SlashCommandHandler:
                 "type": "error",
                 "content": f"❌ Error executing command: {str(e)}"
             }
+
+    def _parse_bluesky_task(self, task: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Parse a /bluesky command task to determine mode and parameters.
+        Returns (mode, params) where mode is 'search', 'summary', or 'post'.
+        """
+        if not task or not task.strip():
+            raise ValueError("Provide a task, e.g. /bluesky search \"AI agents\" limit:10")
+
+        text = task.strip()
+        lower = text.lower()
+
+        config = getattr(self.registry, "config", {}).get("bluesky", {}) if hasattr(self.registry, "config") else {}
+        default_limit = config.get("default_search_limit", 10)
+        default_lookback = config.get("default_lookback_hours", 24)
+        default_max_items = config.get("max_summary_items", 5)
+
+        def _strip_patterns(source: str, patterns: List[re.Pattern]) -> Tuple[str, Dict[str, int]]:
+            extracted: Dict[str, int] = {}
+            remainder = source
+            for pattern in patterns:
+                match = pattern.search(remainder)
+                if match:
+                    key = pattern.pattern
+                    value = int(match.group(1))
+                    extracted[key] = value
+                    remainder = remainder.replace(match.group(0), "")
+            return remainder, extracted
+
+        # Posting
+        for prefix in ("post", "publish", "send"):
+            if lower.startswith(prefix + " "):
+                message = text[len(prefix):].strip()
+                if not message:
+                    raise ValueError("Provide a message to post, e.g. /bluesky post \"Hello Bluesky\"")
+                quoted = _extract_quoted_text(message)
+                if quoted:
+                    message = quoted
+                return "post", {"message": message.strip()}
+
+        # Summaries
+        if lower.startswith(("summarize", "summary", "analyze")):
+            action_word = text.split(None, 1)[0]
+            remainder = text[len(action_word):].strip()
+
+            time_patterns = [
+                re.compile(r'(\d+)\s*(?:hours?|hrs?|hr|h)\b', re.IGNORECASE),
+                re.compile(r'(\d+)\s*(?:days?|d)\b', re.IGNORECASE),
+            ]
+            limit_patterns = [
+                re.compile(r'(?:max|limit|items)\s*[:=]?\s*(\d+)', re.IGNORECASE),
+            ]
+
+            remainder, time_matches = _strip_patterns(remainder, time_patterns)
+            remainder, limit_matches = _strip_patterns(remainder, limit_patterns)
+
+            lookback_hours = None
+            for pattern, value in time_matches.items():
+                if "day" in pattern.lower():
+                    lookback_hours = value * 24
+                else:
+                    lookback_hours = value
+                break  # Use first match
+
+            max_items = None
+            for value in limit_matches.values():
+                max_items = value
+                break
+
+            query = _extract_quoted_text(remainder) or remainder
+            query = query.strip().strip('"').strip("'")
+            if not query:
+                raise ValueError("Provide a query to summarize, e.g. /bluesky summarize \"agent ecosystems\" 12h")
+
+            params: Dict[str, Any] = {"query": query}
+            if lookback_hours is not None:
+                params["lookback_hours"] = lookback_hours
+            else:
+                params["lookback_hours"] = default_lookback
+            if max_items is not None:
+                params["max_items"] = max_items
+            else:
+                params["max_items"] = default_max_items
+
+            return "summary", params
+
+        # Searches (default)
+        search_words = {"search", "find", "lookup", "scan"}
+        first_word = text.split(None, 1)[0].lower()
+        remainder = text[len(first_word):].strip() if first_word in search_words else text
+
+        limit_match = re.search(r'(?:max|limit)\s*[:=]?\s*(\d+)', remainder, re.IGNORECASE)
+        max_posts = default_limit
+        if limit_match:
+            max_posts = int(limit_match.group(1))
+            remainder = remainder.replace(limit_match.group(0), "")
+
+        query = _extract_quoted_text(remainder) or remainder
+        query = query.strip().strip('"').strip("'")
+        if not query:
+            raise ValueError("Provide a query to search, e.g. /bluesky search \"AI agents\" limit:8")
+
+        params = {"query": query, "max_posts": max_posts}
+        return "search", params
+
+    def _format_folder_result(
+        self,
+        result: Dict[str, Any],
+        task: str,
+        session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert folder agent outputs into a reply payload for user-facing display.
+        """
+        try:
+            if result.get("error"):
+                return None
+
+            if "items" in result:
+                items = result.get("items", [])
+                total = result.get("total_count", len(items))
+                files = [item for item in items if item.get("type") == "file"]
+                dirs = [item for item in items if item.get("type") == "dir"]
+
+                from collections import Counter
+
+                ext_counter = Counter()
+                for file_item in files:
+                    ext = file_item.get("extension") or "(no extension)"
+                    ext_counter[ext.lower()] += 1
+
+                top_exts = ext_counter.most_common(5)
+
+                folder_path = result.get("relative_path")
+                if folder_path in (None, ".", ""):
+                    folder_path = result.get("folder_path", "configured folder")
+
+                message = f"Found {total} item{'s' if total != 1 else ''} in `{folder_path}`."
+                if total == 0:
+                    message = f"`{folder_path}` is empty."
+
+                detail_lines = [
+                    f"- Files: {len(files)}",
+                    f"- Folders: {len(dirs)}",
+                ]
+
+                if top_exts:
+                    detail_lines.append("\n**Top file types:**")
+                    for ext, count in top_exts:
+                        detail_lines.append(f"  - {ext.upper()}: {count}")
+
+                sample_items = [item.get("name") for item in items][:5]
+                if sample_items:
+                    detail_lines.append("\n**Sample items:**")
+                    for name in sample_items:
+                        detail_lines.append(f"  - {name}")
+
+                details = "\n".join(detail_lines)
+                artifacts = [result.get("folder_path")] if result.get("folder_path") else []
+
+                return self._format_with_reply(
+                    message=message,
+                    details=details,
+                    artifacts=artifacts,
+                    status="info",
+                    session_id=session_id,
+                )
+
+            if "plan" in result and "changes_count" in result:
+                changes = result.get("changes_count", 0)
+                total_items = result.get("total_items", len(result.get("plan", [])))
+                folder_path = result.get("folder_path", "")
+                message = (
+                    f"Alphabetical normalization plan prepared for `{Path(folder_path).name}`."
+                    if folder_path else "Alphabetical normalization plan prepared."
+                )
+                if changes == 0:
+                    message = "All items already follow the normalized naming pattern."
+
+                detail_lines = [
+                    f"- Total items checked: {total_items}",
+                    f"- Items needing changes: {changes}",
+                ]
+
+                preview = [
+                    f"{entry['current_name']} → {entry['proposed_name']}"
+                    for entry in result.get("plan", []) if entry.get("needs_change")
+                ][:5]
+                if preview:
+                    detail_lines.append("\n**Example changes:**")
+                    for line in preview:
+                        detail_lines.append(f"  - {line}")
+
+                details = "\n".join(detail_lines)
+                return self._format_with_reply(
+                    message=message,
+                    details=details,
+                    artifacts=[folder_path] if folder_path else [],
+                    status="info",
+                    session_id=session_id,
+                )
+
+            if "summary" in result and "plan" in result and "success" in result:
+                summary = result.get("summary", {})
+                folder_path = result.get("folder_path", "")
+                message = (
+                    f"Organized files by type in `{Path(folder_path).name}`."
+                    if folder_path else "Organized files by type."
+                )
+                if result.get("dry_run", True):
+                    message = "Generated file-type organization plan (dry run)."
+
+                detail_lines = [
+                    f"- Files considered: {summary.get('total_files_considered', 0)}",
+                    f"- Files moved: {summary.get('files_moved', 0)}",
+                    f"- Files skipped: {summary.get('files_skipped', 0)}",
+                    f"- Target folders: {', '.join(summary.get('target_folders', []))}"
+                ]
+
+                errors = result.get("errors") or []
+                if errors:
+                    detail_lines.append("\n**Errors:**")
+                    for error in errors[:5]:
+                        detail_lines.append(f"  - {error.get('file')}: {error.get('error')}")
+
+                details = "\n".join(detail_lines)
+                status = "partial_success" if errors else "success"
+
+                return self._format_with_reply(
+                    message=message,
+                    details=details,
+                    artifacts=[folder_path] if folder_path else [],
+                    status=status,
+                    session_id=session_id,
+                )
+
+            if "success" in result and "applied" in result and "skipped" in result:
+                folder_path = result.get("folder_path", "")
+                dry_run = result.get("dry_run", True)
+                message = "Validated rename plan (dry run)." if dry_run else "Applied rename plan."
+
+                detail_lines = [
+                    f"- Applied: {len(result.get('applied', []))}",
+                    f"- Skipped: {len(result.get('skipped', []))}",
+                    f"- Errors: {len(result.get('errors', []))}",
+                ]
+
+                applied = result.get("applied", [])[:5]
+                if applied:
+                    detail_lines.append("\n**Sample changes:**")
+                    for item in applied:
+                        current = item.get("current_name") or item.get("file")
+                        proposed = item.get("proposed_name") or item.get("target_path")
+                        detail_lines.append(f"  - {current} → {proposed}")
+
+                details = "\n".join(detail_lines)
+                status = "partial_success" if result.get("errors") else "success"
+
+                return self._format_with_reply(
+                    message=message,
+                    details=details,
+                    artifacts=[folder_path] if folder_path else [],
+                    status=status,
+                    session_id=session_id,
+                )
+
+        except Exception as exc:
+            logger.warning(f"[SLASH COMMAND] Failed to format folder result: {exc}", exc_info=True)
+
+        return None
+
+    def _format_with_reply(
+        self,
+        message: str,
+        details: Optional[str],
+        artifacts: Optional[List[str]],
+        status: str = "success",
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Invoke the reply_to_user tool to produce a consistent payload.
+        """
+        try:
+            payload = {
+                "message": message,
+                "details": details or "",
+                "artifacts": [artifact for artifact in (artifacts or []) if artifact],
+                "status": status,
+            }
+            reply = self.registry.execute_tool("reply_to_user", payload, session_id=session_id)
+            if reply.get("error"):
+                logger.warning(f"[SLASH COMMAND] reply_to_user returned error: {reply}")
+                return None
+            return reply
+        except Exception as exc:
+            logger.warning(f"[SLASH COMMAND] Failed to call reply_to_user: {exc}")
+            return None
+
+    def _extract_folder_path(self, task: str) -> Optional[str]:
+        """Attempt to extract a folder path from the user's task string."""
+        if not task:
+            return None
+
+        quoted = re.search(r'["\']([^"\']+)["\']', task)
+        if quoted:
+            return quoted.group(1).strip()
+
+        absolute = re.search(r'\s(/[^"\']+)', task)
+        if absolute:
+            candidate = absolute.group(1).strip()
+            return candidate.rstrip('.,')
+
+        return None
 
     def _get_llm_response_for_blocked_search(self, query: str, agent) -> str:
         """

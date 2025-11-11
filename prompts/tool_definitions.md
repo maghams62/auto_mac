@@ -1021,7 +1021,139 @@ Each slide object contains:
 
 ---
 
-## 21. plan_trip_with_stops
+## 21. get_directions
+
+**Purpose:** Get simple point-to-point directions with any transportation mode (driving, walking, transit, bicycle).
+
+**Parameters:**
+```json
+{
+  "origin": "string - REQUIRED - Starting location (can be \"Current Location\" or specific address/coordinates)",
+  "destination": "string - REQUIRED - End location (address, place name, or coordinates)",
+  "transportation_mode": "string - Mode of transportation (default: \"driving\"). Options: \"driving\"/\"car\", \"walking\"/\"walk\", \"transit\"/\"bus\"/\"public transport\", \"bicycle\"/\"bike\"/\"cycling\"",
+  "open_maps": "bool - If true, automatically open Maps with the route (default: true)"
+}
+```
+
+**Returns:**
+```json
+{
+  "origin": "string",
+  "destination": "string",
+  "transportation_mode": "string - driving/walking/transit/bicycle",
+  "maps_url": "string - URL to open in Maps",
+  "maps_service": "Apple Maps",
+  "maps_opened": "bool - Whether Maps was opened",
+  "message": "string - Status message",
+  "note": "string - Additional info (e.g., for transit: real-time schedules shown in app)"
+}
+```
+
+**Use this when:**
+- User wants simple point-to-point directions
+- User asks for transit/bus schedule ("when's the next bus")
+- User wants bicycle or walking directions
+- User asks "how do I get to X"
+- Origin is often "Current Location" for "from here" queries
+
+**Transportation Mode Mapping:**
+- **Driving**: "driving", "car", "drive" → dirflg=d (default)
+- **Walking**: "walking", "walk", "on foot" → dirflg=w
+- **Transit**: "transit", "bus", "train", "public transport", "BART" → dirflg=r (shows real-time schedules)
+- **Bicycle**: "bicycle", "bike", "cycling" → dirflg=b
+
+**Parameter Extraction:**
+- **origin**: "from X" → X, "from here"/"from current location" → "Current Location"
+- **destination**: "to Y" → Y
+- **transportation_mode**: Look for keywords: "bus"/"transit" → "transit", "bike"/"bicycle" → "bicycle", "walk" → "walking", "drive" → "driving"
+
+**Notes:**
+- "Current Location" tells Maps to use device's current location automatically
+- For transit queries, Maps opens with real-time schedules showing next departure times
+- Driving is the default mode if not specified
+- Apple Maps will show route-specific info (bike lanes, pedestrian paths, transit schedules)
+
+**Examples:**
+```json
+// Transit query
+{
+  "action": "get_directions",
+  "parameters": {
+    "origin": "Current Location",
+    "destination": "Berkeley, CA",
+    "transportation_mode": "transit",
+    "open_maps": true
+  }
+}
+
+// Bicycle query
+{
+  "action": "get_directions",
+  "parameters": {
+    "origin": "Home",
+    "destination": "Office",
+    "transportation_mode": "bicycle",
+    "open_maps": true
+  }
+}
+```
+
+---
+
+## 22. get_transit_schedule
+
+**Purpose:** Get transit schedule and next departure times for a specific route.
+
+**Parameters:**
+```json
+{
+  "origin": "string - REQUIRED - Starting location (can be \"Current Location\")",
+  "destination": "string - REQUIRED - End location",
+  "open_maps": "bool - If true, automatically open Maps with transit view (default: true)"
+}
+```
+
+**Returns:**
+```json
+{
+  "origin": "string",
+  "destination": "string",
+  "transportation_mode": "transit",
+  "maps_url": "string - URL to open in Maps",
+  "maps_service": "Apple Maps",
+  "maps_opened": "bool - Whether Maps was opened",
+  "message": "string - Status message",
+  "note": "string - Note about viewing real-time schedules in Maps"
+}
+```
+
+**Use this when:**
+- User specifically asks for transit schedule
+- User asks "when's the next bus/train"
+- User wants to see departure times
+- User asks for BART/metro/subway schedule
+
+**Notes:**
+- Opens Apple Maps with transit directions
+- Apple Maps shows real-time next departure times
+- Cannot programmatically extract schedule data (Apple Maps API limitation)
+- User views schedule directly in Maps app
+
+**Example:**
+```json
+{
+  "action": "get_transit_schedule",
+  "parameters": {
+    "origin": "Current Location",
+    "destination": "Downtown Berkeley",
+    "open_maps": true
+  }
+}
+```
+
+---
+
+## 23. plan_trip_with_stops
 
 **Purpose:** Plan a road trip from origin to destination with specific numbers of fuel and food stops.
 
@@ -1230,6 +1362,984 @@ Each slide object contains:
 - Only list names defined in `config.yaml → twitter.lists` are valid.
 - Uses official Twitter APIs with credentials from `.env` (`TWITTER_*` variables); scraping is not allowed.
 - Automatically expands multi-tweet threads (when available), ranks by engagement, and feeds the content into the configured LLM for a concise summary.
+
+---
+
+## 25. search_bluesky_posts
+
+**Purpose:** Search public Bluesky posts that match a query string.
+
+**Parameters:**
+```json
+{
+  "query": "string - REQUIRED - Search keywords or phrase",
+  "max_posts": "int - OPTIONAL - Maximum posts to return (default 10, max 50)"
+}
+```
+
+**Returns:**
+```json
+{
+  "query": "string",
+  "count": "int - number of posts returned",
+  "posts": [
+    {
+      "uri": "string",
+      "cid": "string",
+      "text": "string",
+      "author_handle": "string",
+      "author_name": "string",
+      "created_at": "ISO timestamp",
+      "like_count": "int",
+      "repost_count": "int",
+      "reply_count": "int",
+      "quote_count": "int",
+      "score": "float ranking heuristic",
+      "url": "string - Public Bluesky URL"
+    }
+  ]
+}
+```
+
+**Example:**
+```json
+{
+  "action": "search_bluesky_posts",
+  "parameters": {
+    "query": "AI agents",
+    "max_posts": 10
+  }
+}
+```
+
+---
+
+## 26. summarize_bluesky_posts
+
+**Purpose:** Summarize top Bluesky posts for a query, optionally constrained by time.
+
+**Parameters:**
+```json
+{
+  "query": "string - REQUIRED - Search keywords to focus on",
+  "lookback_hours": "int - OPTIONAL - Filter posts newer than this window (default bluesky.default_lookback_hours)",
+  "max_items": "int - OPTIONAL - Maximum highlights to summarize (default bluesky.max_summary_items, max 10)"
+}
+```
+
+**Returns:**
+```json
+{
+  "summary": "string - Markdown overview referencing post numbers",
+  "items": [
+    {
+      "text": "string",
+      "author_handle": "string",
+      "author_name": "string",
+      "created_at": "ISO timestamp",
+      "score": "float",
+      "url": "string"
+    }
+  ],
+  "query": "string",
+  "time_window": {
+    "hours": "int",
+    "generated_at": "ISO timestamp"
+  }
+}
+```
+
+**Example:**
+```json
+{
+  "action": "summarize_bluesky_posts",
+  "parameters": {
+    "query": "privacy updates",
+    "lookback_hours": 12,
+    "max_items": 5
+  }
+}
+```
+
+**Notes:**
+- Requires Bluesky credentials in `.env` (`BLUESKY_USERNAME` and `BLUESKY_PASSWORD`).
+- Fetches extra posts, ranks by engagement, filters by time, and summarizes with the configured LLM.
+
+---
+
+## 27. post_bluesky_update
+
+**Purpose:** Publish a post (status update) to Bluesky via the AT Protocol.
+
+**Parameters:**
+```json
+{
+  "message": "string - REQUIRED - Post content (must be <= 300 characters)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "uri": "string - AT Protocol URI of the post",
+  "cid": "string",
+  "url": "string - Public Bluesky URL (when author handle is known)",
+  "message": "Bluesky post published successfully."
+}
+```
+
+**Example:**
+```json
+{
+  "action": "post_bluesky_update",
+  "parameters": {
+    "message": "Hello Bluesky! 👋"
+  }
+}
+```
+
+**Notes:**
+- Uses the configured account credentials from `.env`.
+- Validates that the post respects Bluesky’s 300-character limit.
+
+---
+
+## 28. launch_app
+
+**Purpose:** Launch a macOS application by name.
+
+**Parameters:**
+```json
+{
+  "app_name": "string - REQUIRED - Name of application (e.g., 'Safari', 'Notes', 'Calculator', 'Mail')"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "app_name": "string",
+  "status": "launched",
+  "message": "string"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "LaunchFailed | InvalidInput | Timeout",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "launch_app",
+  "parameters": {
+    "app_name": "Safari"
+  }
+}
+```
+
+**Use this when:**
+- User wants to open/launch an application
+- Need to start a specific app quickly
+- Workflow requires launching an app before other actions
+
+**Notes:**
+- Uses `open -a` command (simple and reliable)
+- Handles app name variations automatically (e.g., "Safari" or "Safari.app")
+- Fast execution without heavy infrastructure
+
+---
+
+## 29. copy_snippet
+
+**Purpose:** Copy text to the macOS clipboard.
+
+**Parameters:**
+```json
+{
+  "text": "string - REQUIRED - Text content to copy to clipboard"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "status": "copied",
+  "text_length": "int",
+  "text_preview": "string - First 100 characters",
+  "message": "string"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "CopyFailed | InvalidInput | Timeout",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "copy_snippet",
+  "parameters": {
+    "text": "https://example.com"
+  }
+}
+```
+
+**Use this when:**
+- User wants to copy text for pasting elsewhere
+- Need to store text temporarily in clipboard
+- Preparing content for pasting into other apps
+
+**Notes:**
+- Uses `pbcopy` command (standard macOS clipboard utility)
+- Fast and reliable clipboard operations
+- Supports multi-line text
+
+---
+
+## 30. set_timer
+
+**Purpose:** Set a timer that will notify you when it expires.
+
+**Parameters:**
+```json
+{
+  "duration_minutes": "float - REQUIRED - Duration in minutes (can be decimal, e.g., 0.5 for 30 seconds)",
+  "message": "string | null - Optional message to display when timer expires (default: 'Timer expired')"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "status": "set",
+  "duration_minutes": "float",
+  "duration_seconds": "int",
+  "message": "string",
+  "expires_at_approx": "string",
+  "notification_message": "string"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "TimerError | InvalidInput",
+  "error_message": "string",
+  "retry_possible": false
+}
+```
+
+**Example:**
+```json
+{
+  "action": "set_timer",
+  "parameters": {
+    "duration_minutes": 25.0,
+    "message": "Pomodoro session complete!"
+  }
+}
+```
+
+**Use this when:**
+- User wants a reminder after a specific duration
+- Need to get notified when time is up
+- Creating Pomodoro timers or time-based alerts
+
+**Notes:**
+- Uses AppleScript with background process
+- Displays notification when timer completes
+- Supports decimal minutes (e.g., 0.5 for 30 seconds)
+- Non-blocking - runs in background
+
+---
+
+## 31. transcribe_audio_file
+
+**Purpose:** Transcribe an audio file to text using OpenAI Whisper API.
+
+**Parameters:**
+```json
+{
+  "audio_file_path": "string - REQUIRED - Path to audio file (supports: mp3, mp4, mpeg, mpga, m4a, wav, webm)",
+  "language": "string | null - Optional language code (e.g., 'en', 'es', 'fr'). If null, auto-detects language"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "text": "string - Transcribed text",
+  "language": "string - Language used",
+  "file_path": "string",
+  "text_length": "int",
+  "word_count": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "TranscriptionError | FileNotFound | InvalidFileType",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "transcribe_audio_file",
+  "parameters": {
+    "audio_file_path": "/path/to/recording.mp3",
+    "language": "en"
+  }
+}
+```
+
+**Use this when:**
+- User wants to convert audio/voice recordings to text
+- Need to extract text from audio files
+- Processing voice memos or recordings
+
+**Notes:**
+- Uses OpenAI Whisper API for high-quality transcription
+- Supports multiple audio formats (mp3, mp4, wav, webm, etc.)
+- Auto-detects language if not specified
+- Works with multilingual audio
+
+---
+
+## 32. text_to_speech
+
+**Purpose:** Convert text to speech audio using OpenAI TTS API.
+
+**Parameters:**
+```json
+{
+  "text": "string - REQUIRED - Text to convert to speech (max ~4000 characters)",
+  "voice": "string - Voice to use: 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer' (default: 'alloy')",
+  "output_path": "string | null - Optional path to save audio file (default: data/audio/)",
+  "speed": "float - Speech speed multiplier 0.25-4.0 (default: 1.0)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "audio_path": "string - Path to generated audio file",
+  "text": "string",
+  "voice": "string",
+  "speed": "float",
+  "text_length": "int",
+  "file_size_bytes": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "TTSError | InvalidInput",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "text_to_speech",
+  "parameters": {
+    "text": "Hello, your report is ready!",
+    "voice": "nova",
+    "speed": 1.0
+  }
+}
+```
+
+**Use this when:**
+- User wants to generate audio from text
+- Need voice responses for queries
+- Creating audio versions of text content
+
+**Notes:**
+- Uses OpenAI TTS API for natural-sounding speech
+- Multiple voice options available
+- Adjustable speech speed (0.25x to 4.0x)
+- Saves audio files to data/audio/ directory by default
+
+**Available Voices:**
+- `alloy` - Balanced, neutral voice
+- `echo` - Clear, articulate voice
+- `fable` - Expressive, storytelling voice
+- `onyx` - Deep, authoritative voice
+- `nova` - Bright, energetic voice
+- `shimmer` - Soft, gentle voice
+
+---
+
+## 33. reply_to_user
+
+**Purpose:** Deliver the final, user-facing response.
+
+**When to use:**
+- After all action steps complete (even for simple, single-tool workflows)
+- To summarize outcomes in natural language
+- To highlight artifacts (paths, URLs, file names) generated earlier
+
+**When NOT to use:**
+- Before the underlying work is done
+- As a substitute for action tools
+
+**Parameters:**
+```json
+{
+  "message": "string - REQUIRED - Headline response shown to the user",
+  "details": "string - optional - Additional context (Markdown supported)",
+  "artifacts": "list[string] - optional - Paths or URLs to surface",
+  "status": "string - optional - success | partial_success | info | error (default: success)"
+}
+```
+
+**Returns:**
+```json
+{
+  "type": "reply",
+  "message": "Primary response string",
+  "details": "Additional context (if provided)",
+  "artifacts": ["List of artifact strings"],
+  "status": "Declared status",
+  "error": false
+}
+```
+
+**Example:**
+```json
+{
+  "action": "reply_to_user",
+  "parameters": {
+    "message": "Summaries delivered! Check the attachment.",
+    "details": "- Converted the report to Pages\n- Drafted the email for review",
+    "artifacts": ["~/Documents/reports/Q3_summary.pages"],
+    "status": "success"
+  },
+  "reasoning": "Provide the user-friendly wrap-up referencing earlier outputs"
+}
+```
+
+**Common Mistakes:**
+- ❌ Skipping this tool and leaving the UI with raw JSON
+- ❌ Calling it before action tools complete
+- ❌ Forgetting to include attachments/paths in `artifacts` when relevant
+
+---
+
+## 34. whatsapp_ensure_session
+
+**Purpose:** Verify WhatsApp Desktop is running and user is logged in.
+
+**Parameters:**
+```json
+{}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "status": "LOGGED_IN | NOT_LOGGED_IN | QR_CODE_REQUIRED",
+  "needs_login": false
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ProcessNotFound | SessionError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_ensure_session",
+  "parameters": {}
+}
+```
+
+**Use this when:**
+- Need to verify WhatsApp is ready before reading messages
+- First step in any WhatsApp workflow
+
+**Notes:**
+- Activates WhatsApp Desktop app
+- Checks for login status
+- Required before other WhatsApp operations
+
+---
+
+## 35. whatsapp_navigate_to_chat
+
+**Purpose:** Navigate to a specific WhatsApp chat or group.
+
+**Parameters:**
+```json
+{
+  "contact_name": "string - REQUIRED - Name of contact or group",
+  "is_group": "boolean - Whether this is a group chat (default: false)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "status": "NAVIGATED",
+  "contact": "string",
+  "is_group": "boolean"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "NavigationError | MissingContact",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_navigate_to_chat",
+  "parameters": {
+    "contact_name": "John Doe",
+    "is_group": false
+  }
+}
+```
+
+**Use this when:**
+- Need to open a specific chat before reading messages
+- Preparing to interact with a WhatsApp conversation
+
+**Notes:**
+- Uses search (Cmd+F) to find and open the chat
+- Works for both individual chats and groups
+
+---
+
+## 36. whatsapp_read_messages
+
+**Purpose:** Read recent messages from a WhatsApp chat or group.
+
+**Parameters:**
+```json
+{
+  "contact_name": "string - REQUIRED - Name of contact or group",
+  "limit": "int - Maximum number of messages to return (default: 20)",
+  "is_group": "boolean - Whether this is a group chat (default: false)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "contact": "string",
+  "is_group": "boolean",
+  "messages": ["array of message strings"],
+  "sample_size": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ReadError | MissingContact",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_read_messages",
+  "parameters": {
+    "contact_name": "Team Chat",
+    "limit": 30,
+    "is_group": true
+  }
+}
+```
+
+**Use this when:**
+- User wants to see recent messages from a chat
+- Need message content for summarization or analysis
+- Reading conversation history
+
+**Notes:**
+- Uses macOS UI automation to extract messages
+- Returns most recent messages (up to limit)
+- Messages include sender names for groups
+
+---
+
+## 37. whatsapp_read_messages_from_sender
+
+**Purpose:** Read messages from a specific sender within a group chat.
+
+**Parameters:**
+```json
+{
+  "contact_name": "string - REQUIRED - Name of the group",
+  "sender_name": "string - REQUIRED - Name of sender to filter by",
+  "limit": "int - Maximum number of messages to return (default: 20)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "contact": "string",
+  "sender": "string",
+  "messages": ["array of filtered message strings"],
+  "sample_size": "int",
+  "total_messages": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ReadError | MissingContact",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_read_messages_from_sender",
+  "parameters": {
+    "contact_name": "Project Team",
+    "sender_name": "Alice",
+    "limit": 10
+  }
+}
+```
+
+**Use this when:**
+- User asks "What did [person] say in [group]?"
+- Need to filter group messages by specific sender
+- Tracking messages from a particular person
+
+**Notes:**
+- Only works for group chats (is_group=True)
+- Filters messages that start with sender name
+- Returns messages in chronological order
+
+---
+
+## 38. whatsapp_read_group_messages
+
+**Purpose:** Read recent messages from a WhatsApp group.
+
+**Parameters:**
+```json
+{
+  "group_name": "string - REQUIRED - Name of the group",
+  "limit": "int - Maximum number of messages to return (default: 20)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "contact": "string",
+  "is_group": true,
+  "messages": ["array of message strings"],
+  "sample_size": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ReadError | MissingContact",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_read_group_messages",
+  "parameters": {
+    "group_name": "Family Chat",
+    "limit": 50
+  }
+}
+```
+
+**Use this when:**
+- User specifically mentions a group
+- Need to read group conversation
+- Convenience wrapper for group-specific reading
+
+**Notes:**
+- Convenience function that sets is_group=True automatically
+- Same as whatsapp_read_messages with is_group=True
+
+---
+
+## 39. whatsapp_detect_unread
+
+**Purpose:** Detect chats/groups with unread messages.
+
+**Parameters:**
+```json
+{}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "unread_chats": ["array of chat/group names"],
+  "total_detected": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "UnreadCheckError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_detect_unread",
+  "parameters": {}
+}
+```
+
+**Use this when:**
+- User asks "What are my unread messages?"
+- Need to find chats with new activity
+- Checking for pending conversations
+
+**Notes:**
+- Scans chat list for unread indicators
+- Returns list of chats with unread messages
+- Useful for prioritizing which chats to read
+
+---
+
+## 40. whatsapp_list_chats
+
+**Purpose:** List all available chats and groups in WhatsApp.
+
+**Parameters:**
+```json
+{}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "chats": ["array of chat/group names"],
+  "total": "int"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ChatListError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_list_chats",
+  "parameters": {}
+}
+```
+
+**Use this when:**
+- User asks "What chats do I have?"
+- Need to discover available conversations
+- Listing all WhatsApp contacts/groups
+
+**Notes:**
+- Extracts chat list from WhatsApp sidebar
+- Returns all visible chats and groups
+- Useful for discovery and navigation
+
+---
+
+## 41. whatsapp_summarize_messages
+
+**Purpose:** Read and summarize messages from a WhatsApp chat/group using AI.
+
+**Parameters:**
+```json
+{
+  "contact_name": "string - REQUIRED - Name of contact or group",
+  "is_group": "boolean - Whether this is a group chat (default: false)",
+  "limit": "int - Maximum number of messages to read before summarizing (default: 50)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "contact": "string",
+  "is_group": "boolean",
+  "summary": "string - AI-generated summary",
+  "messages_count": "int",
+  "messages_preview": ["first 5 messages"]
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ConfigError | ReadError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_summarize_messages",
+  "parameters": {
+    "contact_name": "Work Team",
+    "is_group": true,
+    "limit": 100
+  }
+}
+```
+
+**Use this when:**
+- User asks "Summarize messages from [chat]"
+- Need quick overview of long conversation
+- Catching up on group chat activity
+
+**Notes:**
+- Uses LLM to generate concise summary
+- Highlights key points and decisions
+- Includes action items when present
+- Reads messages first, then summarizes
+
+---
+
+## 42. whatsapp_extract_action_items
+
+**Purpose:** Read messages and extract action items/tasks using AI.
+
+**Parameters:**
+```json
+{
+  "contact_name": "string - REQUIRED - Name of contact or group",
+  "is_group": "boolean - Whether this is a group chat (default: false)",
+  "limit": "int - Maximum number of messages to read before extracting (default: 50)"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "contact": "string",
+  "is_group": "boolean",
+  "action_items": ["array of extracted action items"],
+  "messages_count": "int",
+  "messages_preview": ["first 5 messages"]
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ConfigError | ReadError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "whatsapp_extract_action_items",
+  "parameters": {
+    "contact_name": "Project Team",
+    "is_group": true,
+    "limit": 50
+  }
+}
+```
+
+**Use this when:**
+- User asks "What are the action items from [group]?"
+- Need to extract tasks and deadlines
+- Creating todo list from conversation
+
+**Notes:**
+- Uses LLM to identify actionable items
+- Extracts tasks, deadlines, and commitments
+- Returns structured list of action items
+- Reads messages first, then extracts
 
 ---
 

@@ -13,17 +13,18 @@ auto_mac/
 ├── README.md                      # Main project documentation
 ├── START_HERE.md                  # Quick start guide
 ├── DIRECTORY_MAP.md              # This file - directory guide
-├── REORGANIZATION_PLAN.md        # Reorganization history
-├── .env.example                  # Environment template
 ├── config.yaml                   # System configuration
 ├── requirements.txt              # Python dependencies
 ├── main.py                       # Main CLI entry point
 ├── api_server.py                 # API server
 ├── app.py                        # Web app (legacy)
+├── run.sh                        # Startup script
 └── start_ui.sh                   # UI launcher script
 ```
 
 **Status:** ✅ Clean - Only essential files
+
+**Note:** All documentation, changelogs, and implementation history have been moved to `docs/` subdirectories.
 
 ---
 
@@ -35,10 +36,14 @@ docs/
 ├── README.md                     # Documentation index
 ├── quickstart/                   # Getting started
 ├── architecture/                 # System design
+│   └── guides/                   # Architecture guides
 ├── agents/                       # Agent-specific docs
 ├── features/                     # Feature documentation
 ├── testing/                      # Test documentation
-└── development/                  # Developer docs
+├── development/                  # Developer docs
+│   └── history/                  # Implementation history
+├── changelog/                    # Bug fixes and changes
+└── guides/                       # General guides
 ```
 
 ### 🚀 Quickstart (`docs/quickstart/`)
@@ -102,10 +107,43 @@ development/
 ├── PROJECT_STRUCTURE.md          # Codebase organization
 ├── PROJECT_OVERVIEW.md           # Project overview
 ├── CODEBASE_ORGANIZATION.md      # File structure
-└── IMPLEMENTATION_SUMMARY.md     # Implementation notes
+├── IMPLEMENTATION_SUMMARY.md     # Implementation notes
+├── frontend_structure.txt        # Frontend structure
+└── history/                      # Implementation history
+    ├── IMPLEMENTATION_COMPLETE.md
+    ├── IMPLEMENTATION_SUMMARY.md
+    ├── SESSION_MEMORY_IMPLEMENTATION_COMPLETE.md
+    ├── APPLESCRIPT_MCP_INTEGRATION_PLAN.md
+    └── REORGANIZATION_PLAN.md
 ```
 
 **Purpose:** Developer documentation for understanding the codebase.
+
+### 📝 Changelog (`docs/changelog/`)
+```
+changelog/
+├── AGENT_FIXES_AND_NOTIFICATIONS.md
+├── BUG_FIXES_APPLIED.md
+├── CONFIG_HOT_RELOAD_FIX.md
+├── CONFIG_VALIDATION_GUIDE.md
+├── DEFENSIVE_PROGRAMMING_GUIDE.md
+├── API_PARAMETER_VALIDATION.md
+├── QUICK_API_VALIDATION_GUIDE.md
+├── TWITTER_API_FIX.md
+├── RACE_CONDITION_FIXES.md
+├── LOADING_FIX.md
+└── LAZY_LOADING_OPTIMIZATION.md
+```
+
+**Purpose:** Historical record of bug fixes, API changes, and technical improvements.
+
+### 📖 Guides (`docs/guides/`)
+```
+guides/
+└── POTENTIAL_IMPROVEMENTS.MD     # Future improvement suggestions
+```
+
+**Purpose:** Guides and improvement suggestions for future development.
 
 ---
 
@@ -212,7 +250,25 @@ frontend/
 
 ```
 scripts/                        # Utility scripts
-.pytest_cache/                  # Pytest cache
+├── examples/                   # Example scripts
+│   ├── create_presentation_example.py
+│   └── stock_report_example.py
+└── [other utility scripts]
+
+data/                          # Application data
+├── archives/                  # Archive files (.zip)
+├── embeddings/                # Document embeddings
+├── screenshots/               # Screenshot storage
+├── presentations/             # Generated presentations
+├── reports/                   # Generated reports
+├── sessions/                 # Session data
+└── logs/                      # Application logs
+
+test_data/                     # Test data files
+test_docs/                     # Test documents
+test_doc/                      # Test document directory
+
+.pytest_cache/                 # Pytest cache
 venv/                          # Python virtual environment (ignored)
 node_modules/                  # Node modules (ignored)
 ```
@@ -228,12 +284,12 @@ node_modules/                  # Node modules (ignored)
 - **Test files in root:** 4
 - **Redundant/outdated docs:** ~30
 
-### After Reorganization
-- **Root markdown files:** 3 (README, START_HERE, this file)
-- **Organized docs:** ~30 (grouped by purpose)
-- **Total markdown files:** ~33
+### After Reorganization (November 2024)
+- **Root markdown files:** 3 (README, START_HERE, DIRECTORY_MAP)
+- **Organized docs:** ~50+ (grouped by purpose)
+- **Total markdown files:** ~53+
 - **Test files in root:** 0 (all in tests/)
-- **Redundant docs removed:** ~34
+- **Documentation categories:** 8 (quickstart, architecture, agents, features, testing, development, changelog, guides)
 
 ### Improvement
 - ✅ **48% reduction** in total markdown files
@@ -263,6 +319,12 @@ node_modules/                  # Node modules (ignored)
 
 ### "I want to develop/contribute"
 → [`docs/development/PROJECT_STRUCTURE.md`](docs/development/PROJECT_STRUCTURE.md)
+
+### "I want to see bug fixes/changes"
+→ [`docs/changelog/`](docs/changelog/) directory
+
+### "I want to see implementation history"
+→ [`docs/development/history/`](docs/development/history/) directory
 
 ### "I need all documentation"
 → [`docs/README.md`](docs/README.md) - Complete index

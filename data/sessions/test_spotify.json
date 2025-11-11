@@ -1,0 +1,458 @@
+{
+  "session_id": "test_spotify",
+  "status": "active",
+  "created_at": "2025-11-10T22:30:40.611403",
+  "last_active_at": "2025-11-10T22:32:02.841662",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-10T22:30:48.108154",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Music starts playing in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started",
+          "expected_output": "User receives confirmation of music playback"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_2",
+      "timestamp": "2025-11-10T22:30:57.730180",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Music starts playing in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started",
+          "expected_output": "User receives confirmation of music playback"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_3",
+      "timestamp": "2025-11-10T22:31:11.095641",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Music starts playing in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started",
+          "expected_output": "User receives confirmation of music playback"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_4",
+      "timestamp": "2025-11-10T22:31:30.198215",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Music starts playing in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started",
+          "expected_output": "User receives confirmation of music playback"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_5",
+      "timestamp": "2025-11-10T22:31:39.382105",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Music starts playing in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started",
+          "expected_output": "User receives confirmation of music playback"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_6",
+      "timestamp": "2025-11-10T22:32:02.841662",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Start playing music in Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "The user requested to play music, which can be achieved by starting playback in Spotify.",
+          "expected_output": "Music playback started in Spotify"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started successfully.",
+          "expected_output": "User receives confirmation that music is playing"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Start playing music in Spotify",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 6,
+    "total_steps_executed": 12,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

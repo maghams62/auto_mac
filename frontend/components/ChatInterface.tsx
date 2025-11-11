@@ -7,6 +7,7 @@ import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputArea from "./InputArea";
 import Sidebar from "./Sidebar";
+import RecordingIndicator from "./RecordingIndicator";
 import { motion, AnimatePresence } from "framer-motion";
 
 const WS_URL = "ws://localhost:8000/ws/chat";
@@ -210,24 +211,12 @@ export default function ChatInterface() {
         </div>
       )}
 
-      {/* Voice recording status */}
-      {(isRecording || isTranscribing) && (
-        <div className="px-6 py-2 bg-accent-cyan/10 border-t border-accent-cyan/20">
-          <p className="text-center text-accent-cyan text-sm flex items-center justify-center space-x-2">
-            {isTranscribing ? (
-              <>
-                <div className="w-2 h-2 bg-accent-cyan rounded-full animate-pulse" />
-                <span>Transcribing audio...</span>
-              </>
-            ) : (
-              <>
-                <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
-                <span>Recording... Click microphone to stop</span>
-              </>
-            )}
-          </p>
-        </div>
-      )}
+      {/* ChatGPT-style Recording Indicator */}
+      <RecordingIndicator
+        isRecording={isRecording}
+        isTranscribing={isTranscribing}
+        onStop={handleVoiceRecord}
+      />
 
       {/* Input area */}
       <InputArea

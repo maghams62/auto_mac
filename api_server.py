@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from threading import Event
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -387,6 +387,122 @@ async def list_agents():
         return agents_info
     except Exception as e:
         logger.error(f"Error listing agents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help")
+async def get_help_data():
+    """Get complete help data for all commands, agents, and tools"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+        return help_registry.to_dict()
+    except Exception as e:
+        logger.error(f"Error getting help data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help/search")
+async def search_help(q: str, limit: int = 10):
+    """Search help entries by query"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+        results = help_registry.search(q, limit=limit)
+        return {
+            "query": q,
+            "count": len(results),
+            "results": [r.to_dict() for r in results]
+        }
+    except Exception as e:
+        logger.error(f"Error searching help: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help/categories")
+async def get_help_categories():
+    """Get all help categories"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+        categories = help_registry.get_all_categories()
+        return {
+            "categories": [c.to_dict() for c in categories]
+        }
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help/categories/{category}")
+async def get_category_help(category: str):
+    """Get help entries for a specific category"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+        entries = help_registry.get_by_category(category)
+        if not entries:
+            raise HTTPException(status_code=404, detail=f"Category '{category}' not found")
+        return {
+            "category": category,
+            "count": len(entries),
+            "entries": [e.to_dict() for e in entries]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting category help: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help/commands/{command}")
+async def get_command_help(command: str):
+    """Get detailed help for a specific command"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+
+        # Try with slash prefix
+        entry = help_registry.get_entry(f"/{command}")
+        if not entry:
+            # Try without slash
+            entry = help_registry.get_entry(command)
+
+        if not entry:
+            # Get suggestions
+            suggestions = help_registry.get_suggestions(f"/{command}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": f"Command '{command}' not found",
+                    "suggestions": suggestions
+                }
+            )
+
+        return entry.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting command help: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/help/agents/{agent}")
+async def get_agent_help(agent: str):
+    """Get detailed help for a specific agent"""
+    try:
+        from src.ui.help_registry import HelpRegistry
+        help_registry = HelpRegistry(agent_registry)
+
+        agent_help = help_registry.get_agent(agent)
+        if not agent_help:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent}' not found")
+
+        return agent_help.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting agent help: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -841,6 +957,89 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error transcribing audio: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@app.post("/api/text-to-speech")
+async def text_to_speech_api(
+    text: str = Body(..., embed=True),
+    voice: str = Body(default="alloy", embed=True),
+    speed: float = Body(default=1.0, embed=True)
+):
+    """
+    Convert text to speech using OpenAI TTS API.
+    
+    Accepts text and returns audio file path or audio data.
+    """
+    try:
+        logger.info(f"Received TTS request: text_length={len(text)}, voice={voice}, speed={speed}")
+        
+        # Validate inputs
+        if not text or len(text.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
+        
+        MAX_TEXT_LENGTH = 4000
+        if len(text) > MAX_TEXT_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Text too long (max {MAX_TEXT_LENGTH} characters). Current: {len(text)}"
+            )
+        
+        valid_voices = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+        if voice not in valid_voices:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid voice '{voice}'. Valid voices: {', '.join(valid_voices)}"
+            )
+        
+        if speed < 0.25 or speed > 4.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Speed must be between 0.25 and 4.0. Got: {speed}"
+            )
+        
+        # Get OpenAI API key
+        api_key = config.get("openai", {}).get("api_key")
+        if not api_key or api_key.startswith("${"):
+            api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        # Generate speech
+        response = client.audio.speech.create(
+            model="tts-1",  # Use "tts-1-hd" for higher quality (slower, more expensive)
+            voice=voice,
+            input=text,
+            speed=speed
+        )
+        
+        # Save to data/audio directory
+        audio_dir = Path(__file__).parent / "data" / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = audio_dir / f"tts_{os.urandom(4).hex()}.mp3"
+        
+        # Save audio file
+        response.stream_to_file(str(audio_path))
+        
+        logger.info(f"TTS successful: {audio_path}")
+        
+        return {
+            "success": True,
+            "audio_path": str(audio_path),
+            "text": text,
+            "voice": voice,
+            "speed": speed,
+            "file_size_bytes": audio_path.stat().st_size if audio_path.exists() else 0
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating speech: {e}")
+        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,29 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import ChatInterface from "@/components/ChatInterface";
 import Header from "@/components/Header";
 import { motion } from "framer-motion";
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Show loading state instead of null to prevent hydration mismatch
-  if (!mounted) {
-    return (
-      <main className="min-h-screen bg-gradient-to-br from-[#0a0a0a] via-[#0d0d0d] to-[#0a0a0a] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-white/20 border-t-white/80 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-white/60">Loading...</p>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#0a0a0a] via-[#0d0d0d] to-[#0a0a0a]">
       {/* Background effects */}

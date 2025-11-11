@@ -27,7 +27,7 @@ def load_config(config_path: str = "config.yaml", use_global_manager: bool = Tru
     # Try to use global ConfigManager if available (for hot-reload)
     if use_global_manager:
         try:
-            from .config_manager import get_global_config_manager
+            from ..config_manager import get_global_config_manager
             manager = get_global_config_manager(config_path)
             return manager.get_config()
         except (ImportError, AttributeError):
@@ -37,7 +37,7 @@ def load_config(config_path: str = "config.yaml", use_global_manager: bool = Tru
     # Fallback to file-based loading
     # Ensure environment variables are available (loads .env once if present)
     # Always prioritize the project-local .env so the value the developer edits wins.
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
     explicit_env = project_root / ".env"
     dotenv_loaded = False
 
@@ -93,35 +93,6 @@ def _expand_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
         return config
 
 
-def setup_logging(config: Dict[str, Any]):
-    """
-    Setup logging configuration.
-
-    Args:
-        config: Configuration dictionary
-    """
-    log_level = config.get('logging', {}).get('level', 'INFO')
-    log_file = config.get('logging', {}).get('file', 'data/app.log')
-
-    # Create log directory
-    log_path = Path(log_file)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, log_level),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(),
-        ]
-    )
-
-    # Reduce noise from some libraries
-    logging.getLogger('openai').setLevel(logging.WARNING)
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-
-
 def save_config(config: Dict[str, Any], config_path: str = "config.yaml") -> None:
     """
     Save configuration to YAML file.
@@ -151,6 +122,35 @@ def save_config(config: Dict[str, Any], config_path: str = "config.yaml") -> Non
             yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
+def setup_logging(config: Dict[str, Any]):
+    """
+    Setup logging configuration.
+
+    Args:
+        config: Configuration dictionary
+    """
+    log_level = config.get('logging', {}).get('level', 'INFO')
+    log_file = config.get('logging', {}).get('file', 'data/app.log')
+
+    # Create log directory
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Configure logging
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(),
+        ]
+    )
+
+    # Reduce noise from some libraries
+    logging.getLogger('openai').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+
+
 def ensure_directories():
     """Create necessary directories if they don't exist."""
     directories = [
@@ -160,3 +160,4 @@ def ensure_directories():
 
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
+

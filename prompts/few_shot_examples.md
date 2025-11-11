@@ -7,24 +7,30 @@
 - **Writing Agent (content):** `synthesize_content`, `create_slide_deck_content`, `create_detailed_report`, `create_meeting_notes`
 - **Presentation Agent (surface):** `create_keynote`, `create_keynote_with_images`, `create_pages_doc`
 - **Browser Agent (web/Playwright):** `google_search`, `navigate_to_url`, `extract_page_content`, `take_web_screenshot`, `close_browser`
+- **Email Agent (mail ops):** `compose_email`, `reply_to_email`, `read_latest_emails`, `read_emails_by_sender`, `read_emails_by_time`, `summarize_emails`
+- **Bluesky Agent (social):** `search_bluesky_posts`, `summarize_bluesky_posts`, `post_bluesky_update`
 - **Ticker Discovery Rule:** Unless the user explicitly provides a ticker symbol (e.g., "MSFT"), ALWAYS run the Browser Agent sequence (search → navigate → extract) on allowlisted finance domains to confirm the ticker before invoking stock tools.
 - **Screen Agent (visual desktop):** `capture_screenshot` (focused window only)
 - **Stock Agent:** `get_stock_price`, `get_stock_history`, `capture_stock_chart`, `compare_stocks`
-- **Maps Agent (trip planning):** `plan_trip_with_stops`, `open_maps_with_route`
+- **Maps Agent (trip planning + transit):** `get_google_transit_directions` (real-time transit with actual times), `get_directions`, `get_transit_schedule`, `plan_trip_with_stops`, `open_maps_with_route`
+- **Spotify Agent (music control):** `play_music`, `pause_music`, `get_spotify_status`
+- **Reply Agent (UI formatting):** `reply_to_user` (ALWAYS use as FINAL step to format responses for UI)
 
 Reference this hierarchy when picking tools—if a capability lives in a specific agent, route the plan through that agent’s tools.
 
-### Single-Step Patterns (Plan → Execute → Verify Loop)
-Some requests are intentionally one-and-done. Mirror these micro-patterns exactly so planning, execution, and verification stay aligned:
+### Single-Step Patterns (Plan → Execute → Reply Loop)
+Some requests are intentionally one-and-done for the **action** step. Mirror these micro-patterns exactly—perform the action, then call `reply_to_user` so the UI gets a polished response:
 
-| User Request | Plan (single step) | Execution Expectation | Verification |
-|--------------|--------------------|-----------------------|--------------|
-| "Find the 'EV Readiness Memo' and tell me where it lives." | `search_documents` with the query only. | Return top doc metadata; stop. | Skip critic unless the user explicitly asked for validation. |
-| "Run a Google search for 'WWDC 2024 keynote recap' and list the top domains." | `google_search` (no navigation). | Provide the domains from search results; no extra steps. | No reflection/critic unless search fails. |
-| "Capture whatever is on my main display as 'status_check'." | `capture_screenshot` with `output_name`. | Produce screenshot path; do not follow with other tools. | Only re-plan if capture fails. |
-| "Scan r/electricvehicles (hot, limit 5) and summarize the titles." | `scan_subreddit_posts` with sort + limit. | Summarize the titles from the returned payload. | Critic is optional—only call it on demand. |
+| User Request | Plan (action → reply) | Execution Expectation | Verification |
+|--------------|-----------------------|-----------------------|--------------|
+| "Find the 'EV Readiness Memo' and tell me where it lives." | `search_documents` → `reply_to_user` | Return top doc metadata, then summarize it for the user. | Skip critic unless the user explicitly asked for validation. |
+| "Run a Google search for 'WWDC 2024 keynote recap' and list the top domains." | `google_search` → `reply_to_user` | Provide the domains from search results; no extra steps. | No reflection/critic unless search fails. |
+| "Capture whatever is on my main display as 'status_check'." | `capture_screenshot` → `reply_to_user` | Produce screenshot path, then tell the user where it is saved. | Only re-plan if capture fails. |
+| "Scan r/electricvehicles (hot, limit 5) and summarize the titles." | `scan_subreddit_posts` → `reply_to_user` | Summarize the titles from the returned payload. | Critic is optional—only call it on demand. |
+| "Play music" | `play_music` → `reply_to_user` | Start/resume Spotify playback, then confirm to user. | Skip critic—simple action. |
+| "Pause" or "Pause music" | `pause_music` → `reply_to_user` | Pause Spotify playback, then confirm to user. | Skip critic—simple action. |
 
-If your plan has more than one step for these shapes, revise before execution. Deterministic AppleScript-backed tools should not trigger verification loops unless something goes wrong.
+If your plan has more than one action step for these shapes, revise before execution. Deterministic AppleScript-backed tools should not trigger verification loops unless something goes wrong. The only post-action step should be the reply.
 
 ### 1. Capability Assessment (MUST DO BEFORE PLANNING!)
 **BEFORE creating any plan, verify you have the necessary tools:**
@@ -2188,6 +2194,199 @@ Tools:
 
 ---
 
+## Example 20a: MAPS AGENT - Transit Directions with Google Maps API (NEW! RECOMMENDED)
+
+### User Request
+"When's the next bus to Berkeley"
+
+### Decomposition
+```json
+{
+  "goal": "Get real-time transit directions with actual departure times using Google Maps API",
+  "steps": [
+    {
+      "id": 1,
+      "action": "get_google_transit_directions",
+      "parameters": {
+        "origin": "Current Location",
+        "destination": "Berkeley, CA",
+        "departure_time": "now"
+      },
+      "dependencies": [],
+      "reasoning": "User asking for next bus time. Use Google Maps API to get PROGRAMMATIC transit schedule with actual departure times that can be returned in chat response",
+      "expected_output": "Returns actual next departure time (e.g., 'Next departure: 3:45 PM') in chat, plus Google Maps URL"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "[Generated based on step 1 result with actual departure time]"
+      },
+      "dependencies": [1],
+      "reasoning": "Format the transit schedule response for UI display",
+      "expected_output": "User sees 'Next bus at 3:45 PM' directly in chat"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Transit Directions Pattern (GOOGLE MAPS RECOMMENDED)**
+- ✅ **ALWAYS use `get_google_transit_directions` for transit queries** - Returns actual times programmatically
+- ✅ Returns "Next departure: 3:45 PM" directly in chat response
+- ✅ Opens Google Maps in browser with full transit directions
+- ✅ Provides step-by-step transit details with line numbers and stops
+- ✅ Requires GOOGLE_MAPS_API_KEY in .env file
+- ⚠️ If Google Maps API not configured, fallback to `get_directions` with Apple Maps (but no programmatic times)
+
+**Transit Query Variations:**
+- "when's the next bus to [place]" → `get_google_transit_directions`
+- "show me the train schedule to [place]" → `get_google_transit_directions`
+- "what time is the next BART to [place]" → `get_google_transit_directions`
+- "when's the next bus to UCSC Silicon Valley" → `get_google_transit_directions`
+
+**Fallback Pattern (if Google Maps API not available):**
+```json
+{
+  "action": "get_directions",
+  "parameters": {
+    "origin": "Current Location",
+    "destination": "Berkeley, CA",
+    "transportation_mode": "transit",
+    "open_maps": true
+  }
+}
+```
+Note: Fallback opens Apple Maps but cannot return programmatic departure times
+
+---
+
+## Example 20b: MAPS AGENT - Bicycle Directions (NEW! Multi-Modal)
+
+### User Request
+"How do I bike to the office from here"
+
+### Decomposition
+```json
+{
+  "goal": "Get bicycle directions from current location to office",
+  "steps": [
+    {
+      "id": 1,
+      "action": "get_directions",
+      "parameters": {
+        "origin": "Current Location",
+        "destination": "Office",
+        "transportation_mode": "bicycle",
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User wants bicycle route. Use bicycle mode for bike-friendly paths and lanes",
+      "expected_output": "Maps opens with bicycle directions showing bike paths, lanes, and estimated time"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Bicycle Directions Pattern**
+- ✅ Use `get_directions` with `transportation_mode: "bicycle"`
+- ✅ Maps will show bike-friendly routes, bike lanes, paths
+- ✅ Provides elevation info and time estimates
+- ✅ Aliases: "bicycle", "bike", "cycling" all map to bicycle mode
+- ✅ "from here" → use "Current Location" as origin
+
+**Bicycle Query Variations:**
+- "bike to the coffee shop" → `transportation_mode: "bicycle"`
+- "cycling directions to downtown" → `transportation_mode: "bicycle"`
+- "show me the bike route" → `transportation_mode: "bicycle"`
+
+---
+
+## Example 20c: MAPS AGENT - Walking Directions (NEW! Multi-Modal)
+
+### User Request
+"Walk me to the nearest coffee shop"
+
+### Decomposition
+```json
+{
+  "goal": "Get walking directions to nearest coffee shop",
+  "steps": [
+    {
+      "id": 1,
+      "action": "get_directions",
+      "parameters": {
+        "origin": "Current Location",
+        "destination": "nearest coffee shop",
+        "transportation_mode": "walking",
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User wants walking directions. Use walking mode for pedestrian paths",
+      "expected_output": "Maps opens with walking directions showing pedestrian routes and time"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Walking Directions Pattern**
+- ✅ Use `get_directions` with `transportation_mode: "walking"`
+- ✅ Maps will show pedestrian-friendly routes, sidewalks, crosswalks
+- ✅ Provides walking time estimates
+- ✅ Aliases: "walking", "walk" map to walking mode
+- ✅ "nearest coffee shop" → Maps will find closest match
+
+**Walking Query Variations:**
+- "walk to the park" → `transportation_mode: "walking"`
+- "how far is it on foot" → `transportation_mode: "walking"`
+- "walking directions to downtown" → `transportation_mode: "walking"`
+
+---
+
+## Example 20d: MAPS AGENT - Driving Directions (NEW! Multi-Modal)
+
+### User Request
+"Drive me to San Francisco"
+
+### Decomposition
+```json
+{
+  "goal": "Get driving directions to San Francisco",
+  "steps": [
+    {
+      "id": 1,
+      "action": "get_directions",
+      "parameters": {
+        "origin": "Current Location",
+        "destination": "San Francisco, CA",
+        "transportation_mode": "driving",
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User wants driving route. Driving is default but explicit for clarity",
+      "expected_output": "Maps opens with driving directions showing route, traffic, and time"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Driving Directions Pattern**
+- ✅ Use `get_directions` with `transportation_mode: "driving"` (or omit, it's default)
+- ✅ Maps will show fastest driving route with real-time traffic
+- ✅ Provides driving time with traffic conditions
+- ✅ Aliases: "driving", "car" map to driving mode
+- ✅ Default mode if not specified
+
+**Driving Query Variations:**
+- "directions to the airport" → `transportation_mode: "driving"` (or omit)
+- "drive to Los Angeles" → `transportation_mode: "driving"`
+- "how do I get there by car" → `transportation_mode: "car"`
+
+---
+
 ## Example 21: FILE AGENT - Zip Non-Music Files and Email (NEW!)
 
 ### User Request
@@ -2316,6 +2515,695 @@ plan_trip_with_stops(origin, destination, num_fuel_stops=X, num_food_stops=Y, de
 open_maps_with_route(origin, destination, stops=[...], start_navigation=false)
 ```
 
+---
+
+## Example 22: EMAIL AGENT - Read Latest Emails (NEW!)
+
+### User Request
+"Read my latest 5 emails"
+
+### Decomposition
+```json
+{
+  "goal": "Read latest 5 emails and present to user",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_latest_emails",
+      "parameters": {
+        "count": 5,
+        "mailbox": "INBOX"
+      },
+      "dependencies": [],
+      "reasoning": "Retrieve the 5 most recent emails from inbox",
+      "expected_output": "List of 5 emails with sender, subject, date, content"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Retrieved your latest 5 emails",
+        "details": "Email list with senders, subjects, dates, and previews",
+        "artifacts": [],
+        "status": "success"
+      },
+      "dependencies": [1],
+      "reasoning": "FINAL step - deliver polished summary to UI",
+      "expected_output": "User-friendly email listing"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Email Reading Pattern**
+- ✅ Use `read_latest_emails` to retrieve recent emails
+- ✅ ALWAYS end with `reply_to_user` to format response for UI
+- ✅ Single-step pattern: read → reply
+- ❌ DON'T return raw email data - use reply_to_user for polished output
+
+---
+
+## Example 23: EMAIL AGENT - Read Emails by Sender (NEW!)
+
+### User Request
+"Show me emails from john@example.com"
+
+### Decomposition
+```json
+{
+  "goal": "Find and display emails from specific sender",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_emails_by_sender",
+      "parameters": {
+        "sender": "john@example.com",
+        "count": 10
+      },
+      "dependencies": [],
+      "reasoning": "Search inbox for emails from john@example.com",
+      "expected_output": "List of emails from specified sender"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Found emails from john@example.com",
+        "details": "Listing all emails with subjects and dates",
+        "artifacts": [],
+        "status": "success"
+      },
+      "dependencies": [1],
+      "reasoning": "FINAL step - present findings to user",
+      "expected_output": "Formatted email list"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+---
+
+## Example 24: EMAIL AGENT - Summarize Recent Emails (NEW!)
+
+### User Request
+"Summarize emails from the past hour"
+
+### Decomposition
+```json
+{
+  "goal": "Read emails from last hour and provide AI summary",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_emails_by_time",
+      "parameters": {
+        "hours": 1,
+        "mailbox": "INBOX"
+      },
+      "dependencies": [],
+      "reasoning": "Retrieve all emails received in the last hour",
+      "expected_output": "List of emails from past hour"
+    },
+    {
+      "id": 2,
+      "action": "summarize_emails",
+      "parameters": {
+        "emails_data": "$step1",
+        "focus": null
+      },
+      "dependencies": [1],
+      "reasoning": "Use AI to create concise summary of email content",
+      "expected_output": "Summary highlighting key points, senders, and topics"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Email summary for the past hour",
+        "details": "$step2.summary",
+        "artifacts": [],
+        "status": "success"
+      },
+      "dependencies": [2],
+      "reasoning": "FINAL step - deliver AI-generated summary to user",
+      "expected_output": "Polished summary display"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**CRITICAL: Email Summarization Pattern**
+- ✅ Use `read_emails_by_time` for time-based filtering
+- ✅ Pass entire step output to `summarize_emails` using `$step1`
+- ✅ `summarize_emails` expects `emails_data` dict with `emails` field
+- ✅ ALWAYS end with `reply_to_user` containing the summary
+- ✅ Use `$step2.summary` to reference the AI-generated summary text
+
+---
+
+## Example 25: EMAIL AGENT - Read & Summarize with Focus (NEW!)
+
+### User Request
+"Summarize emails from Sarah focusing on action items"
+
+### Decomposition
+```json
+{
+  "goal": "Read emails from Sarah and summarize with focus on action items",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_emails_by_sender",
+      "parameters": {
+        "sender": "Sarah",
+        "count": 10
+      },
+      "dependencies": [],
+      "reasoning": "Find all emails from Sarah (partial name match works)",
+      "expected_output": "List of Sarah's emails"
+    },
+    {
+      "id": 2,
+      "action": "summarize_emails",
+      "parameters": {
+        "emails_data": "$step1",
+        "focus": "action items"
+      },
+      "dependencies": [1],
+      "reasoning": "Summarize with specific focus on action items and tasks",
+      "expected_output": "Summary highlighting action items from Sarah's emails"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Summary of emails from Sarah (focused on action items)",
+        "details": "$step2.summary",
+        "artifacts": [],
+        "status": "success"
+      },
+      "dependencies": [2],
+      "reasoning": "FINAL step - present focused summary",
+      "expected_output": "Action items clearly highlighted"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**CRITICAL: Focused Summarization**
+- ✅ `focus` parameter guides AI to highlight specific aspects
+- ✅ Common focus values: "action items", "deadlines", "important updates", "decisions"
+- ✅ Sender matching is flexible - "Sarah" will match "Sarah Johnson <sarah@company.com>"
+
+---
+
+## Example 26: EMAIL AGENT - Multi-Step Email Workflow (NEW!)
+
+### User Request
+"Read the latest 10 emails, summarize them, and create a report document"
+
+### Decomposition
+```json
+{
+  "goal": "Read emails, summarize, and create Pages document with summary",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_latest_emails",
+      "parameters": {
+        "count": 10,
+        "mailbox": "INBOX"
+      },
+      "dependencies": [],
+      "reasoning": "Retrieve 10 most recent emails",
+      "expected_output": "List of 10 emails"
+    },
+    {
+      "id": 2,
+      "action": "summarize_emails",
+      "parameters": {
+        "emails_data": "$step1",
+        "focus": null
+      },
+      "dependencies": [1],
+      "reasoning": "Create comprehensive summary of all emails",
+      "expected_output": "AI-generated email summary"
+    },
+    {
+      "id": 3,
+      "action": "create_pages_doc",
+      "parameters": {
+        "title": "Email Summary Report",
+        "content": "$step2.summary"
+      },
+      "dependencies": [2],
+      "reasoning": "Save summary as Pages document for permanent record",
+      "expected_output": "Pages document created with summary"
+    },
+    {
+      "id": 4,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Created email summary report",
+        "details": "Summarized 10 latest emails and saved to Pages document",
+        "artifacts": ["$step3.file_path"],
+        "status": "success"
+      },
+      "dependencies": [3],
+      "reasoning": "FINAL step - confirm completion with document path",
+      "expected_output": "Success message with document artifact"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**CRITICAL: Multi-Step Email Workflow**
+- ✅ Combine email tools with other agents (Writing, Presentation, etc.)
+- ✅ Pass summary to document creation tools
+- ✅ Include document path in `artifacts` array of reply_to_user
+- ✅ ALWAYS end complex workflows with reply_to_user
+
+---
+
+## Example 27: EMAIL AGENT - Reply to Email (NEW!)
+
+### User Request
+"Read the latest email from John and reply saying I'll review it tomorrow"
+
+### Decomposition
+```json
+{
+  "goal": "Read email from John and send reply",
+  "steps": [
+    {
+      "id": 1,
+      "action": "read_emails_by_sender",
+      "parameters": {
+        "sender": "John",
+        "count": 1
+      },
+      "dependencies": [],
+      "reasoning": "Get the most recent email from John",
+      "expected_output": "Latest email from John with sender and subject"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_email",
+      "parameters": {
+        "original_sender": "$step1.emails[0].sender",
+        "original_subject": "$step1.emails[0].subject",
+        "reply_body": "Thank you for your email. I'll review this tomorrow and get back to you.",
+        "send": false
+      },
+      "dependencies": [1],
+      "reasoning": "Reply to John's email with draft (send=false for safety)",
+      "expected_output": "Reply draft created"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Reply drafted to John's email",
+        "details": "Created reply draft - please review and send from Mail.app",
+        "status": "success"
+      },
+      "dependencies": [2],
+      "reasoning": "FINAL step - confirm reply was drafted",
+      "expected_output": "Success message"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**CRITICAL: Email Reply Workflow**
+- ✅ Read the email first to get sender and subject
+- ✅ Use `$step1.emails[0].sender` to reference the email address from read result
+- ✅ Use `$step1.emails[0].subject` to reference the subject line
+- ✅ `reply_to_email` automatically adds "Re: " prefix to subject
+- ✅ Default `send: false` creates draft for safety
+- ✅ Set `send: true` only if user explicitly requests immediate sending
+
+---
+
+## Example 28: CROSS-DOMAIN REPORT → SLIDES → EMAIL (NEW!)
+
+**Reasoning (chain of thought):**
+1. Confirm capabilities: File, Writing, Presentation, Email, and Reply agents exist and cover all operations.
+2. Outline workflow: locate documents → extract relevant sections → synthesize insights → generate slides → draft email → reply.
+3. Plan dependencies: later steps use `$stepN` outputs (`doc_path`, `extracted_text`, etc.) so specify dependencies precisely.
+4. Ensure plan ends with `reply_to_user` referencing final artifacts.
+
+**User Request:** “Create a competitive summary on Product Aurora using the latest roadmap PDF and the ‘Aurora_feedback.docx’, turn it into a 5-slide deck, then email it to leadership with the deck attached.”
+
+```json
+{
+  "goal": "Produce competitive summary slides on Product Aurora and email leadership",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {
+        "query": "Product Aurora roadmap PDF"
+      },
+      "dependencies": [],
+      "reasoning": "Find the roadmap PDF in local knowledge base",
+      "expected_output": "doc_path and metadata for roadmap PDF"
+    },
+    {
+      "id": 2,
+      "action": "search_documents",
+      "parameters": {
+        "query": "Aurora_feedback.docx"
+      },
+      "dependencies": [],
+      "reasoning": "Find internal feedback document for supporting context",
+      "expected_output": "doc_path for feedback document"
+    },
+    {
+      "id": 3,
+      "action": "extract_section",
+      "parameters": {
+        "doc_path": "$step1.doc_path",
+        "section": "latest updates"
+      },
+      "dependencies": [1],
+      "reasoning": "Capture recent roadmap updates",
+      "expected_output": "extracted_text for roadmap updates"
+    },
+    {
+      "id": 4,
+      "action": "extract_section",
+      "parameters": {
+        "doc_path": "$step2.doc_path",
+        "section": "top customer pain points"
+      },
+      "dependencies": [2],
+      "reasoning": "Surface key customer feedback themes",
+      "expected_output": "extracted_text for pain points"
+    },
+    {
+      "id": 5,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": [
+          "$step3.extracted_text",
+          "$step4.extracted_text"
+        ],
+        "topic": "Product Aurora competitive summary",
+        "synthesis_style": "comparative"
+      },
+      "dependencies": [3, 4],
+      "reasoning": "Blend roadmap insights with customer pain points",
+      "expected_output": "message with synthesized summary"
+    },
+    {
+      "id": 6,
+      "action": "create_slide_deck_content",
+      "parameters": {
+        "content": "$step5.message",
+        "slide_count": 5
+      },
+      "dependencies": [5],
+      "reasoning": "Turn synthesis into 5-slide outline",
+      "expected_output": "slide deck outline text"
+    },
+    {
+      "id": 7,
+      "action": "create_keynote",
+      "parameters": {
+        "title": "Product Aurora Competitive Summary",
+        "content": "$step6.content"
+      },
+      "dependencies": [6],
+      "reasoning": "Produce Keynote presentation from outline",
+      "expected_output": "keynote_path and message"
+    },
+    {
+      "id": 8,
+      "action": "compose_email",
+      "parameters": {
+        "subject": "Product Aurora Competitive Summary",
+        "body": "Hi leadership – please find attached the latest competitive summary on Aurora. Let me know if you need more detail.",
+        "attachments": [
+          "$step7.keynote_path"
+        ],
+        "send": false
+      },
+      "dependencies": [7],
+      "reasoning": "Draft email to leadership with deck attached (draft for review)",
+      "expected_output": "Email draft status"
+    },
+    {
+      "id": 9,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Prepared the Aurora competitive summary slides and drafted an email for leadership review.",
+        "details": "- Slides created: `$step7.keynote_path`\n- Email draft prepared with attachment\n- Sources: roadmap + customer feedback docs",
+        "artifacts": [
+          "$step7.keynote_path"
+        ],
+        "status": "success"
+      },
+      "dependencies": [7, 8],
+      "reasoning": "Summarize final deliverables to the user",
+      "expected_output": "User-facing confirmation"
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+---
+
+## Example 29: WEB + LOCAL RESEARCH WITH BLUESKY SIGNALS (NEW!)
+
+**Reasoning (chain of thought):**
+1. Validate tools: BrowserAgent (web search/extraction), FileAgent (local notes), BlueskyAgent (social chatter), WritingAgent (synthesis), ReplyAgent (final response).
+2. Plan sequence: local doc → web article → Bluesky trending → combine into briefing.
+3. Use context variables to label sources inside synthesis input for clarity.
+4. Reply summarizes each source type and links to artifacts.
+
+**User Request:** “Give me a quick briefing on ‘Project Atlas’ using the latest local notes, the top web article you find, and mention what people are saying on Bluesky.”
+
+```json
+{
+  "goal": "Brief user on Project Atlas across internal notes, web coverage, and Bluesky chatter",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {
+        "query": "Project Atlas status notes"
+      },
+      "dependencies": [],
+      "reasoning": "Locate internal notes for baseline status",
+      "expected_output": "doc_path for local notes"
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {
+        "doc_path": "$step1.doc_path",
+        "section": "summary"
+      },
+      "dependencies": [1],
+      "reasoning": "Pull latest internal summary section",
+      "expected_output": "extracted_text from internal notes"
+    },
+    {
+      "id": 3,
+      "action": "google_search",
+      "parameters": {
+        "query": "\"Project Atlas\" product update",
+        "num_results": 3
+      },
+      "dependencies": [],
+      "reasoning": "Find recent public article on Atlas",
+      "expected_output": "Search results metadata"
+    },
+    {
+      "id": 4,
+      "action": "navigate_to_url",
+      "parameters": {
+        "url": "$step3.results[0].link",
+        "wait_until": "load"
+      },
+      "dependencies": [3],
+      "reasoning": "Open the top article before extraction",
+      "expected_output": "Loaded page handle"
+    },
+    {
+      "id": 5,
+      "action": "extract_page_content",
+      "parameters": {
+        "url": "$step3.results[0].link"
+      },
+      "dependencies": [4],
+      "reasoning": "Get the clean article text for synthesis",
+      "expected_output": "Article content string"
+    },
+    {
+      "id": 6,
+      "action": "summarize_bluesky_posts",
+      "parameters": {
+        "query": "Project Atlas",
+        "lookback_hours": 24,
+        "max_items": 3
+      },
+      "dependencies": [],
+      "reasoning": "Collect social sentiment from Bluesky",
+      "expected_output": "Summary markdown plus post metadata"
+    },
+    {
+      "id": 7,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": [
+          "Internal Notes\\n$step2.extracted_text",
+          "Public Coverage\\n$step5.content",
+          "Bluesky Discussion\\n$step6.summary"
+        ],
+        "topic": "Project Atlas briefing",
+        "synthesis_style": "comprehensive"
+      },
+      "dependencies": [2, 5, 6],
+      "reasoning": "Blend internal updates, press coverage, and social chatter",
+      "expected_output": "Combined briefing text"
+    },
+    {
+      "id": 8,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Here’s the Project Atlas briefing from internal, press, and Bluesky sources.",
+        "details": "- **Internal:** latest notes summarized\n- **Press:** $step3.results[0].title\n- **Bluesky:** key themes from recent posts\n\n$step7.message",
+        "artifacts": [
+          "$step1.doc_path",
+          "$step3.results[0].link"
+        ],
+        "status": "success"
+      },
+      "dependencies": [7],
+      "reasoning": "Deliver consolidated summary and share references",
+      "expected_output": "Final user-facing briefing"
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+---
+
+## Example 30: SAFETY GUARDRAIL – UNSUPPORTED MEDIA EDIT (NEW!)
+
+**Reasoning (chain of thought):**
+- Request: “Trim interview.mp4 to the first minute and replace the audio track.” No available tools perform video or audio editing.
+- Capability assessment → only document, presentation, email, web, social, writing, mapping, etc. Tools exist. Multimedia editing is unsupported.
+- Respond with impossibility rationale outlining what *is* supported.
+
+```json
+{
+  "goal": "Unable to complete request",
+  "steps": [],
+  "complexity": "impossible",
+  "reason": "Missing required capabilities: video trimming and audio replacement. Available tools handle document search/extraction, writing/presentation generation, email automation, social summaries, mapping, and folder management. Multimedia editing is not supported."
+}
+```
+
+---
+
+## Email Agent Tool Selection Guide
+
+### When to Use Each Email Tool
+
+**Use `read_latest_emails` when:**
+- ✅ User wants recent/latest emails
+- ✅ User specifies number of emails: "latest 5", "recent 10"
+- ✅ No specific sender or time filter
+
+**Use `read_emails_by_sender` when:**
+- ✅ User specifies sender: "from John", "emails from sarah@company.com"
+- ✅ Partial names work: "John" matches "John Doe <john@example.com>"
+- ✅ Email addresses work: "john@example.com"
+
+**Use `read_emails_by_time` when:**
+- ✅ User specifies time range: "past hour", "last 2 hours", "past 30 minutes"
+- ✅ Extract hours/minutes from query
+- ✅ Can use `hours` OR `minutes` parameter
+
+**Use `summarize_emails` when:**
+- ✅ User wants "summary", "summarize", "key points"
+- ✅ ALWAYS takes output from read_* tools as input
+- ✅ Can specify optional focus area
+- ✅ Returns AI-generated summary text
+
+**Use `reply_to_email` when:**
+- ✅ User wants to reply to a specific email
+- ✅ First read the email to get sender and subject
+- ✅ Use sender's email address from read result
+- ✅ Subject automatically gets "Re: " prefix
+- ✅ Default creates draft (send=false) for user review
+
+**Use `compose_email` when:**
+- ✅ User wants to compose NEW email (not a reply)
+- ✅ User provides recipient, subject, and body
+- ✅ Can attach files with attachments parameter
+- ✅ Default creates draft (send=false)
+
+### Parameter Extraction Guide
+
+**Count (read_latest_emails, read_emails_by_sender):**
+- "latest 5" → `count: 5`
+- "recent 10" → `count: 10`
+- "all emails from John" → `count: 10` (reasonable default)
+- Default: 10 (if not specified)
+
+**Sender (read_emails_by_sender):**
+- "john@example.com" → `sender: "john@example.com"`
+- "Sarah" → `sender: "Sarah"` (partial match works!)
+- "my manager" → `sender: "manager"` (if you know their name)
+
+**Time Range (read_emails_by_time):**
+- "past hour" → `hours: 1`
+- "last 2 hours" → `hours: 2`
+- "past 30 minutes" → `minutes: 30`
+- "past day" → `hours: 24`
+
+**Focus (summarize_emails):**
+- "action items" → `focus: "action items"`
+- "deadlines" → `focus: "deadlines"`
+- "important updates" → `focus: "important updates"`
+- No focus specified → `focus: null`
+
+### Common Email Patterns
+
+**Simple Read:**
+```
+read_latest_emails → reply_to_user
+```
+
+**Read and Summarize:**
+```
+read_emails_by_time → summarize_emails → reply_to_user
+```
+
+**Complex Workflow:**
+```
+read_emails_by_sender → summarize_emails → create_pages_doc → reply_to_user
+```
+
+**Multi-Source Summary:**
+```
+read_latest_emails → summarize_emails → create_slide_deck_content → create_keynote → reply_to_user
+```
+
+---
+
 ### Step 6: Final Checklist
 
 Before submitting plan:
@@ -2325,4 +3213,5 @@ Before submitting plan:
 - [ ] Data types match between steps
 - [ ] No circular dependencies
 - [ ] Context variables use correct field names
+- [ ] **CRITICAL: Plan ends with `reply_to_user` as FINAL step**
 - [ ] If impossible task, returned complexity="impossible" with clear reason

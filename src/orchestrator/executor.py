@@ -268,7 +268,18 @@ class PlanExecutor:
             logger.info(f"Calling tool {action} with params: {resolved_params}")
             result = tool.invoke(resolved_params)
             logger.info(f"Tool {action} returned: {type(result)}")
-            return result if isinstance(result, dict) else {"output": result}
+            
+            # Ensure result is always a dictionary (defensive programming)
+            if not isinstance(result, dict):
+                logger.warning(f"Tool {action} returned non-dict result: {type(result)}, wrapping")
+                return {"output": result, "error": False}
+            
+            # Validate error structure if error is present
+            if result.get("error") and not result.get("error_type"):
+                logger.warning(f"Tool {action} returned error=True but missing error_type, adding default")
+                result["error_type"] = "UnknownError"
+            
+            return result
 
         except Exception as e:
             logger.error(f"Tool {action} raised exception: {e}", exc_info=True)

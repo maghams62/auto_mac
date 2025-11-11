@@ -24,8 +24,13 @@ from urllib.parse import quote
 from datetime import datetime
 from openai import OpenAI
 import os
+import googlemaps
+from datetime import datetime as dt
 
 logger = logging.getLogger(__name__)
+
+# Global Google Maps client (initialized on first use)
+_gmaps_client = None
 
 
 def _find_pois_via_applescript(location: str, poi_type: str) -> Optional[str]:
@@ -225,10 +230,11 @@ def _generate_apple_maps_url(
     origin: str,
     destination: str,
     stops: List[str],
-    departure_time: Optional[str] = None
+    departure_time: Optional[str] = None,
+    transportation_mode: str = "d"
 ) -> str:
     """
-    Generate an Apple Maps URL with waypoints.
+    Generate an Apple Maps URL with waypoints and transportation mode.
 
     Apple Maps supports waypoints in web URLs (https://maps.apple.com/).
     The web URL format supports multiple waypoints and opens in Maps app on macOS.
@@ -238,6 +244,11 @@ def _generate_apple_maps_url(
         destination: End location
         stops: List of intermediate stops
         departure_time: Departure time (not supported in URL scheme, used for reference)
+        transportation_mode: Transportation mode:
+            - "d" = Driving (default)
+            - "w" = Walking
+            - "r" = Transit/Public Transportation
+            - "b" = Bicycle
 
     Returns:
         Apple Maps URL string (web format that opens in Maps app)
@@ -248,20 +259,20 @@ def _generate_apple_maps_url(
 
     if not stops:
         # Simple route without stops - use web URL format
-        url = f"https://maps.apple.com/?saddr={origin_encoded}&daddr={destination_encoded}&dirflg=d"
+        url = f"https://maps.apple.com/?saddr={origin_encoded}&daddr={destination_encoded}&dirflg={transportation_mode}"
     else:
         # Build waypoints string for Apple Maps web URL
         # Format: https://maps.apple.com/?saddr=ORIGIN&daddr=STOP1&daddr=STOP2&daddr=DESTINATION
         # Apple Maps web URLs support multiple daddr parameters for waypoints
         url = f"https://maps.apple.com/?saddr={origin_encoded}"
-        
+
         # Add each stop as a waypoint
         for stop in stops:
             stop_encoded = quote(stop)
             url += f"&daddr={stop_encoded}"
-        
+
         # Add final destination
-        url += f"&daddr={destination_encoded}&dirflg=d"
+        url += f"&daddr={destination_encoded}&dirflg={transportation_mode}"
 
     return url
 
@@ -359,6 +370,448 @@ def _generate_google_maps_url(
     url += "&travelmode=driving"
 
     return url
+
+
+def _get_gmaps_client():
+    """Get or initialize Google Maps client."""
+    global _gmaps_client
+    if _gmaps_client is None:
+        from ..utils import load_config
+        config = load_config()
+        api_key = config.get('maps', {}).get('google_maps_api_key', '')
+
+        if not api_key or api_key == 'YOUR_API_KEY_HERE':
+            logger.warning("[MAPS AGENT] Google Maps API key not configured. Add GOOGLE_MAPS_API_KEY to .env file.")
+            return None
+
+        _gmaps_client = googlemaps.Client(key=api_key)
+        logger.info("[MAPS AGENT] Google Maps client initialized")
+
+    return _gmaps_client
+
+
+def _parse_transit_response(directions_result: list) -> Dict[str, Any]:
+    """Parse Google Maps directions response for transit data."""
+    if not directions_result:
+        return {"error": "No route found"}
+
+    route = directions_result[0]
+    leg = route['legs'][0]
+
+    # Extract basic route info
+    result = {
+        "distance": leg['distance']['text'],
+        "duration": leg['duration']['text'],
+        "start_address": leg['start_address'],
+        "end_address": leg['end_address'],
+        "steps": []
+    }
+
+    # Extract transit steps with departure times
+    for step in leg['steps']:
+        step_info = {
+            "instruction": step.get('html_instructions', ''),
+            "distance": step.get('distance', {}).get('text', ''),
+            "duration": step.get('duration', {}).get('text', '')
+        }
+
+        # If this is a transit step, extract detailed info
+        if step.get('travel_mode') == 'TRANSIT':
+            transit = step.get('transit_details', {})
+            step_info['transit'] = {
+                "line": transit.get('line', {}).get('short_name', ''),
+                "line_name": transit.get('line', {}).get('name', ''),
+                "vehicle": transit.get('line', {}).get('vehicle', {}).get('name', ''),
+                "departure_stop": transit.get('departure_stop', {}).get('name', ''),
+                "arrival_stop": transit.get('arrival_stop', {}).get('name', ''),
+                "departure_time": transit.get('departure_time', {}).get('text', ''),
+                "arrival_time": transit.get('arrival_time', {}).get('text', ''),
+                "num_stops": transit.get('num_stops', 0)
+            }
+
+        result['steps'].append(step_info)
+
+    # Extract next departure time
+    for step in leg['steps']:
+        if step.get('travel_mode') == 'TRANSIT':
+            transit = step.get('transit_details', {})
+            departure_time = transit.get('departure_time', {}).get('text', '')
+            if departure_time:
+                result['next_departure'] = departure_time
+                break
+
+    return result
+
+
+@tool
+def get_google_transit_directions(
+    origin: str,
+    destination: str,
+    departure_time: Optional[str] = "now"
+) -> Dict[str, Any]:
+    """
+    Get real-time transit directions with actual departure times using Google Maps API.
+
+    This tool provides PROGRAMMATIC access to transit schedules including:
+    - Next bus/train departure time
+    - Step-by-step transit directions
+    - Line numbers and vehicle types
+    - Real-time schedule data
+
+    Use this for queries like:
+    - "When's the next bus to UCSC Silicon Valley"
+    - "What time is the next train to downtown"
+    - "Show me transit directions to Berkeley"
+
+    Args:
+        origin: Starting location (address, place name, or "Current Location")
+        destination: End location (address or place name)
+        departure_time: When to depart - "now" (default) or specific time
+
+    Returns:
+        Dictionary with real-time transit schedule data including next departure time
+
+    Example:
+        get_google_transit_directions(
+            origin="Current Location",
+            destination="UCSC Silicon Valley",
+            departure_time="now"
+        )
+    """
+    logger.info(
+        f"[MAPS AGENT] Tool: get_google_transit_directions(origin='{origin}', "
+        f"destination='{destination}', departure_time='{departure_time}')"
+    )
+
+    try:
+        gmaps = _get_gmaps_client()
+        if gmaps is None:
+            return {
+                "error": True,
+                "error_type": "ConfigurationError",
+                "error_message": "Google Maps API key not configured. Please add GOOGLE_MAPS_API_KEY to your .env file.",
+                "setup_instructions": "1. Get API key from https://console.cloud.google.com/google/maps-apis/\n2. Add to .env: GOOGLE_MAPS_API_KEY=your_key_here\n3. Enable Maps Directions API in Google Cloud Console"
+            }
+
+        # Parse departure time
+        if departure_time == "now" or not departure_time:
+            departure_dt = dt.now()
+        else:
+            # Try to parse the time string (basic parsing)
+            try:
+                departure_dt = dt.strptime(departure_time, "%Y-%m-%d %H:%M")
+            except:
+                departure_dt = dt.now()
+
+        # Get transit directions from Google Maps
+        logger.info(f"[MAPS AGENT] Requesting transit directions from Google Maps API...")
+        directions_result = gmaps.directions(
+            origin=origin,
+            destination=destination,
+            mode="transit",
+            departure_time=departure_dt
+        )
+
+        if not directions_result:
+            return {
+                "error": True,
+                "error_type": "NoRouteFound",
+                "error_message": f"No transit route found from {origin} to {destination}",
+                "suggestion": "Try a different location or check if transit service is available in this area."
+            }
+
+        # Parse the response
+        parsed = _parse_transit_response(directions_result)
+
+        # Build human-readable response
+        result = {
+            "origin": origin,
+            "destination": destination,
+            "transportation_mode": "transit",
+            "maps_service": "Google Maps",
+            "distance": parsed.get('distance', 'Unknown'),
+            "duration": parsed.get('duration', 'Unknown'),
+            "next_departure": parsed.get('next_departure', 'See directions for details')
+        }
+
+        # Create Google Maps URL
+        gmaps_url = f"https://www.google.com/maps/dir/?api=1&origin={quote(origin)}&destination={quote(destination)}&travelmode=transit"
+        result["maps_url"] = gmaps_url
+
+        # Build message with next departure time
+        if 'next_departure' in parsed:
+            result["message"] = (
+                f"Next departure: {parsed['next_departure']}. "
+                f"Trip duration: {parsed['duration']}. "
+                f"View full directions: {gmaps_url}"
+            )
+        else:
+            result["message"] = (
+                f"Transit directions from {origin} to {destination}. "
+                f"Duration: {parsed['duration']}. Distance: {parsed['distance']}. "
+                f"View directions: {gmaps_url}"
+            )
+
+        # Add detailed steps
+        result["transit_steps"] = []
+        for step in parsed.get('steps', []):
+            if 'transit' in step:
+                transit = step['transit']
+                result["transit_steps"].append({
+                    "line": transit.get('line', ''),
+                    "vehicle": transit.get('vehicle', ''),
+                    "from": transit.get('departure_stop', ''),
+                    "to": transit.get('arrival_stop', ''),
+                    "departure": transit.get('departure_time', ''),
+                    "arrival": transit.get('arrival_time', ''),
+                    "stops": transit.get('num_stops', 0)
+                })
+
+        # Open in browser
+        try:
+            import subprocess
+            subprocess.run(["open", gmaps_url], check=True)
+            result["maps_opened"] = True
+            logger.info(f"[MAPS AGENT] Opened Google Maps in browser with transit directions")
+        except Exception as e:
+            result["maps_opened"] = False
+            logger.warning(f"[MAPS AGENT] Failed to open browser: {e}")
+
+        return result
+
+    except googlemaps.exceptions.ApiError as e:
+        logger.error(f"[MAPS AGENT] Google Maps API error: {e}")
+        return {
+            "error": True,
+            "error_type": "GoogleMapsApiError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+    except Exception as e:
+        logger.error(f"[MAPS AGENT] Error in get_google_transit_directions: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "error": True,
+            "error_type": "TransitDirectionsError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def get_directions(
+    origin: str,
+    destination: str,
+    transportation_mode: str = "driving",
+    open_maps: bool = True
+) -> Dict[str, Any]:
+    """
+    Get simple directions from one location to another with specified transportation mode.
+
+    Use this for simple point-to-point navigation queries like:
+    - "When's the next bus to Berkeley"
+    - "How do I bike to the office"
+    - "Walk me to the coffee shop"
+    - "Drive to San Francisco"
+
+    IMPORTANT: For "current location" queries, use the location service to detect current location first,
+    then call this tool with the actual coordinates or "Current Location" string.
+
+    Args:
+        origin: Starting location (can be "Current Location" or specific address/coordinates)
+        destination: End location (address, place name, or coordinates)
+        transportation_mode: Mode of transportation:
+            - "driving" or "car" = Driving (default)
+            - "walking" or "walk" = Walking
+            - "transit" or "bus" or "public transport" = Public Transportation/Transit
+            - "bicycle" or "bike" or "cycling" = Bicycle
+        open_maps: If True, automatically open Maps with the route (default: True)
+
+    Returns:
+        Dictionary with route details and maps URL
+
+    Example:
+        get_directions(
+            origin="Current Location",
+            destination="Berkeley, CA",
+            transportation_mode="transit"
+        )
+    """
+    logger.info(
+        f"[MAPS AGENT] Tool: get_directions(origin='{origin}', destination='{destination}', "
+        f"mode='{transportation_mode}', open_maps={open_maps})"
+    )
+
+    try:
+        # Map transportation mode to Apple Maps dirflg parameter
+        mode_mapping = {
+            "driving": "d",
+            "car": "d",
+            "walking": "w",
+            "walk": "w",
+            "transit": "r",
+            "bus": "r",
+            "public transport": "r",
+            "public transportation": "r",
+            "bicycle": "b",
+            "bike": "b",
+            "cycling": "b"
+        }
+
+        mode_key = transportation_mode.lower().strip()
+        dirflg = mode_mapping.get(mode_key, "d")
+
+        # Generate maps URL
+        maps_url = _generate_apple_maps_url(
+            origin=origin,
+            destination=destination,
+            stops=[],
+            departure_time=None,
+            transportation_mode=dirflg
+        )
+
+        # Build response
+        mode_display = {
+            "d": "driving",
+            "w": "walking",
+            "r": "transit",
+            "b": "bicycle"
+        }
+
+        result = {
+            "origin": origin,
+            "destination": destination,
+            "transportation_mode": mode_display.get(dirflg, "driving"),
+            "maps_url": maps_url,
+            "maps_service": "Apple Maps"
+        }
+
+        # Open Maps if requested
+        maps_opened = False
+        if open_maps:
+            import subprocess
+            try:
+                subprocess.run(["open", maps_url], check=True)
+                maps_opened = True
+                logger.info(f"[MAPS AGENT] Opened Apple Maps with {mode_display.get(dirflg)} directions")
+            except Exception as e:
+                logger.error(f"[MAPS AGENT] Failed to open Maps: {e}")
+
+        result["maps_opened"] = maps_opened
+
+        if maps_opened:
+            result["message"] = f"Opening {mode_display.get(dirflg)} directions from {origin} to {destination} in Apple Maps: {maps_url}"
+        else:
+            result["message"] = f"Here are {mode_display.get(dirflg)} directions from {origin} to {destination}: {maps_url}"
+
+        # Add note about transit schedules
+        if dirflg == "r":
+            result["note"] = "Apple Maps will show real-time transit schedules and next departure times when you open the app."
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[MAPS AGENT] Error in get_directions: {e}")
+        return {
+            "error": True,
+            "error_type": "DirectionsError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def get_transit_schedule(
+    origin: str,
+    destination: str,
+    open_maps: bool = True
+) -> Dict[str, Any]:
+    """
+    Get transit schedule and next departures from one location to another.
+
+    Use this specifically for transit/bus/train queries like:
+    - "When's the next bus to downtown"
+    - "Show me the train schedule to the airport"
+    - "What time is the next BART to San Francisco"
+
+    NOTE: Apple Maps API does not provide programmatic access to real-time schedule data.
+    This tool opens Apple Maps with transit directions, where users can see:
+    - Next departure times
+    - Multiple route options
+    - Real-time transit updates
+    - Step-by-step transit directions
+
+    Args:
+        origin: Starting location (can be "Current Location" or specific address)
+        destination: End location (address or place name)
+        open_maps: If True, automatically open Maps with transit view (default: True)
+
+    Returns:
+        Dictionary with transit information and maps URL
+
+    Example:
+        get_transit_schedule(
+            origin="Current Location",
+            destination="Downtown Berkeley"
+        )
+    """
+    logger.info(
+        f"[MAPS AGENT] Tool: get_transit_schedule(origin='{origin}', destination='{destination}')"
+    )
+
+    try:
+        # Generate transit directions URL (dirflg=r for transit)
+        maps_url = _generate_apple_maps_url(
+            origin=origin,
+            destination=destination,
+            stops=[],
+            departure_time=None,
+            transportation_mode="r"  # Transit mode
+        )
+
+        result = {
+            "origin": origin,
+            "destination": destination,
+            "transportation_mode": "transit",
+            "maps_url": maps_url,
+            "maps_service": "Apple Maps",
+            "note": "Opening Apple Maps to view real-time transit schedules. Apple Maps will show next departure times, route options, and live transit updates."
+        }
+
+        # Open Maps
+        maps_opened = False
+        if open_maps:
+            import subprocess
+            try:
+                subprocess.run(["open", maps_url], check=True)
+                maps_opened = True
+                logger.info(f"[MAPS AGENT] Opened Apple Maps with transit schedule view")
+            except Exception as e:
+                logger.error(f"[MAPS AGENT] Failed to open Maps: {e}")
+
+        result["maps_opened"] = maps_opened
+
+        if maps_opened:
+            result["message"] = (
+                f"Opening Apple Maps with transit directions from {origin} to {destination}. "
+                f"You'll see next departure times and route options in the Maps app: {maps_url}"
+            )
+        else:
+            result["message"] = (
+                f"View transit schedule from {origin} to {destination} in Apple Maps: {maps_url}"
+            )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[MAPS AGENT] Error in get_transit_schedule: {e}")
+        return {
+            "error": True,
+            "error_type": "TransitScheduleError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
 
 
 @tool
@@ -670,6 +1123,9 @@ def open_maps_with_route(
 
 # Maps Agent Tool Registry
 MAPS_AGENT_TOOLS = [
+    get_google_transit_directions,  # NEW: Google Maps with real-time transit data
+    get_directions,
+    get_transit_schedule,
     plan_trip_with_stops,
     open_maps_with_route,
 ]
@@ -680,25 +1136,69 @@ MAPS_AGENT_HIERARCHY = """
 Maps Agent Hierarchy:
 ====================
 
-LEVEL 1: Trip Planning
+LEVEL 1: Simple Directions - Google Maps API (RECOMMENDED for Transit)
+├─ get_google_transit_directions → Get REAL-TIME transit directions with actual departure times
+│   └─ Uses: Google Maps API with programmatic transit data
+│   └─ Returns: "Next bus at 3:45 PM" - actual times in chat response
+│   └─ Use for: "when's the next bus", "next train time", "transit schedule"
+│   └─ Requires: GOOGLE_MAPS_API_KEY in .env file
+
+LEVEL 2: Simple Directions - Apple Maps (Fallback)
+├─ get_directions → Get point-to-point directions with any transportation mode
+│   └─ Supports: driving, walking, transit/bus, bicycle
+│   └─ Use for: "bike to the office", "walk to cafe", "drive to SF"
+│   └─ Limitation: Cannot extract programmatic transit times
+└─ get_transit_schedule → Get transit schedule (opens Apple Maps only)
+    └─ Opens Maps with transit view showing real-time schedules
+    └─ User views times in Maps app, not in chat
+    └─ Use for: backup if Google Maps API not available
+
+LEVEL 3: Trip Planning with Stops
 ├─ plan_trip_with_stops → Plan route with specific numbers of food and fuel stops
 └─ open_maps_with_route → Open Apple Maps app with specific route using AppleScript
 
-Typical Workflow:
-1. plan_trip_with_stops(origin, destination, num_fuel_stops=2, num_food_stops=2, departure_time="7:00 AM", open_maps=True)
+Transportation Modes:
+- Driving (default): dirflg=d
+- Walking: dirflg=w
+- Transit/Bus: dirflg=r (shows real-time schedules)
+- Bicycle: dirflg=b
+
+Typical Workflows:
+
+1. Simple Transit Query:
+   get_directions(origin="Current Location", destination="Berkeley", transportation_mode="transit")
+   → Opens Apple Maps with transit directions and next departure times
+
+   OR use get_transit_schedule() for transit-specific queries
+
+2. Simple Bicycle/Walking Query:
+   get_directions(origin="Home", destination="Coffee Shop", transportation_mode="bicycle")
+   → Opens Apple Maps with bicycle directions
+
+3. Complex Trip Planning:
+   plan_trip_with_stops(
+       origin="Santa Clara, CA",
+       destination="San Diego, CA",
+       num_fuel_stops=2,
+       num_food_stops=2,
+       departure_time="7:00 AM",
+       open_maps=True
+   )
    → Returns route details and Maps URL with all specified stops
-   → Automatically opens Apple Maps using AppleScript automation (native macOS integration)
-2. open_maps_with_route(origin, destination, stops, start_navigation=False)
-   → Opens Maps app with the route using AppleScript
-   → Can optionally start navigation automatically
+   → Automatically opens Apple Maps using AppleScript automation
 
 Integration Details:
 - Uses MapsAutomation class (src/automation/maps_automation.py) for AppleScript control
 - Native macOS integration via AppleScript - opens Maps.app directly
 - Falls back to URL method if AppleScript fails
 - Supports multiple waypoints in Apple Maps web URL format
+- Multi-modal transportation support (driving, walking, transit, bicycle)
+- Location service integration for "current location" queries
 
 Features:
+- Multi-modal transportation (driving, walking, transit, bicycle)
+- Real-time transit schedules and next departure times
+- Current location detection (via LocationService)
 - Specify exact number of fuel stops (supports any reasonable number)
 - Specify exact number of food stops - supports multiple meals (breakfast, lunch, dinner, etc.)
 - LLM-driven automatic stop suggestions for ANY route (no hardcoded routes)
@@ -715,7 +1215,25 @@ AppleScript Automation:
 - Can optionally start navigation automatically
 - Provides fallback to URL method for reliability
 
-Example:
+Examples:
+
+# Simple transit query
+get_directions(
+    origin="Current Location",
+    destination="Downtown Berkeley",
+    transportation_mode="transit"
+)
+→ Opens Maps with transit directions showing next bus/train times
+
+# Bicycle directions
+get_directions(
+    origin="Home",
+    destination="Office",
+    transportation_mode="bicycle"
+)
+→ Opens Maps with bicycle route
+
+# Complex trip with stops
 plan_trip_with_stops(
     origin="Los Angeles, CA",
     destination="San Diego, CA",

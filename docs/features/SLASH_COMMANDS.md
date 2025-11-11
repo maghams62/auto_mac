@@ -253,6 +253,18 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 /twitter Summarize activity in my product_watch list
 ```
 
+#### Bluesky
+```
+/bluesky <task>
+```
+
+**Examples:**
+```
+/bluesky search "agent ecosystems" limit:8
+/bluesky summarize "mac automation" 12h
+/bluesky post "Testing the Bluesky integration ✨"
+```
+
 ---
 
 ## Help Commands

@@ -1,0 +1,160 @@
+{
+  "session_id": "test_confetti",
+  "status": "active",
+  "created_at": "2025-11-10T23:09:51.068357",
+  "last_active_at": "2025-11-10T23:10:13.232514",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-10T23:10:00.270550",
+      "user_request": "/confetti",
+      "agent_response": {
+        "goal": "Trigger celebratory confetti effects",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": false,
+            "error": true,
+            "error_type": "CelebrationError",
+            "error_message": "Failed to trigger confetti: 286:322: execution error: Voice wasn’t found. (-244)",
+            "retry_possible": true
+          },
+          "2": {
+            "error": true,
+            "skipped": true,
+            "message": "Skipped due to failed dependencies: [1]"
+          }
+        },
+        "status": "partial_success"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "trigger_confetti",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "User requested a celebratory confetti effect",
+          "expected_output": "Confetti effect triggered"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Confetti effect has been triggered successfully!",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that the confetti effect has been triggered",
+          "expected_output": "User receives confirmation of confetti effect"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": false,
+          "error": true,
+          "error_type": "CelebrationError",
+          "error_message": "Failed to trigger confetti: 286:322: execution error: Voice wasn’t found. (-244)",
+          "retry_possible": true
+        },
+        "2": {
+          "error": true,
+          "skipped": true,
+          "message": "Skipped due to failed dependencies: [1]"
+        }
+      },
+      "metadata": {
+        "goal": "Trigger celebratory confetti effects",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_2",
+      "timestamp": "2025-11-10T23:10:13.232514",
+      "user_request": "/confetti",
+      "agent_response": {
+        "goal": "Trigger celebratory confetti effects",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "confetti",
+            "status": "celebrated",
+            "message": "Confetti celebration triggered! 🎉"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Confetti effect has been triggered successfully!",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Confetti effect has been triggered successfully!"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "trigger_confetti",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "User requested a celebratory confetti effect",
+          "expected_output": "Confetti effect triggered"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Confetti effect has been triggered successfully!",
+            "details": "",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that the confetti effect has been triggered",
+          "expected_output": "User receives confirmation of confetti effect"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "confetti",
+          "status": "celebrated",
+          "message": "Confetti celebration triggered! 🎉"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Confetti effect has been triggered successfully!",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false
+        }
+      },
+      "metadata": {
+        "goal": "Trigger celebratory confetti effects",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 2,
+    "total_steps_executed": 4,
+    "agents_used": [],
+    "tools_used": []
+  }
+}
