@@ -27,8 +27,10 @@ from test_summarize_utils import (
     verify_time_window_extraction,
     verify_workflow_correctness,
     verify_summary_relevance_with_llm,
+    verify_calendar_summary_quality,
     print_validation_results
 )
+from fixtures.calendar_fixtures import setup_mock_calendar_env
 import json
 import logging
 
@@ -46,6 +48,10 @@ def print_section(title):
 def test_c1_summarize_upcoming_events():
     """TEST C1: Summarize upcoming events"""
     print_section("TEST C1: Summarize Upcoming Events")
+    
+    # Setup mock calendar data
+    setup_mock_calendar_env()
+    print("Using mock calendar data for consistent testing")
     
     test_queries = [
         "summarize my calendar for the next week",
@@ -111,9 +117,13 @@ def test_c1_summarize_upcoming_events():
             summary = synthesis_result.get('synthesized_content', '')
             print(f"   ✅ Generated summary ({len(summary)} chars)")
             
-            # Validate summary quality
-            quality_check = verify_summary_quality(summary, events, "calendar")
+            # Validate summary quality with calendar-specific checks
+            quality_check = verify_calendar_summary_quality(summary, events)
             print_validation_results(quality_check, f"C1 Summary Quality: {query}")
+            
+            # Also run generic quality check
+            generic_check = verify_summary_quality(summary, events, "calendar")
+            print_validation_results(generic_check, f"C1 Generic Quality: {query}")
             
             # Verify summary includes event details
             has_titles = any(event.get('title', '').lower() in summary.lower() for event in events[:3])

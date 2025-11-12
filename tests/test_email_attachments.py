@@ -13,8 +13,16 @@ import tempfile
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from datetime import datetime
 
 from src.agent.email_agent import compose_email
+
+# Optional: Save test results (backward compatible)
+try:
+    from src.utils.test_results import save_test_result
+    SAVE_RESULTS = True
+except ImportError:
+    SAVE_RESULTS = False
 
 
 def test_email_attachment_validation_missing_file():

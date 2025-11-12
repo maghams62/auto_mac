@@ -375,6 +375,120 @@ Respond with JSON:
         }
 
 
+def verify_calendar_summary_quality(summary: str, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Verify calendar summary quality with calendar-specific checks.
+    
+    Args:
+        summary: The generated summary text
+        events: List of calendar event dictionaries
+    
+    Returns:
+        Dictionary with validation results:
+        {
+            "has_event_titles": bool,
+            "has_event_times": bool,
+            "has_locations": bool,
+            "has_attendees": bool,
+            "is_chronological": bool,
+            "event_coverage": float,  # 0.0-1.0
+            "issues": List[str],
+            "score": float  # Overall quality score 0.0-1.0
+        }
+    """
+    if not summary or not events:
+        return {
+            "has_event_titles": False,
+            "has_event_times": False,
+            "has_locations": False,
+            "has_attendees": False,
+            "is_chronological": False,
+            "event_coverage": 0.0,
+            "issues": ["Empty summary or events"],
+            "score": 0.0
+        }
+    
+    issues = []
+    score = 1.0
+    summary_lower = summary.lower()
+    
+    # Check for event titles
+    event_titles = [e.get('title', '').lower() for e in events[:5]]  # Check first 5 events
+    mentioned_titles = [title for title in event_titles if title and title in summary_lower]
+    has_event_titles = len(mentioned_titles) > 0
+    title_coverage = len(mentioned_titles) / len([t for t in event_titles if t]) if event_titles else 0.0
+    
+    if not has_event_titles:
+        issues.append("No event titles mentioned in summary")
+        score -= 0.3
+    
+    # Check for event times
+    has_event_times = False
+    for event in events[:5]:
+        start_time = event.get('start_time', '')
+        if start_time:
+            # Check for time patterns (HH:MM format or date references)
+            time_patterns = [
+                start_time.split('T')[1][:5] if 'T' in start_time else None,  # Extract HH:MM
+                start_time.split('T')[0] if 'T' in start_time else None,  # Extract date
+            ]
+            if any(pattern and pattern in summary for pattern in time_patterns if pattern):
+                has_event_times = True
+                break
+    
+    if not has_event_times:
+        issues.append("No event times mentioned in summary")
+        score -= 0.2
+    
+    # Check for locations
+    locations = [e.get('location', '').lower() for e in events if e.get('location')]
+    mentioned_locations = [loc for loc in locations if loc and loc in summary_lower]
+    has_locations = len(mentioned_locations) > 0
+    
+    # Check for attendees (for meeting events)
+    meeting_events = [e for e in events if e.get('attendees') and len(e.get('attendees', [])) > 0]
+    has_attendees = False
+    if meeting_events:
+        for event in meeting_events[:3]:
+            attendees = [a.lower() for a in event.get('attendees', [])]
+            if any(attendee.split('@')[0] in summary_lower for attendee in attendees[:2]):
+                has_attendees = True
+                break
+    
+    # Check chronological organization (look for date/time ordering)
+    is_chronological = any(
+        keyword in summary_lower for keyword in [
+            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+            'november', 'december', 'next week', 'this week', 'upcoming',
+            'first', 'then', 'later', 'after', 'before'
+        ]
+    )
+    
+    # Calculate event coverage
+    total_events = len(events)
+    events_mentioned = sum(1 for event in events if event.get('title', '').lower() in summary_lower)
+    event_coverage = events_mentioned / total_events if total_events > 0 else 0.0
+    
+    if event_coverage < 0.3:
+        issues.append(f"Low event coverage: {event_coverage:.1%} (expected >= 30%)")
+        score -= 0.2
+    
+    # Ensure minimum score
+    score = max(0.0, score)
+    
+    return {
+        "has_event_titles": has_event_titles,
+        "has_event_times": has_event_times,
+        "has_locations": has_locations,
+        "has_attendees": has_attendees,
+        "is_chronological": is_chronological,
+        "event_coverage": event_coverage,
+        "title_coverage": title_coverage,
+        "issues": issues,
+        "score": score
+    }
+
+
 def print_validation_results(results: Dict[str, Any], test_name: str):
     """Pretty print validation results."""
     print(f"\n{'='*80}")

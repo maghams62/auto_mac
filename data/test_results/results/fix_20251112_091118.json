@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_zip_and_email",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 62.323183500004234
+  },
+  "timestamp": "2025-11-12T09:11:18.140768",
+  "test_name": "fix"
+}

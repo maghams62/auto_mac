@@ -8,6 +8,17 @@ openai:
   temperature: 0.7
   max_tokens: 2000
 
+# Reasoning Trace Configuration (Experimental)
+# Enables persistent reasoning memory across agent executions
+reasoning_trace:
+  enabled: false  # EXPERIMENTAL: Enable reasoning trace (default: false for safety)
+  # When enabled, the system tracks:
+  # - Planning decisions and evidence
+  # - Execution outcomes and artifacts
+  # - Critic corrections and learnings
+  # - Delivery commitments (e.g., send email, attach files)
+  # This reduces reliance on prompt engineering by using actual execution history
+
 # Delivery Intent Configuration (moved from hardcoded logic in agent.py)
 delivery:
   # Intent detection verbs - when these appear in user request, plan must include compose_email

@@ -17,6 +17,14 @@ from threading import Lock
 
 logger = logging.getLogger(__name__)
 
+# Optional reasoning trace support (feature flag controlled)
+try:
+    from .reasoning_trace import ReasoningTrace, ReasoningStage, OutcomeStatus
+    REASONING_TRACE_AVAILABLE = True
+except ImportError:
+    REASONING_TRACE_AVAILABLE = False
+    logger.debug("[SESSION MEMORY] ReasoningTrace module not available")
+
 
 class SessionStatus(Enum):
     """Session lifecycle status."""
@@ -78,7 +86,8 @@ class SessionMemory:
     def __init__(
         self,
         session_id: Optional[str] = None,
-        user_context: Optional[UserContext] = None
+        user_context: Optional[UserContext] = None,
+        enable_reasoning_trace: bool = False
     ):
         """
         Initialize session memory.
@@ -86,6 +95,7 @@ class SessionMemory:
         Args:
             session_id: Unique session identifier (generated if not provided)
             user_context: User preferences and patterns (new if not provided)
+            enable_reasoning_trace: Enable reasoning trace feature (default: False)
         """
         self.session_id = session_id or str(uuid.uuid4())
         self.status = SessionStatus.ACTIVE
@@ -109,6 +119,14 @@ class SessionMemory:
             "agents_used": set(),
             "tools_used": set(),
         }
+
+        # Reasoning trace support (opt-in, feature flag controlled)
+        self._reasoning_trace_enabled = enable_reasoning_trace and REASONING_TRACE_AVAILABLE
+        self._reasoning_traces: Dict[str, Any] = {}  # interaction_id -> ReasoningTrace
+        self._current_interaction_id: Optional[str] = None
+
+        if self._reasoning_trace_enabled:
+            logger.info(f"[SESSION MEMORY] Reasoning trace enabled for session {self.session_id}")
 
         # Internal lock for thread-safe access to SessionMemory instance
         # Note: SessionManager also uses locks, but this provides additional safety
@@ -381,6 +399,221 @@ class SessionMemory:
     def is_new_session(self) -> bool:
         """Check if this is a brand new session (no interactions yet)."""
         return len(self.interactions) == 0
+
+    # ===== REASONING TRACE METHODS (Hybrid, opt-in) =====
+
+    def is_reasoning_trace_enabled(self) -> bool:
+        """Check if reasoning trace is enabled for this session."""
+        return self._reasoning_trace_enabled
+
+    def start_reasoning_trace(self, interaction_id: str) -> bool:
+        """
+        Start a reasoning trace for a new interaction.
+
+        This should be called when starting to process a user request.
+        Creates a new ReasoningTrace instance for tracking decisions.
+
+        Args:
+            interaction_id: ID of the interaction to track
+
+        Returns:
+            True if trace started, False if feature disabled
+        """
+        if not self._reasoning_trace_enabled:
+            return False
+
+        with self._lock:
+            self._current_interaction_id = interaction_id
+            if REASONING_TRACE_AVAILABLE:
+                self._reasoning_traces[interaction_id] = ReasoningTrace(interaction_id)
+                logger.debug(f"[SESSION MEMORY] Started reasoning trace for {interaction_id}")
+            return True
+
+    def add_reasoning_entry(
+        self,
+        stage: str,  # ReasoningStage enum value or string
+        thought: str,
+        **kwargs
+    ) -> Optional[str]:
+        """
+        Add an entry to the current reasoning trace.
+
+        Hybrid wrapper that gracefully degrades if feature is disabled.
+
+        Args:
+            stage: Reasoning stage (planning/execution/etc.)
+            thought: High-level reasoning
+            **kwargs: Additional entry fields (action, parameters, evidence, etc.)
+
+        Returns:
+            Entry ID if successful, None if feature disabled
+        """
+        if not self._reasoning_trace_enabled or not self._current_interaction_id:
+            return None
+
+        trace = self._reasoning_traces.get(self._current_interaction_id)
+        if not trace:
+            logger.warning(
+                f"[SESSION MEMORY] No active trace for interaction "
+                f"{self._current_interaction_id}"
+            )
+            return None
+
+        # Convert string stage to enum if needed
+        if isinstance(stage, str) and REASONING_TRACE_AVAILABLE:
+            try:
+                stage = ReasoningStage(stage.lower())
+            except ValueError:
+                stage = ReasoningStage.EXECUTION  # Default fallback
+
+        # Convert string outcome to enum if provided
+        if "outcome" in kwargs and isinstance(kwargs["outcome"], str):
+            if REASONING_TRACE_AVAILABLE:
+                try:
+                    kwargs["outcome"] = OutcomeStatus(kwargs["outcome"].lower())
+                except ValueError:
+                    kwargs["outcome"] = OutcomeStatus.PENDING
+
+        return trace.add_entry(stage=stage, thought=thought, **kwargs)
+
+    def update_reasoning_entry(self, entry_id: str, **kwargs) -> bool:
+        """
+        Update an existing reasoning entry.
+
+        Args:
+            entry_id: ID of entry to update
+            **kwargs: Fields to update
+
+        Returns:
+            True if updated, False otherwise
+        """
+        if not self._reasoning_trace_enabled or not self._current_interaction_id:
+            return False
+
+        trace = self._reasoning_traces.get(self._current_interaction_id)
+        if not trace:
+            return False
+
+        # Convert string outcome to enum if provided
+        if "outcome" in kwargs and isinstance(kwargs["outcome"], str):
+            if REASONING_TRACE_AVAILABLE:
+                try:
+                    kwargs["outcome"] = OutcomeStatus(kwargs["outcome"].lower())
+                except ValueError:
+                    pass  # Keep original value
+
+        return trace.update_entry(entry_id, **kwargs)
+
+    def get_reasoning_summary(
+        self,
+        interaction_id: Optional[str] = None,
+        max_entries: Optional[int] = 10,
+        include_corrections_only: bool = False
+    ) -> str:
+        """
+        Get formatted reasoning trace summary for LLM context.
+
+        This is the key hybrid method: if trace is disabled, returns empty string,
+        allowing existing prompts to work unchanged. If enabled, returns rich
+        context that can augment or replace scenario-specific examples.
+
+        Args:
+            interaction_id: Specific interaction (default: current)
+            max_entries: Limit entries (default: 10 most recent)
+            include_corrections_only: Only show corrective guidance
+
+        Returns:
+            Formatted trace summary (empty string if disabled)
+        """
+        if not self._reasoning_trace_enabled:
+            return ""
+
+        iid = interaction_id or self._current_interaction_id
+        if not iid:
+            return ""
+
+        trace = self._reasoning_traces.get(iid)
+        if not trace:
+            return ""
+
+        return trace.get_summary(
+            max_entries=max_entries,
+            include_corrections_only=include_corrections_only
+        )
+
+    def get_pending_commitments(self, interaction_id: Optional[str] = None) -> List[str]:
+        """
+        Get unfulfilled commitments from reasoning trace.
+
+        Used during finalization to validate delivery (e.g., email sent,
+        documents attached).
+
+        Args:
+            interaction_id: Specific interaction (default: current)
+
+        Returns:
+            List of pending commitment strings (empty if disabled)
+        """
+        if not self._reasoning_trace_enabled:
+            return []
+
+        iid = interaction_id or self._current_interaction_id
+        if not iid:
+            return []
+
+        trace = self._reasoning_traces.get(iid)
+        if not trace:
+            return []
+
+        return trace.get_pending_commitments()
+
+    def get_trace_attachments(self, interaction_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all attachments discovered during execution.
+
+        Args:
+            interaction_id: Specific interaction (default: current)
+
+        Returns:
+            List of attachment dictionaries (empty if disabled)
+        """
+        if not self._reasoning_trace_enabled:
+            return []
+
+        iid = interaction_id or self._current_interaction_id
+        if not iid:
+            return []
+
+        trace = self._reasoning_traces.get(iid)
+        if not trace:
+            return []
+
+        return trace.get_attachments()
+
+    def get_trace_corrections(self, interaction_id: Optional[str] = None) -> List[str]:
+        """
+        Get corrective guidance from Critic agent.
+
+        Args:
+            interaction_id: Specific interaction (default: current)
+
+        Returns:
+            List of correction strings (empty if disabled)
+        """
+        if not self._reasoning_trace_enabled:
+            return []
+
+        iid = interaction_id or self._current_interaction_id
+        if not iid:
+            return []
+
+        trace = self._reasoning_traces.get(iid)
+        if not trace:
+            return []
+
+        return trace.get_corrections()
+
+    # ===== END REASONING TRACE METHODS =====
 
     def to_dict(self) -> Dict[str, Any]:
         """

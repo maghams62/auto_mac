@@ -62,3 +62,7 @@ googlemaps>=4.10.0
 
 # YAML handling (optional - for better config preservation)
 ruamel.yaml>=0.18.0
+
+# Testing
+pytest>=7.4.0
+pytest-timeout>=2.2.0

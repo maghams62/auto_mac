@@ -232,13 +232,20 @@ def test_reminders_summarize():
 
 
 def test_calendar_summarize():
-    """TEST C1: Summarize calendar events"""
+    """TEST C1: Summarize calendar events with mock data"""
     test_id = "C1"
     test_name = "Summarize Calendar Events"
     
     print(f"\n{'='*80}")
     print(f"Testing: {test_name}")
     print(f"{'='*80}")
+    
+    # Setup mock calendar data
+    import os
+    from fixtures.calendar_fixtures import get_mock_calendar_fixture_path
+    mock_data_path = get_mock_calendar_fixture_path()
+    os.environ['CALENDAR_FAKE_DATA_PATH'] = mock_data_path
+    print(f"Using mock calendar data from: {mock_data_path}")
     
     queries = [
         "summarize my calendar for the next week",
@@ -249,9 +256,29 @@ def test_calendar_summarize():
         print(f"\nQuery: {query}")
         response = send_chat_message(query)
         
+        # Verify summary includes actual event content from mock data
+        response_text = response.get("response", "")
+        
+        # Check for mock event titles in response
+        from fixtures.calendar_fixtures import get_mock_calendar_events
+        mock_events = get_mock_calendar_events()
+        event_titles = [e.get('title', '').lower() for e in mock_events[:5]]
+        response_lower = response_text.lower()
+        mentioned_titles = [title for title in event_titles if title and title in response_lower]
+        
         passed, details = verify_summary_quality(response, ["calendar", "event"])
+        
+        # Additional checks for calendar summaries
         details["query"] = query
-        details["response_preview"] = response.get("response", "")[:200] if response.get("response") else None
+        details["response_preview"] = response_text[:200] if response_text else None
+        details["has_mock_event_titles"] = len(mentioned_titles) > 0
+        details["mock_title_coverage"] = len(mentioned_titles) / len([t for t in event_titles if t]) if event_titles else 0.0
+        
+        # Require substantial content and event details
+        if details.get("has_substance") and details.get("has_mock_event_titles"):
+            passed = True
+        elif not details.get("has_substance"):
+            passed = False
         
         log_test_result(f"{test_id}-{queries.index(query)+1}", f"{test_name} - {query}", passed, details)
 
