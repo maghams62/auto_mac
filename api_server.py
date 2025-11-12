@@ -82,7 +82,7 @@ from src.config_manager import get_global_config_manager, set_global_config_mana
 config_manager = get_global_config_manager()
 
 # Initialize session manager
-session_manager = SessionManager(storage_dir="data/sessions")
+session_manager = SessionManager(storage_dir="data/sessions", config=config_manager.get_config())
 
 # Initialize agent registry with session support
 agent_registry = AgentRegistry(config_manager.get_config(), session_manager=session_manager)

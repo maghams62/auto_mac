@@ -104,12 +104,29 @@ class CalendarAutomation:
         if self.fake_data_path and os.path.exists(self.fake_data_path):
             logger.info(f"Using fake calendar data from: {self.fake_data_path}")
             fake_events = self._load_fake_data()
-            # Find matching event
+            # Find matching event with fuzzy matching
+            event_title_lower = event_title.lower()
             for event in fake_events:
-                if event_title.lower() in event.get("title", "").lower():
+                event_title_match = event.get("title", "").lower()
+                # Try exact match first
+                if event_title_lower == event_title_match:
                     if start_time_window:
-                        event_start = datetime.fromisoformat(event.get("start_time", ""))
-                        if abs((event_start - start_time_window).total_seconds()) < 86400:  # Within 24 hours
+                        try:
+                            event_start = datetime.fromisoformat(event.get("start_time", "").replace('Z', '+00:00'))
+                            if abs((event_start.replace(tzinfo=None) - start_time_window.replace(tzinfo=None)).total_seconds()) < 86400:  # Within 24 hours
+                                return event
+                        except:
+                            return event
+                    else:
+                        return event
+                # Try partial match (fuzzy)
+                elif event_title_lower in event_title_match or event_title_match in event_title_lower:
+                    if start_time_window:
+                        try:
+                            event_start = datetime.fromisoformat(event.get("start_time", "").replace('Z', '+00:00'))
+                            if abs((event_start.replace(tzinfo=None) - start_time_window.replace(tzinfo=None)).total_seconds()) < 86400:
+                                return event
+                        except:
                             return event
                     else:
                         return event

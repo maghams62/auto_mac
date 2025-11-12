@@ -1,0 +1,256 @@
+{
+  "session_id": "test-cf1-quick",
+  "status": "active",
+  "created_at": "2025-11-12T09:26:00.695424",
+  "last_active_at": "2025-11-12T09:26:34.042712",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-12T09:26:34.042712",
+      "user_request": "summarize my reminders and calendar for the next week",
+      "agent_response": {
+        "goal": "Summarize reminders and calendar events for the next week",
+        "steps_executed": 4,
+        "results": {
+          "1": {
+            "reminders": [
+              {
+                "title": "Act",
+                "notes": null,
+                "due_date": null,
+                "completed": false,
+                "list_name": "Reminders"
+              },
+              {
+                "title": "Fill up the timesheet",
+                "notes": null,
+                "due_date": null,
+                "completed": false,
+                "list_name": "Reminders"
+              },
+              {
+                "title": "The Ashok Anand",
+                "notes": null,
+                "due_date": null,
+                "completed": false,
+                "list_name": "Reminders"
+              },
+              {
+                "title": "Go to university",
+                "notes": "Meeting at university",
+                "due_date": null,
+                "completed": false,
+                "list_name": "Reminders"
+              }
+            ],
+            "count": 4,
+            "list_name": null,
+            "tool": "list_reminders"
+          },
+          "2": {
+            "events": [],
+            "count": 0,
+            "days_ahead": 7,
+            "tool": "list_calendar_events"
+          },
+          "3": {
+            "synthesized_content": "Key upcoming reminders include tasks that need attention, specifically: preparing to 'Act', completing the 'timesheet', addressing 'The Ashok Anand', and attending a 'meeting at university'.",
+            "key_points": [
+              "Prepare to act on pending reminders.",
+              "Complete the timesheet.",
+              "Address the task related to The Ashok Anand.",
+              "Attend the university meeting."
+            ],
+            "themes_identified": [
+              "Task management",
+              "Upcoming meetings",
+              "Prioritization of reminders"
+            ],
+            "source_count": 1,
+            "brief_compliance": {
+              "facts_included": [
+                "Act",
+                "Fill up the timesheet",
+                "The Ashok Anand",
+                "Go to university"
+              ],
+              "data_included": []
+            },
+            "word_count": 25,
+            "message": "Synthesized 2 sources into 25 words",
+            "tool": "synthesize_content"
+          },
+          "4": {
+            "type": "reply",
+            "message": "Here is the summary of your upcoming reminders and calendar events for the next week.",
+            "details": "Key upcoming reminders include tasks that need attention, specifically: preparing to 'Act', completing the 'timesheet', addressing 'The Ashok Anand', and attending a 'meeting at university'.",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 4,
+        "message": "Here is the summary of your upcoming reminders and calendar events for the next week.",
+        "details": "Key upcoming reminders include tasks that need attention, specifically: preparing to 'Act', completing the 'timesheet', addressing 'The Ashok Anand', and attending a 'meeting at university'."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "list_reminders",
+          "parameters": {
+            "include_completed": false
+          },
+          "dependencies": [],
+          "reasoning": "Gather all upcoming reminders for the user to summarize them.",
+          "expected_output": "List of upcoming reminders"
+        },
+        {
+          "id": 2,
+          "action": "list_calendar_events",
+          "parameters": {
+            "days_ahead": 7
+          },
+          "dependencies": [],
+          "reasoning": "Retrieve all calendar events for the next week to include in the summary.",
+          "expected_output": "List of upcoming calendar events"
+        },
+        {
+          "id": 3,
+          "action": "synthesize_content",
+          "parameters": {
+            "source_contents": [
+              "$step1.reminders",
+              "$step2.events"
+            ],
+            "topic": "Summary of upcoming reminders and calendar events",
+            "synthesis_style": "concise"
+          },
+          "dependencies": [
+            1,
+            2
+          ],
+          "reasoning": "Combine reminders and calendar events into a cohesive summary.",
+          "expected_output": "Concise summary of reminders and events"
+        },
+        {
+          "id": 4,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Here is the summary of your upcoming reminders and calendar events for the next week.",
+            "details": "$step3.synthesized_content",
+            "status": "success"
+          },
+          "dependencies": [
+            3
+          ],
+          "reasoning": "Provide the user with a polished summary of their reminders and events.",
+          "expected_output": "User-facing summary of reminders and calendar events"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "reminders": [
+            {
+              "title": "Act",
+              "notes": null,
+              "due_date": null,
+              "completed": false,
+              "list_name": "Reminders"
+            },
+            {
+              "title": "Fill up the timesheet",
+              "notes": null,
+              "due_date": null,
+              "completed": false,
+              "list_name": "Reminders"
+            },
+            {
+              "title": "The Ashok Anand",
+              "notes": null,
+              "due_date": null,
+              "completed": false,
+              "list_name": "Reminders"
+            },
+            {
+              "title": "Go to university",
+              "notes": "Meeting at university",
+              "due_date": null,
+              "completed": false,
+              "list_name": "Reminders"
+            }
+          ],
+          "count": 4,
+          "list_name": null,
+          "tool": "list_reminders"
+        },
+        "2": {
+          "events": [],
+          "count": 0,
+          "days_ahead": 7,
+          "tool": "list_calendar_events"
+        },
+        "3": {
+          "synthesized_content": "Key upcoming reminders include tasks that need attention, specifically: preparing to 'Act', completing the 'timesheet', addressing 'The Ashok Anand', and attending a 'meeting at university'.",
+          "key_points": [
+            "Prepare to act on pending reminders.",
+            "Complete the timesheet.",
+            "Address the task related to The Ashok Anand.",
+            "Attend the university meeting."
+          ],
+          "themes_identified": [
+            "Task management",
+            "Upcoming meetings",
+            "Prioritization of reminders"
+          ],
+          "source_count": 1,
+          "brief_compliance": {
+            "facts_included": [
+              "Act",
+              "Fill up the timesheet",
+              "The Ashok Anand",
+              "Go to university"
+            ],
+            "data_included": []
+          },
+          "word_count": 25,
+          "message": "Synthesized 2 sources into 25 words",
+          "tool": "synthesize_content"
+        },
+        "4": {
+          "type": "reply",
+          "message": "Here is the summary of your upcoming reminders and calendar events for the next week.",
+          "details": "Key upcoming reminders include tasks that need attention, specifically: preparing to 'Act', completing the 'timesheet', addressing 'The Ashok Anand', and attending a 'meeting at university'.",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Summarize reminders and calendar events for the next week",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 4,
+    "agents_used": [],
+    "tools_used": [
+      "synthesize_content",
+      "list_calendar_events",
+      "list_reminders",
+      "reply_to_user"
+    ]
+  }
+}

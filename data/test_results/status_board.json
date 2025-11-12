@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2025-11-12T09:12:17.161323",
+  "last_updated": "2025-11-12T09:22:23.919770",
   "tests": {
     "fix": {
       "last_run": "2025-11-12T09:11:18.140768",
@@ -12,11 +12,20 @@
       "error_message": null
     },
     "reasoning_trace_integration": {
-      "last_run": "2025-11-12T09:12:17.161059",
+      "last_run": "2025-11-12T09:15:23.100772",
       "status": "passed",
       "pass_count": 1,
       "fail_count": 0,
-      "result_file": "reasoning_trace_integration_20251112_091217.json",
+      "result_file": "reasoning_trace_integration_20251112_091523.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "reasoning_trace": {
+      "last_run": "2025-11-12T09:22:23.919449",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "reasoning_trace_20251112_092223.json",
       "execution_time": null,
       "error_message": null
     }

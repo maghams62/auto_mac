@@ -233,16 +233,58 @@ def resolve_parameters(
             # Check for direct reference: "$step1.field"
             if value.startswith("$step"):
                 resolved_value = resolve_direct_reference(value, step_results)
-                resolved[key] = resolved_value if resolved_value is not None else value
+                # Special handling for reply_to_user and compose_email - ensure strings
+                if action in ["reply_to_user", "compose_email"]:
+                    if key in ["message", "details", "body"]:
+                        # Convert to string if it's a dict or list
+                        if isinstance(resolved_value, (dict, list)):
+                            resolved[key] = json.dumps(resolved_value, indent=2) if resolved_value else ""
+                        else:
+                            resolved[key] = str(resolved_value) if resolved_value is not None else ""
+                    else:
+                        resolved[key] = resolved_value if resolved_value is not None else value
+                else:
+                    resolved[key] = resolved_value if resolved_value is not None else value
             # Check for template string: "Found {$step1.count} items"
             elif "{$step" in value or "$step" in value:
                 resolved[key] = resolve_template_string(value, step_results)
             else:
                 resolved[key] = value
+        elif isinstance(value, dict):
+            # Special handling for reply_to_user and compose_email - convert dicts to strings
+            if action in ["reply_to_user", "compose_email"]:
+                if key in ["message", "details", "body"]:
+                    # Convert dict to JSON string
+                    if value:
+                        resolved[key] = json.dumps(value, indent=2)
+                    else:
+                        resolved[key] = ""
+                else:
+                    # Recursively resolve for other parameters
+                    resolved[key] = resolve_parameters(value, step_results, action)
+            else:
+                # Recursively resolve for other actions
+                resolved[key] = resolve_parameters(value, step_results, action)
         elif isinstance(value, list):
-            # Special handling for synthesize_content.source_contents
-            # Convert structured data (lists, dicts) to JSON strings
-            if action == "synthesize_content" and key == "source_contents":
+            # Special handling for reply_to_user and compose_email - convert lists to strings
+            if action in ["reply_to_user", "compose_email"]:
+                if key in ["message", "details", "body"]:
+                    # Convert list to JSON string
+                    if value:
+                        resolved[key] = json.dumps(value, indent=2)
+                    else:
+                        resolved[key] = ""
+                else:
+                    # Handle list items recursively
+                    resolved[key] = [
+                        resolve_parameters({"item": item}, step_results, action).get("item", item)
+                        if isinstance(item, (str, dict))
+                        else item
+                        for item in value
+                    ]
+            elif action == "synthesize_content" and key == "source_contents":
+                # Special handling for synthesize_content.source_contents
+                # Convert structured data (lists, dicts) to JSON strings
                 resolved_list = []
                 for item in value:
                     if isinstance(item, str):

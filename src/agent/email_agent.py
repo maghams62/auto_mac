@@ -121,7 +121,19 @@ def compose_email(
         
         # If user requested attachments but none are valid, return error
         if len(attachments) > 0 and len(validated_attachments) == 0:
-            error_msg = f"All {len(attachments)} attachment(s) failed validation. Invalid paths: {invalid_attachments}"
+            error_details = []
+            for inv_path in invalid_attachments:
+                abs_path = os.path.abspath(os.path.expanduser(inv_path)) if isinstance(inv_path, str) else str(inv_path)
+                if not os.path.exists(abs_path):
+                    error_details.append(f"'{inv_path}' - file not found")
+                elif not os.path.isfile(abs_path):
+                    error_details.append(f"'{inv_path}' - not a file (may be a directory)")
+                elif not os.access(abs_path, os.R_OK):
+                    error_details.append(f"'{inv_path}' - file not readable")
+                else:
+                    error_details.append(f"'{inv_path}' - validation failed")
+            
+            error_msg = f"All {len(attachments)} attachment(s) failed validation: {', '.join(error_details)}"
             logger.error(f"[EMAIL AGENT] ⚠️  {error_msg}")
             return {
                 "error": True,

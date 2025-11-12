@@ -59,7 +59,7 @@ def main():
             sys.exit(1)
 
         # Initialize session manager
-        session_manager = SessionManager(storage_dir="data/sessions")
+        session_manager = SessionManager(storage_dir="data/sessions", config=config)
         session_id = "default"  # Single-user mode
         logger.info(f"Session manager initialized with session ID: {session_id}")
 

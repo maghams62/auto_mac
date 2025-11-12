@@ -668,6 +668,26 @@ CRITICAL: You MUST include required facts and data in appropriate slides.
 Reference specific metrics, dates, and numbers from the brief.
 """
 
+        # Detect if content appears to be minimal stock price data
+        is_stock_data = any(keyword in content.lower() for keyword in [
+            "current_price", "price_change", "ticker", "symbol", "stock price",
+            "nvda", "aapl", "tsla", "msft", "googl", "stock", "shares"
+        ]) and len(content) < 500
+        
+        stock_enrichment_guidance = ""
+        if is_stock_data:
+            stock_enrichment_guidance = """
+STOCK DATA ENRICHMENT (CRITICAL):
+- The source content contains minimal stock price data
+- Enrich each slide with context and meaning:
+  * Slide 1: Current Price Overview - Include price, change, percentage change, and what it means (up/down trend)
+  * Slide 2: Market Context - Add context about the company, sector, or market conditions
+  * Slide 3: Performance Indicators - Include any available metrics (volume, market cap, etc.)
+  * Additional slides: Add relevant context, trends, or analysis based on available data
+- Don't just list raw numbers - provide interpretation and context
+- If data is very minimal, create 3-5 slides by expanding on available information with meaningful context
+"""
+
         slide_deck_prompt = f"""You are an expert presentation designer. Create concise, impactful slide content for a presentation.
 
 PRESENTATION TITLE: {title}
@@ -678,6 +698,7 @@ SOURCE CONTENT:
 SLIDE COUNT GUIDELINE:
 {target_slides_instruction}
 {bullet_guidelines}
+{stock_enrichment_guidance}
 {brief_section}
 
 QUALITY FOCUS:
@@ -685,6 +706,7 @@ QUALITY FOCUS:
 - Include numerical data, metrics, and concrete examples
 - Ensure each slide provides unique value
 - Balance brevity with completeness - don't sacrifice clarity for word count
+- For stock data: Provide context and interpretation, not just raw numbers
 
 OUTPUT FORMAT:
 Provide a JSON response with:

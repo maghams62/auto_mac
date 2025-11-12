@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_trace_overhead_acceptable",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0005270419933367521
+  },
+  "timestamp": "2025-11-12T09:15:23.097332",
+  "test_name": "reasoning_trace"
+}

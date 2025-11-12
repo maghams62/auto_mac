@@ -1,0 +1,59 @@
+[
+  {
+    "title": "Call John about project",
+    "due_date": "2025-11-13T14:00:00",
+    "notes": "Discuss Q4 deliverables",
+    "list_name": "Work",
+    "completed": false
+  },
+  {
+    "title": "Submit expense report",
+    "due_date": "2025-11-14T17:00:00",
+    "notes": "Q4 expenses",
+    "list_name": "Work",
+    "completed": false
+  },
+  {
+    "title": "Buy groceries",
+    "due_date": "2025-11-15T18:00:00",
+    "notes": "Milk, eggs, bread",
+    "list_name": "Personal",
+    "completed": false
+  },
+  {
+    "title": "Review PR #1234",
+    "due_date": "2025-11-16T10:00:00",
+    "notes": "Code review for new feature",
+    "list_name": "Work",
+    "completed": false
+  },
+  {
+    "title": "Schedule dentist appointment",
+    "due_date": null,
+    "notes": "Call to schedule",
+    "list_name": "Personal",
+    "completed": false
+  },
+  {
+    "title": "Prepare presentation slides",
+    "due_date": "2025-11-17T09:00:00",
+    "notes": "For client meeting",
+    "list_name": "Work",
+    "completed": false
+  },
+  {
+    "title": "Return library books",
+    "due_date": "2025-11-18T16:00:00",
+    "notes": "3 books due",
+    "list_name": "Personal",
+    "completed": false
+  },
+  {
+    "title": "Team retrospective",
+    "due_date": "2025-11-19T15:00:00",
+    "notes": "Sprint retrospective meeting",
+    "list_name": "Work",
+    "completed": false
+  }
+]
+

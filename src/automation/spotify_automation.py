@@ -218,6 +218,50 @@ class SpotifyAutomation:
                 "retry_possible": True
             }
 
+    def _validate_search_input(self, song_name: str, artist: str = None) -> Dict[str, Any]:
+        """
+        Validate search input parameters.
+        
+        Args:
+            song_name: Song name to validate
+            artist: Optional artist name to validate
+        
+        Returns:
+            Dictionary with "valid" (bool) and "error_message" (str if invalid)
+        """
+        if not song_name:
+            return {
+                "valid": False,
+                "error_message": "Song name cannot be empty"
+            }
+        
+        if not isinstance(song_name, str):
+            return {
+                "valid": False,
+                "error_message": f"Song name must be a string, got {type(song_name)}"
+            }
+        
+        if not song_name.strip():
+            return {
+                "valid": False,
+                "error_message": "Song name cannot be empty or whitespace only"
+            }
+        
+        if artist is not None:
+            if not isinstance(artist, str):
+                return {
+                    "valid": False,
+                    "error_message": f"Artist must be a string or None, got {type(artist)}"
+                }
+            
+            if not artist.strip():
+                return {
+                    "valid": False,
+                    "error_message": "Artist cannot be empty or whitespace only if provided"
+                }
+        
+        return {"valid": True}
+
     def search_and_play(self, song_name: str, artist: str = None) -> Dict[str, Any]:
         """
         Search for a song by name and play it in Spotify.
@@ -255,13 +299,14 @@ class SpotifyAutomation:
                 "retry_possible": bool (if error)
             }
         """
-        # Validation: song_name must be non-empty string
-        if not song_name or not isinstance(song_name, str) or not song_name.strip():
+        # Validate input before processing
+        validation_result = self._validate_search_input(song_name, artist)
+        if not validation_result["valid"]:
             return {
                 "success": False,
                 "error": True,
                 "error_type": "ValidationError",
-                "error_message": "Song name cannot be empty",
+                "error_message": validation_result["error_message"],
                 "retry_possible": False
             }
         
@@ -280,15 +325,42 @@ class SpotifyAutomation:
             # Build AppleScript string safely using character codes to avoid reserved word issues
             # This ensures words like "Space" are treated as string literals, not class names
             def build_applescript_string_safe(s: str) -> str:
-                """Build an AppleScript string literal using character codes to avoid parsing issues."""
-                # Build string character-by-character using ASCII character codes
+                """
+                Build an AppleScript string literal using character codes to avoid parsing issues.
+                
+                Args:
+                    s: String to convert (handles None, empty strings, and Unicode)
+                
+                Returns:
+                    AppleScript string construction using character codes
+                """
+                # Handle None and empty strings
+                if s is None:
+                    logger.warning("[SPOTIFY AUTOMATION] Received None value for string construction, using empty string")
+                    return '""'
+                
+                if not isinstance(s, str):
+                    s = str(s)
+                
+                if not s:
+                    return '""'
+                
+                # Handle very long strings (>1000 chars) - truncate with warning
+                if len(s) > 1000:
+                    logger.warning(f"[SPOTIFY AUTOMATION] String length ({len(s)}) exceeds 1000 chars, truncating")
+                    s = s[:1000]
+                
+                # Build string character-by-character using character codes
                 # This ensures AppleScript always treats it as a string literal
                 char_parts = []
                 for char in s:
                     code = ord(char)
-                    # Use ASCII character code for all characters to avoid any parsing issues
+                    # Use character code for all characters to avoid any parsing issues
                     char_parts.append(f"ASCII character {code}")
-                return " & ".join(char_parts)
+                
+                result = " & ".join(char_parts)
+                logger.debug(f"[SPOTIFY AUTOMATION] Built AppleScript string using character codes (length: {len(s)})")
+                return result
             
             # Build the search query string using character codes
             search_query_chars = build_applescript_string_safe(search_query)
@@ -427,7 +499,7 @@ end tell'''
                         }
             else:
                 error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                logger.error(f"[SPOTIFY AUTOMATION] Search and play failed: {error_msg}")
+                logger.error(f"[SPOTIFY AUTOMATION] Search and play failed for '{song_name}': {error_msg}")
                 
                 # Check error type and provide specific error messages
                 error_lower = error_msg.lower()
@@ -437,7 +509,7 @@ end tell'''
                         "success": False,
                         "error": True,
                         "error_type": "SpotifyNotRunning",
-                        "error_message": "Spotify is not running. Please open Spotify and try again.",
+                        "error_message": f"Spotify is not running. Please open Spotify and try again. (Song: '{song_name}')",
                         "retry_possible": True
                     }
                 elif "couldn't find" in error_lower or "no results" in error_lower:
@@ -447,6 +519,16 @@ end tell'''
                         "error_type": "SongNotFound",
                         "error_message": f"Could not find '{song_name}' in Spotify. Please check the spelling or try a different search.",
                         "retry_possible": True
+                    }
+                elif "syntax error" in error_lower or "parse" in error_lower:
+                    # AppleScript syntax error - this should be rare with character code construction
+                    logger.error(f"[SPOTIFY AUTOMATION] AppleScript syntax error for '{song_name}': {error_msg}")
+                    return {
+                        "success": False,
+                        "error": True,
+                        "error_type": "AppleScriptError",
+                        "error_message": f"AppleScript syntax error while searching for '{song_name}'. Error: {error_msg}",
+                        "retry_possible": False  # Syntax errors are not retryable
                     }
                 else:
                     return {

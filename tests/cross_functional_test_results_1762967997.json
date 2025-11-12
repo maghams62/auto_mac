@@ -1,0 +1,472 @@
+[
+  {
+    "test_id": "CF1-1",
+    "test_name": "Reminders + Calendar Combined Summary - summarize my reminders and calendar for the next week",
+    "timestamp": "2025-11-12T09:11:39.257458",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "summarize my reminders and calendar for the next week",
+      "response_preview": "Skipped due to failed dependencies: [1]"
+    }
+  },
+  {
+    "test_id": "CF1-2",
+    "test_name": "Reminders + Calendar Combined Summary - what do I have coming up - reminders and calendar events",
+    "timestamp": "2025-11-12T09:12:14.097977",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "what do I have coming up - reminders and calendar events",
+      "response_preview": "Skipped due to failed dependencies: [1]"
+    }
+  },
+  {
+    "test_id": "CF1-3",
+    "test_name": "Reminders + Calendar Combined Summary - show me my todos and calendar events",
+    "timestamp": "2025-11-12T09:12:40.943145",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "show me my todos and calendar events",
+      "response_preview": "Skipped due to failed dependencies: [1]"
+    }
+  },
+  {
+    "test_id": "CF2-1",
+    "test_name": "Email + Calendar Combined Summary - summarize my emails and calendar for today",
+    "timestamp": "2025-11-12T09:12:58.160641",
+    "passed": false,
+    "details": {
+      "response_length": 31,
+      "has_substance": false,
+      "expected_sources": [
+        "email",
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "summarize my emails and calendar for today",
+      "response_preview": "Failed to create execution plan"
+    }
+  },
+  {
+    "test_id": "CF2-2",
+    "test_name": "Email + Calendar Combined Summary - what's in my inbox and on my calendar this week",
+    "timestamp": "2025-11-12T09:13:07.278933",
+    "passed": false,
+    "details": {
+      "response_length": 75,
+      "has_substance": false,
+      "expected_sources": [
+        "email",
+        "calendar"
+      ],
+      "found_sources": [
+        "email",
+        "calendar"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "query": "what's in my inbox and on my calendar this week",
+      "response_preview": "I've retrieved your inbox emails and upcoming calendar events for the week."
+    }
+  },
+  {
+    "test_id": "CF2-3",
+    "test_name": "Email + Calendar Combined Summary - show me my recent emails and upcoming calendar events",
+    "timestamp": "2025-11-12T09:13:16.948694",
+    "passed": false,
+    "details": {
+      "response_length": 292,
+      "has_substance": true,
+      "expected_sources": [
+        "email",
+        "calendar"
+      ],
+      "found_sources": [
+        "email",
+        "calendar"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "show me my recent emails and upcoming calendar events",
+      "response_preview": "1 validation error for reply_to_user\ndetails\n  Input should be a valid string [type=string_type, input_value={'emails': [], 'events': []}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "CF3-1",
+    "test_name": "Bluesky Summary + Email - summarize recent Bluesky posts about AI and email them to me",
+    "timestamp": "2025-11-12T09:13:43.790924",
+    "passed": false,
+    "details": {
+      "response_length": 78,
+      "has_substance": false,
+      "expected_sources": [
+        "bluesky",
+        "email"
+      ],
+      "found_sources": [
+        "bluesky",
+        "email"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "email_confirmed": true,
+      "query": "summarize recent Bluesky posts about AI and email them to me",
+      "response_preview": "Summarized the recent AI discussions from Bluesky and emailed you the results."
+    }
+  },
+  {
+    "test_id": "CF3-2",
+    "test_name": "Bluesky Summary + Email - get my last 10 Bluesky posts and send them via email",
+    "timestamp": "2025-11-12T09:14:03.385044",
+    "passed": false,
+    "details": {
+      "response_length": 294,
+      "has_substance": true,
+      "expected_sources": [
+        "bluesky",
+        "email"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.5,
+      "has_synthesis": false,
+      "has_error": true,
+      "email_confirmed": false,
+      "query": "get my last 10 Bluesky posts and send them via email",
+      "response_preview": "Synthesized 1 sources into 58 words. 1 validation error for compose_email\nbody\n  Input should be a valid string [type=string_type, input_value={'synthesized_content': \"...': 'synthesize_content'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type"
+    }
+  },
+  {
+    "test_id": "CF3-3",
+    "test_name": "Bluesky Summary + Email - summarize Bluesky posts from the past hour and email the summary",
+    "timestamp": "2025-11-12T09:14:23.710718",
+    "passed": false,
+    "details": {
+      "response_length": 66,
+      "has_substance": false,
+      "expected_sources": [
+        "bluesky",
+        "email"
+      ],
+      "found_sources": [
+        "bluesky",
+        "email"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "email_confirmed": true,
+      "query": "summarize Bluesky posts from the past hour and email the summary",
+      "response_preview": "Summarized recent Bluesky activity and emailed the results to you."
+    }
+  },
+  {
+    "test_id": "CF4-1",
+    "test_name": "News Summary + Email - summarize news about AI and email it to me",
+    "timestamp": "2025-11-12T09:14:48.411396",
+    "passed": true,
+    "details": {
+      "response_length": 1149,
+      "has_substance": true,
+      "expected_sources": [
+        "news",
+        "email"
+      ],
+      "found_sources": [
+        "news",
+        "email"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "email_confirmed": true,
+      "query": "summarize news about AI and email it to me",
+      "response_preview": "- **Diverse Sources**: Major platforms like Google News, TechCrunch, Reuters, and specialized sites like Artificial Intelligence News and All About AI are providing extensive coverage on the latest in AI, including breakthroughs, trends, and ethical considerations (Results 1-5).\n  \n- **Current Focus"
+    }
+  },
+  {
+    "test_id": "CF4-2",
+    "test_name": "News Summary + Email - get recent tech news and send it via email",
+    "timestamp": "2025-11-12T09:15:04.430616",
+    "passed": true,
+    "details": {
+      "response_length": 692,
+      "has_substance": true,
+      "expected_sources": [
+        "news",
+        "email"
+      ],
+      "found_sources": [
+        "news",
+        "email"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "email_confirmed": true,
+      "query": "get recent tech news and send it via email",
+      "response_preview": "- **Diverse Sources of News**: Major outlets like Reuters (1), PCMag (2), and AP News (3) are providing comprehensive coverage of the latest technology developments globally.\n- **Focus on Innovations and Trends**: Google News (4) highlights advancements and emerging trends in technology, suggesting "
+    }
+  },
+  {
+    "test_id": "CF4-3",
+    "test_name": "News Summary + Email - summarize today's news and email the summary",
+    "timestamp": "2025-11-12T09:15:22.217182",
+    "passed": true,
+    "details": {
+      "response_length": 777,
+      "has_substance": true,
+      "expected_sources": [
+        "news",
+        "email"
+      ],
+      "found_sources": [
+        "news",
+        "email"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "email_confirmed": true,
+      "query": "summarize today's news and email the summary",
+      "response_preview": "- **Government Funding Bill**: The US Senate has passed a funding bill that could potentially avert a government shutdown, highlighting ongoing political developments (Result 2).\n- **Flight Disruptions**: Today, there have been significant delays and cancellations in air travel, with nearly 8,000 fl"
+    }
+  },
+  {
+    "test_id": "CF5-1",
+    "test_name": "Reminders + Calendar + Email Multi-Source - summarize my reminders, calendar, and emails for this week and email it to me",
+    "timestamp": "2025-11-12T09:15:58.030334",
+    "passed": false,
+    "details": {
+      "response_length": 95,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar",
+        "email"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.3333333333333333,
+      "has_synthesis": false,
+      "has_error": true,
+      "email_confirmed": false,
+      "query": "summarize my reminders, calendar, and emails for this week and email it to me",
+      "response_preview": "Skipped due to failed dependencies: [1]. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "CF5-2",
+    "test_name": "Reminders + Calendar + Email Multi-Source - give me a complete summary of my todos, calendar events, and recent emails",
+    "timestamp": "2025-11-12T09:16:36.435608",
+    "passed": false,
+    "details": {
+      "response_length": 95,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar",
+        "email"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.3333333333333333,
+      "has_synthesis": false,
+      "has_error": true,
+      "email_confirmed": false,
+      "query": "give me a complete summary of my todos, calendar events, and recent emails",
+      "response_preview": "Skipped due to failed dependencies: [1]. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "CF5-3",
+    "test_name": "Reminders + Calendar + Email Multi-Source - what do I have coming up - combine reminders, calendar, and emails",
+    "timestamp": "2025-11-12T09:17:15.895422",
+    "passed": false,
+    "details": {
+      "response_length": 95,
+      "has_substance": false,
+      "expected_sources": [
+        "reminders",
+        "calendar",
+        "email"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.3333333333333333,
+      "has_synthesis": false,
+      "has_error": true,
+      "email_confirmed": false,
+      "query": "what do I have coming up - combine reminders, calendar, and emails",
+      "response_preview": "Skipped due to failed dependencies: [1]. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "CF6-1",
+    "test_name": "Calendar + Meeting Preparation - prepare a brief for Team Standup",
+    "timestamp": "2025-11-12T09:17:34.650594",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "has_meeting_prep": false,
+      "query": "prepare a brief for Team Standup",
+      "response_preview": "Skipped due to failed dependencies: [2]"
+    }
+  },
+  {
+    "test_id": "CF6-2",
+    "test_name": "Calendar + Meeting Preparation - prep me for Team Standup meeting",
+    "timestamp": "2025-11-12T09:17:44.069613",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "calendar"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "has_meeting_prep": false,
+      "query": "prep me for Team Standup meeting",
+      "response_preview": "Skipped due to failed dependencies: [2]"
+    }
+  },
+  {
+    "test_id": "CF6-3",
+    "test_name": "Calendar + Meeting Preparation - create a meeting brief for Team Standup",
+    "timestamp": "2025-11-12T09:17:56.911284",
+    "passed": false,
+    "details": {
+      "response_length": 30,
+      "has_substance": false,
+      "expected_sources": [
+        "calendar"
+      ],
+      "found_sources": [
+        "calendar"
+      ],
+      "source_coverage": 1.0,
+      "has_synthesis": true,
+      "has_error": false,
+      "has_meeting_prep": false,
+      "query": "create a meeting brief for Team Standup",
+      "response_preview": "Event 'Team Standup' not found"
+    }
+  },
+  {
+    "test_id": "CF7-1",
+    "test_name": "Full Day Summary - give me a summary of my day - emails, calendar, and reminders",
+    "timestamp": "2025-11-12T09:18:40.443792",
+    "passed": false,
+    "details": {
+      "response_length": 95,
+      "has_substance": false,
+      "expected_sources": [
+        "email",
+        "calendar",
+        "reminders"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.3333333333333333,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "give me a summary of my day - emails, calendar, and reminders",
+      "response_preview": "Skipped due to failed dependencies: [3]. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "CF7-2",
+    "test_name": "Full Day Summary - what's on my plate today - combine everything",
+    "timestamp": "2025-11-12T09:19:20.492028",
+    "passed": false,
+    "details": {
+      "response_length": 39,
+      "has_substance": false,
+      "expected_sources": [
+        "email",
+        "calendar",
+        "reminders"
+      ],
+      "found_sources": [],
+      "source_coverage": 0.0,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "what's on my plate today - combine everything",
+      "response_preview": "Skipped due to failed dependencies: [2]"
+    }
+  },
+  {
+    "test_id": "CF7-3",
+    "test_name": "Full Day Summary - summarize my complete day: emails, meetings, and todos",
+    "timestamp": "2025-11-12T09:19:57.103842",
+    "passed": false,
+    "details": {
+      "response_length": 95,
+      "has_substance": false,
+      "expected_sources": [
+        "email",
+        "calendar",
+        "reminders"
+      ],
+      "found_sources": [
+        "email"
+      ],
+      "source_coverage": 0.3333333333333333,
+      "has_synthesis": false,
+      "has_error": true,
+      "query": "summarize my complete day: emails, meetings, and todos",
+      "response_preview": "Skipped due to failed dependencies: [3]. Email step was not executed. Please retry the request."
+    }
+  }
+]

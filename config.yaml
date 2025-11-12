@@ -11,7 +11,7 @@ openai:
 # Reasoning Trace Configuration (Experimental)
 # Enables persistent reasoning memory across agent executions
 reasoning_trace:
-  enabled: false  # EXPERIMENTAL: Enable reasoning trace (default: false for safety)
+  enabled: true  # EXPERIMENTAL: Enable reasoning trace (default: false for safety)
   # When enabled, the system tracks:
   # - Planning decisions and evidence
   # - Execution outcomes and artifacts

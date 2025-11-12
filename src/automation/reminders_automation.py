@@ -7,6 +7,8 @@ creation and management of reminders and tasks.
 
 import logging
 import subprocess
+import os
+import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import re
@@ -33,6 +35,7 @@ class RemindersAutomation:
             config: Optional configuration dictionary
         """
         self.config = config or {}
+        self.fake_data_path = os.getenv("REMINDERS_FAKE_DATA_PATH")
 
     def create_reminder(
         self,
@@ -189,12 +192,17 @@ class RemindersAutomation:
         """
         logger.info(f"Listing reminders (list: {list_name}, include_completed: {include_completed})")
 
+        # Check for fake data path for testing
+        if self.fake_data_path and os.path.exists(self.fake_data_path):
+            logger.info(f"Using fake reminders data from: {self.fake_data_path}")
+            return self._load_fake_data(list_name, include_completed)
+
         try:
             # Build AppleScript to list reminders
             script = self._build_list_reminders_applescript(list_name, include_completed)
 
             # Execute AppleScript
-            result = self._run_applescript(script)
+            result = self._run_applescript(script, timeout=30)  # Increased timeout
 
             if result.returncode == 0:
                 # Parse the output
@@ -612,3 +620,33 @@ class RemindersAutomation:
         except Exception as e:
             logger.error(f"Reminders integration test failed: {e}")
             return False
+
+    def _load_fake_data(self, list_name: Optional[str] = None, include_completed: bool = False) -> Dict[str, Any]:
+        """Load fake reminders data from JSON file for testing."""
+        try:
+            with open(self.fake_data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    reminders = data
+                elif isinstance(data, dict) and "reminders" in data:
+                    reminders = data["reminders"]
+                else:
+                    logger.warning(f"Unexpected fake data format in {self.fake_data_path}")
+                    return {"reminders": [], "count": 0, "list_name": list_name}
+                
+                # Filter by list_name if specified
+                if list_name:
+                    reminders = [r for r in reminders if r.get("list_name") == list_name]
+                
+                # Filter completed if needed
+                if not include_completed:
+                    reminders = [r for r in reminders if not r.get("completed", False)]
+                
+                return {
+                    "reminders": reminders,
+                    "count": len(reminders),
+                    "list_name": list_name
+                }
+        except Exception as e:
+            logger.error(f"Error loading fake reminders data: {e}")
+            return {"reminders": [], "count": 0, "list_name": list_name}

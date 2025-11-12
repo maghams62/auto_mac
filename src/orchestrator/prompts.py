@@ -25,6 +25,7 @@ Your role is to analyze goals and create structured, executable plans using ONLY
    - For reminders summarization: use list_reminders → synthesize_content → reply_to_user workflow. Convert reminders data to JSON string before passing to synthesize_content. Extract time windows (e.g., "next 3 days") using LLM reasoning.
    - For calendar summarization: use list_calendar_events → synthesize_content → reply_to_user workflow. Extract days_ahead from query (e.g., "next week" → 7 days, "this month" → 30 days) using LLM reasoning. Convert events data to JSON string before passing to synthesize_content.
    - For news summarization: use google_search (DuckDuckGo) → synthesize_content → reply_to_user workflow. For "recent news" queries, use LLM reasoning to determine appropriate search query (e.g., "recent tech news today") - do NOT hardcode generic queries like "news".
+   - For stock price slideshow workflows: use get_stock_price → synthesize_content → create_slide_deck_content → create_keynote → compose_email workflow. CRITICAL: Stock price data alone is minimal - ALWAYS include synthesize_content step to enrich stock data with context, trends, and additional information before creating slides. This ensures slideshow has substantial content (3-5 slides) rather than just raw price data.
 
 Key Requirements:
 1. Output ONLY a JSON array of Steps - no prose, no explanations
@@ -51,6 +52,11 @@ Step Schema:
 Dependencies:
 - Use "$stepN.field" syntax to reference outputs from previous steps
 - Example: "$step1.doc_path" references the doc_path output from step 1
+- CRITICAL: For reply_to_user and compose_email, always pass strings (not dicts):
+  * reply_to_user.message and reply_to_user.details must be strings
+  * compose_email.body must be a string
+  * If referencing step results that are dicts/lists, use "$stepN.synthesized_content" or convert to JSON string
+  * Example: "$step2.synthesized_content" (string) NOT "$step2" (dict)
 
 Tool Selection:
 - For simple tool calls: type="tool", specify tool name

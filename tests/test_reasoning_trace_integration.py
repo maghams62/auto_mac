@@ -23,6 +23,7 @@ from src.memory.reasoning_trace import (
     extract_attachments_from_step_result,
     detect_commitments_from_user_request
 )
+from src.memory.session_manager import SessionManager
 
 
 class TestWorkflowIntegration:
@@ -384,6 +385,144 @@ class TestHybridPromptPattern:
 
         # This is the key insight: trace doesn't replace prompts,
         # it provides additional real-world context
+
+
+    @pytest.mark.skipif(not REASONING_TRACE_AVAILABLE, reason="ReasoningTrace not available")
+    def test_trace_enabled_end_to_end(self):
+        """
+        End-to-end test: verify trace enabled, entries exist, /clear removes them.
+
+        This test exercises the full flow:
+        1. Config flag flows through SessionManager → SessionMemory
+        2. Trace entries are created during planning/execution
+        3. /clear purges all traces
+        """
+        # Create config with reasoning_trace.enabled: true
+        config = {
+            "reasoning_trace": {
+                "enabled": True
+            },
+            "delivery": {
+                "intent_verbs": ["email", "send", "mail", "attach"]
+            }
+        }
+
+        # Initialize SessionManager with config
+        session_manager = SessionManager(storage_dir="data/test_sessions", config=config)
+
+        # Create session and verify trace is enabled
+        memory = session_manager.get_or_create_session("test_trace_session")
+        assert memory.is_reasoning_trace_enabled(), "Trace should be enabled"
+
+        # Simulate one request: add interaction, start trace, add planning/execution entries
+        user_request = "Search for Tesla documents and email them"
+        interaction_id = memory.add_interaction(user_request=user_request)
+        memory.start_reasoning_trace(interaction_id)
+
+        # Add planning entry
+        from src.memory.reasoning_trace import detect_commitments_from_user_request
+        commitments = detect_commitments_from_user_request(user_request, config)
+        planning_entry_id = memory.add_reasoning_entry(
+            stage="planning",
+            thought="Created plan: Search and email documents",
+            evidence=["Steps: 2"],
+            commitments=commitments,
+            outcome="success"
+        )
+        assert planning_entry_id is not None
+
+        # Add execution entry
+        execution_entry_id = memory.add_reasoning_entry(
+            stage="execution",
+            thought="Executing search_documents",
+            action="search_documents",
+            parameters={"query": "Tesla"},
+            outcome="pending"
+        )
+        assert execution_entry_id is not None
+
+        # Update execution entry with results
+        memory.update_reasoning_entry(
+            execution_entry_id,
+            outcome="success",
+            evidence=["Found 2 documents"],
+            attachments=[{"type": "file", "path": "/test/tesla.pdf"}]
+        )
+
+        # Verify entries exist via get_reasoning_summary()
+        summary = memory.get_reasoning_summary()
+        assert "PLANNING" in summary
+        assert "EXECUTION" in summary
+        assert "search_documents" in summary
+        assert "Created plan" in summary
+
+        # Call memory.clear() (simulating /clear)
+        memory.clear()
+
+        # Verify _reasoning_traces is empty and get_reasoning_summary() returns empty string
+        assert len(memory._reasoning_traces) == 0, "Traces should be cleared"
+        assert memory._current_interaction_id is None, "Current interaction ID should be reset"
+        assert memory.get_reasoning_summary() == "", "Summary should be empty after clear"
+
+    @pytest.mark.skipif(not REASONING_TRACE_AVAILABLE, reason="ReasoningTrace not available")
+    def test_serialization_round_trip(self):
+        """
+        Test serialization round-trip: traces persist across save/load.
+        """
+        config = {
+            "reasoning_trace": {
+                "enabled": True
+            }
+        }
+
+        session_manager = SessionManager(storage_dir="data/test_sessions", config=config)
+
+        # Create session with trace enabled, add entries
+        memory = session_manager.get_or_create_session("test_serialization")
+        assert memory.is_reasoning_trace_enabled()
+
+        interaction_id = memory.add_interaction(user_request="Test request")
+        memory.start_reasoning_trace(interaction_id)
+
+        memory.add_reasoning_entry(
+            stage="planning",
+            thought="Test planning entry",
+            evidence=["Test evidence"],
+            outcome="success"
+        )
+
+        memory.add_reasoning_entry(
+            stage="execution",
+            thought="Test execution entry",
+            action="test_tool",
+            outcome="success"
+        )
+
+        # Get original summary
+        original_summary = memory.get_reasoning_summary()
+        assert "Test planning entry" in original_summary
+        assert "Test execution entry" in original_summary
+
+        # Serialize via to_dict()
+        data = memory.to_dict()
+        assert "reasoning_traces" in data
+        assert "reasoning_trace_enabled" in data
+        assert data["reasoning_trace_enabled"] is True
+
+        # Create new session via from_dict()
+        restored_memory = SessionMemory.from_dict(data)
+
+        # Verify traces are restored
+        assert restored_memory.is_reasoning_trace_enabled()
+        assert len(restored_memory._reasoning_traces) > 0
+
+        # Set current interaction ID to match restored trace
+        restored_memory._current_interaction_id = interaction_id
+
+        # Verify get_reasoning_summary() returns same content
+        restored_summary = restored_memory.get_reasoning_summary()
+        assert "Test planning entry" in restored_summary
+        assert "Test execution entry" in restored_summary
 
 
 if __name__ == "__main__":

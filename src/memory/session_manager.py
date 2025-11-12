@@ -7,7 +7,7 @@ session management utilities for the application layer.
 
 import json
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from pathlib import Path
 from datetime import datetime
 from threading import RLock  # Reentrant lock to allow nested lock acquisition
@@ -30,12 +30,13 @@ class SessionManager:
     - Thread-safe session access
     """
 
-    def __init__(self, storage_dir: str = "data/sessions"):
+    def __init__(self, storage_dir: str = "data/sessions", config: Optional[Dict[str, Any]] = None):
         """
         Initialize session manager.
 
         Args:
             storage_dir: Directory for session persistence
+            config: Optional configuration dictionary (for reasoning_trace.enabled flag)
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -51,7 +52,12 @@ class SessionManager:
         # Default session ID for single-user mode
         self._default_session_id = "default"
 
-        logger.info(f"[SESSION MANAGER] Initialized with storage: {self.storage_dir}")
+        # Extract reasoning_trace.enabled flag from config (default: False)
+        self._enable_reasoning_trace = False
+        if config:
+            self._enable_reasoning_trace = config.get("reasoning_trace", {}).get("enabled", False)
+
+        logger.info(f"[SESSION MANAGER] Initialized with storage: {self.storage_dir}, reasoning_trace={self._enable_reasoning_trace}")
 
     def get_or_create_session(
         self,
@@ -88,7 +94,7 @@ class SessionManager:
                 return memory
 
             # Create new session
-            memory = SessionMemory(session_id=session_id)
+            memory = SessionMemory(session_id=session_id, enable_reasoning_trace=self._enable_reasoning_trace)
             self._sessions[session_id] = memory
             logger.info(f"[SESSION MANAGER] Created new session: {session_id}")
 

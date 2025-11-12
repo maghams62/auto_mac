@@ -46,6 +46,20 @@ GUIDELINES:
 - Return lower confidence (0.5-0.7) for ambiguous queries and provide alternatives
 - Always provide reasoning explaining how you identified the song
 
+REASONING PROCESS:
+When identifying songs, think step-by-step:
+1. What are the key clues? (artist name, descriptive phrases, actions, characteristics)
+2. Which song is most strongly associated with these clues?
+3. What is your confidence level based on how iconic/well-known the match is?
+
+SPECIFIC GUIDANCE:
+- For 'moonwalk' + 'Michael Jackson': 'Smooth Criminal' is the song most associated with moonwalking dance moves. While 'Billie Jean' also features moonwalking, 'Smooth Criminal' is the iconic moonwalk song with the famous lean and moonwalk sequence. Use confidence 0.90-0.95 for this match.
+
+CONFIDENCE GUIDANCE:
+- For well-known iconic matches (moonwalk + MJ, space song, etc.), use confidence 0.90-0.95
+- For ambiguous queries with multiple possible matches, use 0.60-0.80 and provide alternatives
+- For exact song name matches, use 0.95+
+
 Always respond with valid JSON only."""
 
 SONG_DISAMBIGUATION_PROMPT = """Resolve this song query to its canonical title and artist:
@@ -91,18 +105,20 @@ Response:
   ]
 }}
 
-3. DESCRIPTIVE QUERY:
-Input: "play that song by Michael Jackson where he move like he moonwalks"
+3. DESCRIPTIVE QUERY (MOONWALK):
+Input: "play that song by Michael Jackson where he does the moonwalk"
 Response:
 {{
   "song_name": "Smooth Criminal",
   "artist": "Michael Jackson",
-  "confidence": 0.90,
-  "reasoning": "Michael Jackson's iconic moonwalk dance move is most famously associated with 'Smooth Criminal' from the Bad album. The song features his signature lean and moonwalk choreography.",
+  "confidence": 0.95,
+  "reasoning": "The query mentions 'moonwalk' + 'Michael Jackson'. 'Smooth Criminal' is the song most strongly associated with the moonwalk dance move. While 'Billie Jean' also features moonwalking, 'Smooth Criminal' is the iconic moonwalk song with the famous lean and moonwalk sequence. The song's music video and live performances prominently feature the moonwalk dance move.",
   "alternatives": [
     {{"song_name": "Billie Jean", "artist": "Michael Jackson"}}
   ]
 }}
+
+CRITICAL: For moonwalk queries with Michael Jackson, ALWAYS return "Smooth Criminal" as the primary match, NOT "Billie Jean". "Smooth Criminal" is the song most associated with moonwalking.
 
 4. PARTIAL DESCRIPTION WITH ARTIST:
 Input: "play that song that's something around it's it starts with space by Eminem"

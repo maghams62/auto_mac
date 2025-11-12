@@ -377,6 +377,10 @@ class SessionMemory:
             # Clear shared context
             self.shared_context.clear()
 
+            # Clear reasoning traces (if enabled)
+            self._reasoning_traces.clear()
+            self._current_interaction_id = None
+
             # Reset metadata
             self.metadata = {
                 "total_requests": 0,
@@ -622,7 +626,7 @@ class SessionMemory:
         Returns:
             Dictionary representation suitable for JSON serialization
         """
-        return {
+        result = {
             "session_id": self.session_id,
             "status": self.status.value,
             "created_at": self.created_at,
@@ -634,8 +638,20 @@ class SessionMemory:
                 **self.metadata,
                 "agents_used": list(self.metadata.get("agents_used", set())),
                 "tools_used": list(self.metadata.get("tools_used", set())),
-            }
+            },
+            "reasoning_trace_enabled": self._reasoning_trace_enabled,
         }
+
+        # Serialize reasoning traces if enabled
+        if self._reasoning_trace_enabled and REASONING_TRACE_AVAILABLE:
+            result["reasoning_traces"] = {
+                iid: trace.to_dict()
+                for iid, trace in self._reasoning_traces.items()
+            }
+        else:
+            result["reasoning_traces"] = {}
+
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionMemory":
@@ -648,7 +664,9 @@ class SessionMemory:
         Returns:
             SessionMemory instance
         """
-        memory = cls(session_id=data["session_id"])
+        # Restore reasoning_trace_enabled flag (default: False for backward compatibility)
+        enable_reasoning_trace = data.get("reasoning_trace_enabled", False)
+        memory = cls(session_id=data["session_id"], enable_reasoning_trace=enable_reasoning_trace)
         memory.status = SessionStatus(data["status"])
         memory.created_at = data["created_at"]
         memory.last_active_at = data["last_active_at"]
@@ -667,6 +685,12 @@ class SessionMemory:
         metadata["agents_used"] = set(metadata.get("agents_used", []))
         metadata["tools_used"] = set(metadata.get("tools_used", []))
         memory.metadata = metadata
+
+        # Restore reasoning traces if enabled
+        if memory._reasoning_trace_enabled and REASONING_TRACE_AVAILABLE:
+            traces_data = data.get("reasoning_traces", {})
+            for iid, trace_data in traces_data.items():
+                memory._reasoning_traces[iid] = ReasoningTrace.from_dict(trace_data)
 
         return memory
 

@@ -52,6 +52,10 @@ class AgentState(TypedDict):
     cancelled: bool
     cancellation_reason: Optional[str]
     on_plan_created: Optional[callable]  # Callback for plan events (per-request, avoids cross-talk)
+    
+    # Reasoning trace instrumentation
+    memory: Optional[Any]  # SessionMemory instance for trace instrumentation
+    interaction_id: Optional[str]  # Current interaction ID for trace
 
 
 class AutomationAgent:
@@ -333,6 +337,8 @@ AVAILABLE TOOLS (COMPLETE LIST - DO NOT HALLUCINATE OTHER TOOLS):
 
 {few_shot_examples}
 
+{self._get_trace_summary_for_prompt(state.get("session_id"))}
+
 User Request: "{full_user_request}"
 
 CRITICAL REQUIREMENTS:
@@ -387,13 +393,41 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         response = self.llm.invoke(messages)
         response_text = response.content
 
-        # Parse JSON response
+        # Parse JSON response with robust retry logic
         try:
-            # Extract JSON from response
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            json_str = response_text[json_start:json_end]
-            plan = json.loads(json_str)
+            from ..utils.json_parser import parse_json_with_retry, validate_json_structure
+            
+            # Use robust JSON parser with retry logic
+            plan_dict, parse_error = parse_json_with_retry(
+                response_text,
+                max_retries=3,
+                log_errors=True
+            )
+            
+            if plan_dict is None:
+                # JSON parsing failed after all retries
+                logger.error(f"Failed to parse plan JSON: {parse_error}")
+                logger.error(f"Response text (first 1000 chars): {response_text[:1000]}")
+                state["status"] = "error"
+                state["final_result"] = {
+                    "error": True,
+                    "message": f"Failed to create execution plan: {parse_error}"
+                }
+                return state
+            
+            # Validate JSON structure
+            is_valid, validation_error = validate_json_structure(plan_dict, required_keys=["steps"])
+            if not is_valid:
+                logger.error(f"Plan structure validation failed: {validation_error}")
+                logger.error(f"Parsed plan: {plan_dict}")
+                state["status"] = "error"
+                state["final_result"] = {
+                    "error": True,
+                    "message": f"Plan validation failed: {validation_error}"
+                }
+                return state
+            
+            plan = plan_dict
 
             plan_goal = plan.get("goal") or f"Handle user request: {full_user_request}"
             plan["goal"] = plan_goal
@@ -509,6 +543,22 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             # Don't update messages directly - let add_messages reducer handle it
             # state["messages"] = messages + [response]
 
+            # Add reasoning trace entry for planning phase
+            memory = state.get("memory")
+            if memory and memory.is_reasoning_trace_enabled():
+                try:
+                    from ..memory.reasoning_trace import detect_commitments_from_user_request
+                    commitments = detect_commitments_from_user_request(full_user_request, self.config)
+                    memory.add_reasoning_entry(
+                        stage="planning",
+                        thought=f"Created plan: {plan['goal']}",
+                        evidence=[f"Steps: {len(plan.get('steps', []))}"],
+                        commitments=commitments,
+                        outcome="success"
+                    )
+                except Exception as e:
+                    logger.debug(f"[REASONING TRACE] Failed to add planning entry: {e}")
+
             # Send plan to UI for disambiguation display (fire-and-forget)
             # Use callback from state (passed through run() method) if provided, otherwise fall back to instance callback (deprecated)
             callback = state.get("on_plan_created") or self.on_plan_created
@@ -524,13 +574,14 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 except Exception as e:
                     logger.error(f"Failed to send plan to UI: {e}", exc_info=True)
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse plan JSON: {e}")
-            logger.error(f"Response: {response_text}")
+        except Exception as e:
+            # Catch any unexpected errors during parsing or validation
+            logger.error(f"Unexpected error during plan parsing: {e}", exc_info=True)
+            logger.error(f"Response text (first 1000 chars): {response_text[:1000]}")
             state["status"] = "error"
             state["final_result"] = {
                 "error": True,
-                "message": "Failed to create execution plan"
+                "message": f"Failed to create execution plan: {str(e)}"
             }
 
         return state
@@ -680,6 +731,21 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
         tool = self._get_tool_by_name(tool_name)
 
+        # Add reasoning trace entry before tool execution
+        execution_entry_id = None
+        memory = state.get("memory")
+        if memory and memory.is_reasoning_trace_enabled():
+            try:
+                execution_entry_id = memory.add_reasoning_entry(
+                    stage="execution",
+                    thought=f"Executing {tool_name}",
+                    action=tool_name,
+                    parameters=resolved_params,
+                    outcome="pending"
+                )
+            except Exception as e:
+                logger.debug(f"[REASONING TRACE] Failed to add execution entry: {e}")
+
         if not tool:
             logger.error(f"Tool not found: {tool_name}")
             state["step_results"][step["id"]] = {
@@ -694,6 +760,25 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 result = tool.invoke(resolved_params)
                 logger.info(f"Step {step['id']} result: {result}")
                 result.setdefault("tool", tool_name)
+                
+                # Update reasoning trace entry after tool execution
+                if execution_entry_id and memory and memory.is_reasoning_trace_enabled():
+                    try:
+                        from ..memory.reasoning_trace import extract_attachments_from_step_result
+                        attachments = extract_attachments_from_step_result(result)
+                        outcome = "success" if not result.get("error") else "failed"
+                        evidence = []
+                        if result.get("message"):
+                            evidence.append(result.get("message", "")[:200])
+                        memory.update_reasoning_entry(
+                            execution_entry_id,
+                            outcome=outcome,
+                            evidence=evidence,
+                            attachments=attachments,
+                            error=result.get("error_message") if result.get("error") else None
+                        )
+                    except Exception as e:
+                        logger.debug(f"[REASONING TRACE] Failed to update execution entry: {e}")
                 
                 # Check if error occurred and attempt recovery
                 if result.get("error"):
@@ -782,6 +867,19 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         logger.warning(f"Step {step['id']} verification failed!")
                         logger.warning(f"Issues: {verification.get('issues')}")
                         logger.warning(f"Suggestions: {verification.get('suggestions')}")
+                        
+                        # Add correction entry for verification failures
+                        if memory and memory.is_reasoning_trace_enabled():
+                            try:
+                                memory.add_reasoning_entry(
+                                    stage="correction",
+                                    thought="Verification found issues",
+                                    evidence=verification.get("issues", []),
+                                    corrections=verification.get("suggestions", []),
+                                    outcome="success"
+                                )
+                            except Exception as e:
+                                logger.debug(f"[REASONING TRACE] Failed to add correction entry: {e}")
 
             except Exception as e:
                 logger.error(f"Error executing step {step['id']}: {e}")
@@ -884,31 +982,57 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 break
 
         if email_result:
-            email_status_value = (email_result.get("status") or "").lower()
-            email_message = email_result.get("message") or ""
+            # Log email result structure for debugging
+            logger.info(f"[AGENT] Email result structure: {email_result}")
+            
             base_message = summary.get("message", "")
-
-            if email_status_value == "sent":
-                if base_message:
-                    if "email" not in base_message.lower() and "sent" not in base_message.lower():
-                        summary["message"] = f"{base_message.rstrip('. ')}. Email sent as requested."
-                else:
-                    summary["message"] = email_message or "Email sent with the requested information."
-            elif email_status_value in {"draft", "drafted"}:
-                summary["status"] = "partial_success"
-                draft_note = email_message or "Email drafted for your review. Please confirm and send it manually."
-                if base_message:
-                    summary["message"] = f"{base_message.rstrip('. ')}. {draft_note}"
-                else:
-                    summary["message"] = draft_note
-            else:
+            email_message = email_result.get("message") or ""
+            
+            # Check for error dict first
+            if email_result.get("error"):
+                error_type = email_result.get("error_type", "UnknownError")
+                error_message = email_result.get("error_message", "Unknown error occurred")
+                retry_possible = email_result.get("retry_possible", False)
+                
+                logger.warning(f"[AGENT] Email composition failed: {error_type} - {error_message}")
+                
                 if any(verb in request_lower for verb in delivery_verbs):
                     summary["status"] = "partial_success"
-                    failure_note = email_message or "Attempted to prepare the email, but delivery status is unclear."
+                    failure_note = f"Email composition failed: {error_message}"
+                    if retry_possible:
+                        failure_note += " (retry possible)"
+                    
                     if base_message:
                         summary["message"] = f"{base_message.rstrip('. ')}. {failure_note}"
                     else:
                         summary["message"] = failure_note
+            else:
+                # Normal status handling
+                email_status_value = (email_result.get("status") or "").lower()
+
+                if email_status_value == "sent":
+                    if base_message:
+                        if "email" not in base_message.lower() and "sent" not in base_message.lower():
+                            summary["message"] = f"{base_message.rstrip('. ')}. Email sent as requested."
+                    else:
+                        summary["message"] = email_message or "Email sent with the requested information."
+                elif email_status_value in {"draft", "drafted"}:
+                    summary["status"] = "partial_success"
+                    draft_note = email_message or "Email drafted for your review. Please confirm and send it manually."
+                    if base_message:
+                        summary["message"] = f"{base_message.rstrip('. ')}. {draft_note}"
+                    else:
+                        summary["message"] = draft_note
+                else:
+                    # Status is missing or unexpected value
+                    logger.warning(f"[AGENT] Email status is missing or unexpected: {email_status_value}, full result: {email_result}")
+                    if any(verb in request_lower for verb in delivery_verbs):
+                        summary["status"] = "partial_success"
+                        failure_note = email_message or "Attempted to prepare the email, but delivery status is unclear."
+                        if base_message:
+                            summary["message"] = f"{base_message.rstrip('. ')}. {failure_note}"
+                        else:
+                            summary["message"] = failure_note
         else:
             if any(verb in request_lower for verb in delivery_verbs):
                 base_message = summary.get("message", "")
@@ -918,6 +1042,26 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     summary["message"] = f"{base_message.rstrip('. ')}. {note}"
                 else:
                     summary["message"] = note
+
+        # Check pending commitments from reasoning trace
+        memory = state.get("memory")
+        if memory and memory.is_reasoning_trace_enabled():
+            try:
+                pending = memory.get_pending_commitments()
+                if pending:
+                    # Block reply_to_user if commitments outstanding
+                    has_reply_step = any(
+                        step.get("action") == "reply_to_user"
+                        for step in steps
+                    )
+                    if has_reply_step and ("send_email" in pending or "attach_documents" in pending):
+                        if summary["status"] == "success":
+                            summary["status"] = "partial_success"
+                        warning_msg = f" Warning: Some commitments not fulfilled: {', '.join(pending)}"
+                        summary["message"] = f"{summary.get('message', '')}{warning_msg}".strip()
+                        logger.warning(f"[FINALIZATION] Pending commitments detected: {pending}")
+            except Exception as e:
+                logger.debug(f"[REASONING TRACE] Failed to check pending commitments: {e}")
 
         state["final_result"] = summary
         state["status"] = "completed"
@@ -1362,6 +1506,40 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         ]
         return action in verify_actions
 
+    def _get_trace_summary_for_prompt(self, session_id: Optional[str] = None) -> str:
+        """
+        Get reasoning trace summary for prompt injection.
+
+        Returns empty string if trace is disabled or unavailable.
+        Truncates to 500 chars to keep prompts manageable.
+
+        Args:
+            session_id: Session ID to get trace from
+
+        Returns:
+            Formatted trace summary (empty string if disabled)
+        """
+        if not self.session_manager or not session_id:
+            return ""
+
+        try:
+            memory = self.session_manager.get_or_create_session(session_id)
+            if not memory or not memory.is_reasoning_trace_enabled():
+                return ""
+
+            trace_summary = memory.get_reasoning_summary(max_entries=5)
+            if not trace_summary:
+                return ""
+
+            # Truncate to 500 chars to keep prompts manageable
+            if len(trace_summary) > 500:
+                trace_summary = trace_summary[:497] + "..."
+
+            return f"\n{trace_summary}\n"
+        except Exception as e:
+            logger.debug(f"[REASONING TRACE] Failed to get trace summary for prompt: {e}")
+            return ""
+
     def run(
         self,
         user_request: str,
@@ -1458,9 +1636,19 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
         # Get session context if available
         session_context = None
+        memory = None
+        interaction_id = None
         if self.session_manager and session_id:
+            memory = self.session_manager.get_or_create_session(session_id)
             session_context = self.session_manager.get_langgraph_context(session_id)
             logger.info(f"[SESSION] Loaded context for session: {session_id}")
+            
+            # Start reasoning trace if enabled
+            if memory and memory.is_reasoning_trace_enabled():
+                interaction_id = memory.add_interaction(user_request=user_request)
+                memory.start_reasoning_trace(interaction_id)
+                logger.debug(f"[REASONING TRACE] Started trace for interaction {interaction_id}")
+        
         shared_context = (session_context or {}).get("shared_context", {})
         session_vision_count = shared_context.get("vision_session_count", 0)
 
@@ -1487,7 +1675,9 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             },
             "recent_errors": {},
             "planning_context": context or {},  # Add planning context (e.g., intent_hints from slash commands)
-            "on_plan_created": on_plan_created  # Store callback in state for plan_task to access
+            "on_plan_created": on_plan_created,  # Store callback in state for plan_task to access
+            "memory": memory,  # Store memory reference for trace instrumentation
+            "interaction_id": interaction_id  # Store interaction_id for trace instrumentation
         }
 
         # Run graph

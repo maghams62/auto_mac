@@ -137,11 +137,32 @@ def verify_cross_functional_response(response: Dict[str, Any], expected_sources:
     has_error = any(pattern in response_lower for pattern in error_patterns)
     details["has_error"] = has_error
     
+    # Check for parameter validation errors (critical)
+    validation_error_patterns = [
+        "validation error",
+        "input should be a valid string",
+        "type=string_type",
+        "input_value={",
+        "input_value=["
+    ]
+    has_validation_error = any(pattern in response_lower for pattern in validation_error_patterns)
+    details["has_validation_error"] = has_validation_error
+    
+    # Check for dependency failures
+    has_dependency_failure = "skipped due to failed dependencies" in response_lower
+    details["has_dependency_failure"] = has_dependency_failure
+    
+    # Check for timeout errors
+    has_timeout = "timeout" in response_lower or "timed out" in response_lower
+    details["has_timeout"] = has_timeout
+    
     # Overall pass criteria
     passed = (
         details["has_substance"] and
         details["source_coverage"] >= 0.5 and  # At least 50% of expected sources mentioned
-        not has_error
+        not has_error and
+        not has_validation_error and  # Critical: no parameter validation errors
+        not has_dependency_failure  # Critical: no skipped dependencies
     )
     
     return passed, details
@@ -156,9 +177,12 @@ def test_cf1_reminders_and_calendar():
     print(f"Testing: {test_name}")
     print(f"{'='*80}")
     
-    # Setup mock calendar data
+    # Setup mock data for both calendar and reminders
     from fixtures.calendar_fixtures import setup_mock_calendar_env
+    from fixtures.reminders_fixtures import setup_mock_reminders_env
     setup_mock_calendar_env()
+    setup_mock_reminders_env()
+    print("Using mock calendar and reminders data for consistent testing")
     
     queries = [
         "summarize my reminders and calendar for the next week",
@@ -194,6 +218,7 @@ def test_cf2_email_and_calendar():
     # Setup mock calendar data
     from fixtures.calendar_fixtures import setup_mock_calendar_env
     setup_mock_calendar_env()
+    print("Using mock calendar data for consistent testing")
     
     queries = [
         "summarize my emails and calendar for today",
@@ -312,9 +337,12 @@ def test_cf5_reminders_calendar_email():
     print(f"Testing: {test_name}")
     print(f"{'='*80}")
     
-    # Setup mock calendar data
+    # Setup mock data for calendar and reminders
     from fixtures.calendar_fixtures import setup_mock_calendar_env
+    from fixtures.reminders_fixtures import setup_mock_reminders_env
     setup_mock_calendar_env()
+    setup_mock_reminders_env()
+    print("Using mock calendar and reminders data for consistent testing")
     
     queries = [
         "summarize my reminders, calendar, and emails for this week and email it to me",
@@ -389,7 +417,7 @@ def test_cf6_calendar_meeting_prep():
         )
         
         # Check for meeting prep indicators
-        response_text = response.get("response", "").lower()
+        response_text = (response.get("response") or "").lower()
         details["has_meeting_prep"] = any(
             keyword in response_text for keyword in [
                 "brief", "prep", "prepare", "agenda", "talking points", "meeting"
@@ -397,7 +425,7 @@ def test_cf6_calendar_meeting_prep():
         )
         
         details["query"] = query
-        details["response_preview"] = response.get("response", "")[:300] if response.get("response") else None
+        details["response_preview"] = (response.get("response") or "")[:300]
         
         # Adjust pass criteria
         if not details.get("has_meeting_prep"):
@@ -415,9 +443,12 @@ def test_cf7_full_day_summary():
     print(f"Testing: {test_name}")
     print(f"{'='*80}")
     
-    # Setup mock calendar data
+    # Setup mock data for calendar and reminders
     from fixtures.calendar_fixtures import setup_mock_calendar_env
+    from fixtures.reminders_fixtures import setup_mock_reminders_env
     setup_mock_calendar_env()
+    setup_mock_reminders_env()
+    print("Using mock calendar and reminders data for consistent testing")
     
     queries = [
         "give me a summary of my day - emails, calendar, and reminders",

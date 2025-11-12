@@ -1,5 +1,34 @@
 # Task Decomposition Prompt
 
+## CRITICAL JSON FORMATTING REQUIREMENTS
+
+**⚠️ MANDATORY: Return ONLY valid JSON. Do not include markdown code blocks (```json), explanations, or any text outside the JSON structure.**
+
+**Common JSON Errors to Avoid:**
+- ❌ No trailing commas after last item in arrays/objects
+- ❌ All keys must be quoted with double quotes (not single quotes)
+- ❌ No comments in JSON (// or /* */)
+- ❌ No single quotes (use double quotes for strings)
+- ❌ No markdown code blocks (```json ... ```)
+
+**Correct Format:**
+```json
+{
+  "goal": "high-level objective",
+  "steps": [
+    {
+      "id": 1,
+      "action": "tool_name",
+      "parameters": {},
+      "dependencies": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**If you include any text before or after the JSON, the system will fail. Return ONLY the JSON object/array.**
+
 ## Objective
 
 Given a user request, break it down into a sequence of executable steps using available tools.

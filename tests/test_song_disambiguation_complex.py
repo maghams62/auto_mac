@@ -147,6 +147,79 @@ def test_vague_reference():
     return failed == 0
 
 
+def test_moonwalk_query_identifies_smooth_criminal():
+    """Test 3a: Moonwalk Query - Must identify Smooth Criminal (NOT Billie Jean)"""
+    print("\n" + "=" * 80)
+    print("TEST 3a: Moonwalk Query - Smooth Criminal Identification")
+    print("=" * 80)
+    
+    config = load_config()
+    disambiguator = SongDisambiguator(config)
+    
+    test_cases = [
+        {
+            "input": "play that song by Michael Jackson where he does the moonwalk",
+            "expected_song": "Smooth Criminal",
+            "expected_artist": "Michael Jackson",
+            "min_confidence": 0.90,
+            "must_not_be": "Billie Jean"  # Billie Jean should NOT be primary result
+        },
+        {
+            "input": "that Michael Jackson song where he moonwalks",
+            "expected_song": "Smooth Criminal",
+            "expected_artist": "Michael Jackson",
+            "min_confidence": 0.90,
+            "must_not_be": "Billie Jean"
+        }
+    ]
+    
+    passed = 0
+    failed = 0
+    
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\nTest Case {i}: {test_case['input']}")
+        try:
+            result = disambiguator.disambiguate(test_case['input'])
+            
+            song_name = result.get('song_name', '').lower()
+            artist = result.get('artist', '').lower() if result.get('artist') else ''
+            confidence = result.get('confidence', 0)
+            
+            print(f"  Result: '{result.get('song_name')}' by {result.get('artist', 'Unknown')}")
+            print(f"  Confidence: {confidence:.2f}")
+            print(f"  Reasoning: {result.get('reasoning', 'N/A')[:150]}...")
+            
+            # Success criteria
+            song_match = test_case['expected_song'].lower() in song_name or song_name in test_case['expected_song'].lower()
+            artist_match = test_case['expected_artist'].lower() in artist or artist in test_case['expected_artist'].lower()
+            confidence_ok = confidence >= test_case['min_confidence']
+            
+            # CRITICAL: Verify Billie Jean is NOT the primary result
+            is_billie_jean = "billie jean" in song_name
+            not_billie_jean = not is_billie_jean
+            
+            if song_match and artist_match and confidence_ok and not_billie_jean:
+                print(f"  ✅ PASSED")
+                passed += 1
+            else:
+                print(f"  ❌ FAILED")
+                if not song_match:
+                    print(f"    - Song name mismatch: expected '{test_case['expected_song']}', got '{result.get('song_name')}'")
+                if not artist_match:
+                    print(f"    - Artist mismatch: expected '{test_case['expected_artist']}', got '{result.get('artist')}'")
+                if not confidence_ok:
+                    print(f"    - Confidence too low: {confidence:.2f} < {test_case['min_confidence']}")
+                if not not_billie_jean:
+                    print(f"    - CRITICAL: Primary result is '{result.get('song_name')}' (Billie Jean), but should be 'Smooth Criminal'")
+                failed += 1
+        except Exception as e:
+            print(f"  ❌ ERROR: {e}")
+            failed += 1
+    
+    print(f"\nSummary: {passed} passed, {failed} failed")
+    return failed == 0
+
+
 def test_descriptive_query():
     """Test 3: Descriptive Queries"""
     print("\n" + "=" * 80)
@@ -348,6 +421,7 @@ def run_all_tests():
     tests = [
         ("Full Song Name", test_full_song_name),
         ("Vague Reference", test_vague_reference),
+        ("Moonwalk Query (Smooth Criminal)", test_moonwalk_query_identifies_smooth_criminal),
         ("Descriptive Query", test_descriptive_query),
         ("Partial Description", test_partial_description),
         ("Ambiguous Query", test_ambiguous_query),

@@ -12,6 +12,7 @@ import KeyboardShortcutsOverlay from "./KeyboardShortcutsOverlay";
 import RecordingIndicator from "./RecordingIndicator";
 import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
 import logger from "@/lib/logger";
+import StartupOverlay from "./StartupOverlay";
 
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
 
@@ -19,6 +20,8 @@ export default function ChatInterface() {
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
   const wsUrl = useMemo(() => getWebSocketUrl("/ws/chat"), []);
   const { messages: allMessages, isConnected, sendMessage, sendCommand } = useWebSocket(wsUrl);
+  const [bootOverlayVisible, setBootOverlayVisible] = useState(true);
+  const [minDelayComplete, setMinDelayComplete] = useState(false);
   
   // Limit messages to prevent performance issues with very long conversations
   // Must be defined immediately after allMessages to avoid temporal dead zone issues
@@ -241,8 +244,34 @@ export default function ChatInterface() {
     }
   }, [inputValue]);
 
+  // Minimum display delay so the animation is visible but not lingering
+  useEffect(() => {
+    const delayTimer = window.setTimeout(() => setMinDelayComplete(true), 800);
+    return () => window.clearTimeout(delayTimer);
+  }, []);
+
+  // Fallback: ensure overlay disappears even if backend connection fails
+  useEffect(() => {
+    const fallbackTimer = window.setTimeout(() => {
+      setBootOverlayVisible(false);
+    }, 5000);
+    return () => window.clearTimeout(fallbackTimer);
+  }, []);
+
+  // Hide overlay shortly after connection is ready (respecting minimum delay)
+  // Add a brief delay to show the "Ready" state before transitioning
+  useEffect(() => {
+    if (!isConnected || !minDelayComplete || !bootOverlayVisible) {
+      return;
+    }
+    const readyTimer = window.setTimeout(() => setBootOverlayVisible(false), 600);
+    return () => window.clearTimeout(readyTimer);
+  }, [isConnected, minDelayComplete, bootOverlayVisible]);
+
   return (
-    <div className="flex-1 flex flex-col min-h-0" role="main">
+    <>
+      <StartupOverlay show={bootOverlayVisible} />
+      <div className="flex-1 flex flex-col min-h-0" role="main">
       {/* Main chat area - centered, no sidebars */}
       <div className="flex-1 flex flex-col w-full max-w-3xl mx-auto px-4 sm:px-6" role="region" aria-label="Chat conversation">
         <div className="flex-1 overflow-hidden flex flex-col min-h-0 py-4">
@@ -325,6 +354,7 @@ export default function ChatInterface() {
         isOpen={showShortcutsOverlay}
         onClose={() => setShowShortcutsOverlay(false)}
       />
-    </div>
+      </div>
+    </>
   );
 }

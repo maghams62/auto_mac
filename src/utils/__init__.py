@@ -235,6 +235,12 @@ from .writing_ui_formatter import (
     format_writing_output,
 )
 
+# Export JSON parser
+from .json_parser import (
+    parse_json_with_retry,
+    validate_json_structure,
+)
+
 __all__ = [
     'load_config',
     'save_config',
@@ -252,5 +258,7 @@ __all__ = [
     'format_quick_summary_for_ui',
     'format_email_for_ui',
     'format_writing_output',
+    'parse_json_with_retry',
+    'validate_json_structure',
 ]
 
