@@ -49,6 +49,10 @@ body {
 body {
   color: var(--text-primary);
   background-color: var(--bg);
+  background-image:
+    linear-gradient(135deg, rgba(99, 102, 241, 0.03) 0%, rgba(61, 217, 255, 0.02) 35%, rgba(16, 185, 129, 0.01) 70%, rgba(124, 58, 237, 0.02) 100%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.02'/%3E%3C/svg%3E");
+  background-attachment: fixed;
   font-size: 15px;
   line-height: 1.4;
   position: relative;
@@ -121,3 +125,47 @@ code {
     opacity: 0;
   }
 }
+
+/* 8px Rhythm Spacing Utilities */
+.rhythm-1 { margin: 4px; }
+.rhythm-2 { margin: 8px; }
+.rhythm-3 { margin: 12px; }
+.rhythm-4 { margin: 16px; }
+.rhythm-5 { margin: 20px; }
+.rhythm-6 { margin: 24px; }
+.rhythm-8 { margin: 32px; }
+.rhythm-10 { margin: 40px; }
+.rhythm-12 { margin: 48px; }
+.rhythm-16 { margin: 64px; }
+
+.rhythm-m-1 { margin: 4px; }
+.rhythm-m-2 { margin: 8px; }
+.rhythm-m-3 { margin: 12px; }
+.rhythm-m-4 { margin: 16px; }
+.rhythm-m-5 { margin: 20px; }
+.rhythm-m-6 { margin: 24px; }
+.rhythm-m-8 { margin: 32px; }
+.rhythm-m-10 { margin: 40px; }
+.rhythm-m-12 { margin: 48px; }
+.rhythm-m-16 { margin: 64px; }
+
+.rhythm-p-1 { padding: 4px; }
+.rhythm-p-2 { padding: 8px; }
+.rhythm-p-3 { padding: 12px; }
+.rhythm-p-4 { padding: 16px; }
+.rhythm-p-5 { padding: 20px; }
+.rhythm-p-6 { padding: 24px; }
+.rhythm-p-8 { padding: 32px; }
+.rhythm-p-10 { padding: 40px; }
+.rhythm-p-12 { padding: 48px; }
+.rhythm-p-16 { padding: 64px; }
+
+/* Typography Rhythm (8px base grid) */
+.rhythm-text-xs { font-size: 12px; line-height: 1.333; } /* 16px line height */
+.rhythm-text-sm { font-size: 14px; line-height: 1.429; } /* 20px line height */
+.rhythm-text-base { font-size: 15px; line-height: 1.333; } /* 20px line height */
+.rhythm-text-lg { font-size: 16px; line-height: 1.25; } /* 20px line height */
+.rhythm-text-xl { font-size: 18px; line-height: 1.333; } /* 24px line height */
+.rhythm-text-2xl { font-size: 20px; line-height: 1.2; } /* 24px line height */
+.rhythm-text-3xl { font-size: 24px; line-height: 1.333; } /* 32px line height */
+.rhythm-text-4xl { font-size: 32px; line-height: 1.25; } /* 40px line height */

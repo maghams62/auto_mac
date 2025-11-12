@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_build_context_basic",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.00031804200261831284
+  },
+  "timestamp": "2025-11-12T12:49:39.848291",
+  "test_name": "session_context"
+}

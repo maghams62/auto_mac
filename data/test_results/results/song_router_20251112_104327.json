@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_should_use_fallback",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.015399833995616063
+  },
+  "timestamp": "2025-11-12T10:43:27.076427",
+  "test_name": "song_router"
+}

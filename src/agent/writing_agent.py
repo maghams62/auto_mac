@@ -20,6 +20,7 @@ import json
 import re
 
 from ..utils import get_temperature_for_model
+from ..memory.session_memory import SessionContext
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ class WritingBrief:
         must_include_data: Optional[Dict[str, Any]] = None,
         focus_areas: Optional[List[str]] = None,
         style_preferences: Optional[Dict[str, Any]] = None,
-        constraints: Optional[Dict[str, Any]] = None
+        constraints: Optional[Dict[str, Any]] = None,
+        session_context: Optional[SessionContext] = None
     ):
         """
         Initialize a writing brief.
@@ -57,7 +59,28 @@ class WritingBrief:
             focus_areas: List of topics/themes to emphasize
             style_preferences: Additional style preferences (use_bullets, avoid_jargon, etc.)
             constraints: Writing constraints (max_slides, word_limit, section_requirements)
+            session_context: Optional SessionContext to auto-populate fields from memory
         """
+        # Auto-populate from session context if provided, otherwise use explicit parameters
+        if session_context:
+            # Use derived topic as focus area if not explicitly provided
+            if not focus_areas and session_context.derived_topic:
+                focus_areas = [session_context.derived_topic]
+
+            # Extract audience/tone hints from user context
+            user_context = session_context.context_objects.get("user_context", {})
+            if not audience and user_context.get("audience_hint"):
+                audience = user_context["audience_hint"]
+            if not tone and user_context.get("tone_hint"):
+                tone = user_context["tone_hint"]
+
+            # Extract constraints from token budget metadata
+            if not constraints and session_context.token_budget_metadata:
+                constraints = {
+                    "max_tokens": session_context.token_budget_metadata.get("max_tokens"),
+                    "profile": session_context.token_budget_metadata.get("profile")
+                }
+
         self.deliverable_type = deliverable_type
         self.tone = tone
         self.audience = audience
@@ -180,7 +203,8 @@ def prepare_writing_brief(
     user_request: str,
     deliverable_type: str = "general",
     upstream_artifacts: Optional[Dict[str, Any]] = None,
-    context_hints: Optional[Dict[str, Any]] = None
+    context_hints: Optional[Dict[str, Any]] = None,
+    session_context: Optional[SessionContext] = None
 ) -> Dict[str, Any]:
     """
     Analyze user request and context to create a structured writing brief.
@@ -199,6 +223,7 @@ def prepare_writing_brief(
         deliverable_type: Type of deliverable (report, deck, email, summary, narrative)
         upstream_artifacts: Dictionary of results from prior steps (e.g., search results, extracted data)
         context_hints: Additional context (e.g., {"timeframe": "Q4 2024", "project": "Marketing"})
+        session_context: Optional SessionContext for auto-populating brief from memory
 
     Returns:
         Dictionary with writing_brief (as dict), analysis, and confidence_score
@@ -208,7 +233,7 @@ def prepare_writing_brief(
             user_request="Create a report on NVDA stock performance with Q4 earnings",
             deliverable_type="report",
             upstream_artifacts={"$step1.stock_data": {...}, "$step2.news": [...]},
-            context_hints={"timeframe": "Q4 2024"}
+            session_context="$step0.session_context"
         )
     """
     logger.info(f"[WRITING AGENT] Tool: prepare_writing_brief(type='{deliverable_type}')")
@@ -318,6 +343,25 @@ Be thorough in extracting must-include data - this is critical for quality outpu
         brief_data = result.get("writing_brief", {})
         brief = WritingBrief.from_dict(brief_data)
 
+        # Enhance brief with session context if provided
+        if session_context:
+            enhanced_brief = WritingBrief(
+                deliverable_type=brief.deliverable_type,
+                tone=brief.tone,
+                audience=brief.audience,
+                length_guideline=brief.length_guideline,
+                must_include_facts=brief.must_include_facts,
+                must_include_data=brief.must_include_data,
+                focus_areas=brief.focus_areas,
+                style_preferences=brief.style_preferences,
+                constraints=brief.constraints,
+                session_context=session_context
+            )
+            brief = enhanced_brief
+            result["writing_brief"] = brief.to_dict()
+            result["session_context_used"] = True
+            logger.info(f"[WRITING AGENT] Enhanced brief with session context: topic='{session_context.headline()}'")
+
         result["message"] = f"Created {brief.tone} {deliverable_type} brief for {brief.audience} audience"
         logger.info(f"[WRITING AGENT] ✅ Brief created: {brief.tone} tone, {len(brief.must_include_facts)} facts, {len(brief.must_include_data)} data points")
 
@@ -337,9 +381,10 @@ Be thorough in extracting must-include data - this is critical for quality outpu
 @tool
 def synthesize_content(
     source_contents: List[str],
-    topic: str,
+    topic: Optional[str] = None,
     synthesis_style: str = "comprehensive",
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None
+    writing_brief: Optional[Union[Dict[str, Any], str]] = None,
+    session_context: Optional[SessionContext] = None
 ) -> Dict[str, Any]:
     """
     Synthesize information from multiple sources into cohesive content.
@@ -356,7 +401,7 @@ def synthesize_content(
 
     Args:
         source_contents: List of text contents to synthesize (from documents, web pages, etc.)
-        topic: The main topic or focus for synthesis
+        topic: The main topic or focus for synthesis (auto-derived from session_context if not provided)
         synthesis_style: How to synthesize the content:
             - "comprehensive": Include all important details (for reports)
             - "concise": Focus on key points only (for summaries)
@@ -364,17 +409,17 @@ def synthesize_content(
             - "chronological": Organize by timeline/sequence
         writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
             Use prepare_writing_brief first to create this
+        session_context: Optional SessionContext for auto-populating topic and context
 
     Returns:
         Dictionary with synthesized_content, key_points, sources_used, and word_count
 
     Example:
-        # With writing brief (recommended)
+        # With session context (recommended for context-aware synthesis)
         synthesize_content(
             source_contents=["$step1.extracted_text", "$step2.content"],
-            topic="AI Safety Research",
-            synthesis_style="comprehensive",
-            writing_brief="$step0.writing_brief"
+            session_context="$step0.session_context",
+            synthesis_style="comprehensive"
         )
 
         # Without brief (legacy mode)
@@ -384,6 +429,11 @@ def synthesize_content(
             synthesis_style="comprehensive"
         )
     """
+    # Derive topic from session context if not provided
+    if not topic and session_context:
+        topic = session_context.headline()
+        logger.info(f"[WRITING AGENT] Derived topic from context: '{topic}'")
+
     logger.info(f"[WRITING AGENT] Tool: synthesize_content(topic='{topic}', style='{synthesis_style}', brief={'Yes' if writing_brief else 'No'})")
 
     try:

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2025-11-12T09:22:23.919770",
+  "last_updated": "2025-11-12T13:42:44.800198",
   "tests": {
     "fix": {
       "last_run": "2025-11-12T09:11:18.140768",
@@ -26,6 +26,78 @@
       "pass_count": 1,
       "fail_count": 0,
       "result_file": "reasoning_trace_20251112_092223.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "song_router": {
+      "last_run": "2025-11-12T10:43:56.592807",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "song_router_20251112_104356.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "spotify_functional": {
+      "last_run": "2025-11-12T11:30:38.107308",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "spotify_functional_20251112_113038.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "spotify_semantic": {
+      "last_run": "2025-11-12T11:40:29.895656",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "spotify_semantic_20251112_114029.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "execution_router": {
+      "last_run": "2025-11-12T11:50:12.635070",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "execution_router_20251112_115012.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "sub_agent_functionality": {
+      "last_run": "2025-11-12T11:50:12.631666",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "sub_agent_functionality_20251112_115012.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "spotify_api_integration": {
+      "last_run": "2025-11-12T12:09:20.639026",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "spotify_api_integration_20251112_120920.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "session_context": {
+      "last_run": "2025-11-12T12:51:12.484802",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "session_context_20251112_125112.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "path_handling": {
+      "last_run": "2025-11-12T13:42:44.799712",
+      "status": "failed",
+      "pass_count": 0,
+      "fail_count": 1,
+      "result_file": "path_handling_20251112_134244.json",
       "execution_time": null,
       "error_message": null
     }

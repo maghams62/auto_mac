@@ -180,7 +180,6 @@ class WorkflowOrchestrator:
                     file_path=file_path,
                     page_numbers=page_numbers,
                     search_text=search_text,
-                    output_dir="data/screenshots"
                 )
 
                 if screenshot_files:

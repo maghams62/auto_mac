@@ -1,61 +1,103 @@
 # Task Decomposition Prompt
 
-## CRITICAL JSON FORMATTING REQUIREMENTS
+## Return Contract (JSON only)
+**⚠️ Output must be a single valid JSON object.** No markdown fences, comments, or explanatory text are allowed before or after the JSON.
 
-**⚠️ MANDATORY: Return ONLY valid JSON. Do not include markdown code blocks (```json), explanations, or any text outside the JSON structure.**
+### Required Schema
+- `goal` – High-level objective in plain language.
+- `steps` – Ordered list of execution steps. Each step **must** include:
+  - `id` (int) – 1-based identifier.
+  - `action` (string) – Tool name exactly as defined in the tool registry.
+  - `parameters` (object) – Fully populated parameter map with resolved values (use `$stepN.field` only for true dependencies).
+  - `dependencies` (array[int]) – Upstream step ids required before this step can execute.
+  - `reasoning` (string) – Thought describing why this tool is next.
+  - `expected_output` (string) – What success looks like for this step.
+  - `post_check` (string) – Validation to perform after observing tool output (e.g., "confirm attachment path exists").
+  - `deliveries` (array[string]) – Commitments satisfied by this step (e.g., `["send_email"]` or empty list).
+- `complexity` – `"simple" | "medium" | "complex"` to guide executor heuristics.
+- Optional `impossible` payload: if capability is missing, return `{ "goal": "Unable to complete request", "steps": [], "complexity": "impossible", "reason": "..." }`.
 
-**Common JSON Errors to Avoid:**
-- ❌ No trailing commas after last item in arrays/objects
-- ❌ All keys must be quoted with double quotes (not single quotes)
-- ❌ No comments in JSON (// or /* */)
-- ❌ No single quotes (use double quotes for strings)
-- ❌ No markdown code blocks (```json ... ```)
-
-**Correct Format:**
+### Example (multi-step)
 ```json
 {
-  "goal": "high-level objective",
+  "goal": "Email Tesla PDF summary to the user",
   "steps": [
     {
       "id": 1,
-      "action": "tool_name",
-      "parameters": {},
-      "dependencies": []
+      "action": "search_documents",
+      "parameters": {"query": "Tesla quarterly update PDF"},
+      "dependencies": [],
+      "reasoning": "Locate the source document before extracting content",
+      "expected_output": "Absolute path to the Tesla PDF",
+      "post_check": "Verify doc_path is not null",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.doc_path", "section": "summary"},
+      "dependencies": [1],
+      "reasoning": "Capture the summary text we will email",
+      "expected_output": "Structured summary text",
+      "post_check": "Ensure extracted_text length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "compose_email",
+      "parameters": {
+        "subject": "Tesla Quarterly Highlights",
+        "body": "$step2.extracted_text",
+        "recipient": "$memory.preferred_recipient",
+        "attachments": ["$step1.doc_path"],
+        "send": true
+      },
+      "dependencies": [1, 2],
+      "reasoning": "Send the summary and attach the source document",
+      "expected_output": "Mail.app sends the email",
+      "post_check": "Confirm attachments remain accessible via get_trace_attachments",
+      "deliveries": ["send_email", "attach_documents"]
+    },
+    {
+      "id": 4,
+      "action": "reply_to_user",
+      "parameters": {"message": "Sent the Tesla summary with the PDF attached."},
+      "dependencies": [3],
+      "reasoning": "Inform the user and surface the delivery result",
+      "expected_output": "User-facing confirmation message",
+      "post_check": "Reference attachments or flag issues",
+      "deliveries": []
     }
   ],
-  "complexity": "simple"
+  "complexity": "complex"
 }
 ```
 
-**If you include any text before or after the JSON, the system will fail. Return ONLY the JSON object/array.**
+## Planner Playbook (ReAct + Reflexion)
+1. **Clarify Goal** – Restate the user intent, outputs, and delivery expectations. Pull relevant memory (`memory.get_reasoning_summary()`, `memory.shared_context`) for prior artifacts or preferences.
+2. **Capability Scan** – Map each subtask to a tool. If any capability is missing, return the `impossible` payload immediately.
+3. **Outline Plan Skeleton** – Draft at least two steps (work + final `reply_to_user`). Align dependencies so each action has required inputs ready.
+4. **Parameter Resolution** – Populate every required parameter. Use concrete values, `$stepN.field` references, or annotated placeholders like `$memory.preferred_recipient` only when supported. Escape apostrophes by doubling (`O""Brien`).
+5. **Delivery Guard** – If the goal includes verbs like email/send/attach/deliver/remind/notify, add explicit steps to create artifacts, verify them (`post_check` referencing `get_trace_attachments` or equivalent), perform the delivery tool, and end with `reply_to_user` summarizing status.
+6. **Risk Review** – Identify fragile steps (AppleScript automation, network access). Note recovery ideas in `reasoning` or `post_check` (e.g., "If reminder creation fails, ask user for exact list name").
+7. **Complexity Tagging** – Choose `simple` only for single deterministic actions. Use `medium` for 2–3 actions, `complex` for larger workflows or deliveries.
 
-## Objective
+## Branching & Recovery Guidance
+- When a dependency fails, instruct the executor via `post_check` on how to respond (retry with adjusted params, consult Critic, or request user clarification).
+- Reference Critic feedback captured in the reasoning trace when suggesting retries or alternative tools.
+- Prefer alternate tools over blind retries (e.g., switch from `search_documents` to `list_related_documents` when searching fails).
 
-Given a user request, break it down into a sequence of executable steps using available tools.
+## Reasoning Trace & Memory Hooks
+- Include `deliveries` to mirror commitments tracked in the reasoning trace.
+- Add reminders in `post_check` to update `add_reasoning_entry` / `update_reasoning_entry` with attachments, IDs, or failure reasons.
+- Mention memory usage when relevant (e.g., "Use $memory.preferred_recipient" or "Check prior slide deck in trace before recreating").
 
-**CRITICAL: Your PRIMARY responsibility is to assess capability FIRST, then plan ONLY if capable.**
-
-## Planning Philosophy
-
-**Think like a responsible agent:**
-1. **Assess before you act** - Can I actually do this with available tools?
-2. **Fail fast** - If I can't complete it, say so immediately (don't waste time planning impossible tasks)
-3. **Be honest** - Better to reject upfront than fail during execution
-4. **Validate thoroughly** - Check tool names, parameters, and data types before finalizing plan
-
-## Reasoning Checklist (follow before building the JSON plan)
-1. **Interpret intent** – Is the user asking to summarize, organize, email, create a report, or something else? Use disambiguation examples when wording is ambiguous.
-2. **List required tools** – Map each sub-task to the precise tool (see agent-specific examples). Include writing/report/presentation agents when content must be synthesized.
-3. **Set parameters explicitly** – Reference required/optional fields (subject, attachments, send flag, doc_path, image_paths, etc.) and thread outputs via `$stepN.field`.
-4. **Order & dependencies** – Arrange steps so each tool has its inputs ready; add `dependencies` to enforce sequencing.
-5. **Delivery verbs** – If the user says “email/send/attach,” add `compose_email` with the correct body/attachments and follow it with `reply_to_user`.
-6. **Surface completion** – Always end with `reply_to_user` summarizing the outcome (and include artifacts where relevant).
-7. **Refuse safely** – If the request violates sandbox or missing capability, return the structured impossible payload (see safety examples).
-
-**The user prefers:**
-- ✅ Immediate rejection with clear explanation over failed execution
-- ✅ Knowing limitations upfront over discovering them later
-- ✅ Accurate capability assessment over optimistic planning
+## Parameter & Quoting Rules
+- Strings must use double quotes; escape interior quotes by doubling them.
+- Use ISO-8601 timestamps (`2024-05-21T09:00:00-07:00`) for date/time parameters.
+- Ensure file paths are absolute and derived from prior steps or memory.
+- Lists vs. scalars must match the tool schema; do not pass empty strings or `null` for required fields.
+- For AppleScript-backed tools, specify every parameter explicitly (even optional ones when meaningful) and include a `post_check` verifying execution (e.g., "Confirm reminder_id returned").
 
 ## Available Tools
 

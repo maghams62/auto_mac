@@ -13,6 +13,9 @@ from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from threading import Lock
+from collections import OrderedDict
+
+from .context_bus import ContextBus, ContextPurpose
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +27,14 @@ try:
 except ImportError:
     REASONING_TRACE_AVAILABLE = False
     logger.debug("[SESSION MEMORY] ReasoningTrace module not available")
+
+# Optional retry logger support
+try:
+    from .retry_logger import RetryLogger, RetryReason, RecoveryPriority
+    RETRY_LOGGER_AVAILABLE = True
+except ImportError:
+    RETRY_LOGGER_AVAILABLE = False
+    logger.debug("[SESSION MEMORY] RetryLogger module not available")
 
 
 class SessionStatus(Enum):
@@ -61,6 +72,111 @@ class UserContext:
         return asdict(self)
 
 
+@dataclass
+class SessionContext:
+    """
+    Structured context bundle for agent consumption.
+
+    Follows MemGPT-style hierarchical memory with fast/slow stores,
+    ontology-backed context objects, and reasoning-token awareness.
+    """
+    original_query: str
+    session_id: str
+    context_objects: Dict[str, Any] = field(default_factory=dict)
+    salience_ranked_snippets: List[Dict[str, Any]] = field(default_factory=list)
+    retrieval_handles: Dict[str, Any] = field(default_factory=dict)
+    token_budget_metadata: Dict[str, Any] = field(default_factory=dict)
+    derived_topic: Optional[str] = None
+    purpose: str = "general"
+
+    def headline(self) -> str:
+        """
+        Extract or generate a headline from the original query.
+
+        Uses simple heuristics to derive titles from queries.
+        """
+        if self.derived_topic:
+            return self.derived_topic
+
+        # Extract topic from original query using basic heuristics
+        query = self.original_query.strip()
+        if query.startswith("Why"):
+            # Extract key subject from Why questions
+            content = query[3:].strip()  # Remove "Why"
+            # Simple extraction: take first 3-4 meaningful words after removing auxiliaries
+            content = content.replace("did ", "").replace("does ", "").replace("do ", "")
+            content = content.replace("?", "").strip()
+            words = [w for w in content.split() if len(w) > 2][:4]  # Take first 4 meaningful words
+            if words:
+                return "Why " + " ".join(words).title()
+        elif query.startswith("How"):
+            content = query[3:].strip().replace("?", "").strip()
+            words = content.split()[:3]
+            return f"How-to: {' '.join(words)}"
+        elif query.startswith("What"):
+            content = query[4:].strip().replace("?", "").strip()
+            words = content.split()[:3]
+            return f"Understanding: {' '.join(words)}"
+        elif query.startswith("Analyze"):
+            content = query[7:].strip().replace("?", "").strip()
+            words = content.split()[:3]
+            return f"Analysis: {' '.join(words)}"
+
+        # Fallback: use first meaningful chunk
+        words = query.split()
+        if len(words) > 10:
+            return " ".join(words[:8]) + "..."
+        return query[:50] + ("..." if len(query) > 50 else "")
+
+    def get_context_summary(self, max_tokens: Optional[int] = None) -> str:
+        """
+        Generate a formatted context summary for LLM consumption.
+
+        Args:
+            max_tokens: Optional token limit for truncation
+        """
+        lines = [
+            f"Original Query: {self.original_query}",
+            f"Session: {self.session_id}",
+            f"Purpose: {self.purpose}"
+        ]
+
+        if self.derived_topic:
+            lines.append(f"Topic: {self.derived_topic}")
+
+        if self.context_objects:
+            lines.append("\nContext Objects:")
+            for key, value in self.context_objects.items():
+                value_str = str(value)
+                if len(value_str) > 100:
+                    value_str = value_str[:97] + "..."
+                lines.append(f"  {key}: {value_str}")
+
+        if self.salience_ranked_snippets:
+            lines.append("\nRelevant History:")
+            for i, snippet in enumerate(self.salience_ranked_snippets[:3], 1):
+                content = snippet.get("content", "")
+                if len(content) > 150:
+                    content = content[:147] + "..."
+                lines.append(f"  {i}. {content}")
+
+        if self.token_budget_metadata:
+            lines.append(f"\nToken Budget: {self.token_budget_metadata}")
+
+        summary = "\n".join(lines)
+
+        # Basic token estimation (rough approximation)
+        if max_tokens and len(summary.split()) > max_tokens * 0.75:
+            words = summary.split()
+            summary = " ".join(words[:int(max_tokens * 0.75)]) + "..."
+
+        return summary
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+
 class SessionMemory:
     """
     Session-scoped contextual memory for multi-agent architecture.
@@ -87,7 +203,8 @@ class SessionMemory:
         self,
         session_id: Optional[str] = None,
         user_context: Optional[UserContext] = None,
-        enable_reasoning_trace: bool = False
+        enable_reasoning_trace: bool = False,
+        enable_retry_logging: bool = False
     ):
         """
         Initialize session memory.
@@ -96,6 +213,7 @@ class SessionMemory:
             session_id: Unique session identifier (generated if not provided)
             user_context: User preferences and patterns (new if not provided)
             enable_reasoning_trace: Enable reasoning trace feature (default: False)
+            enable_retry_logging: Enable retry logging feature (default: False)
         """
         self.session_id = session_id or str(uuid.uuid4())
         self.status = SessionStatus.ACTIVE
@@ -125,6 +243,16 @@ class SessionMemory:
         self._reasoning_traces: Dict[str, Any] = {}  # interaction_id -> ReasoningTrace
         self._current_interaction_id: Optional[str] = None
 
+        # Retry logging support (opt-in, feature flag controlled)
+        self._retry_logging_enabled = enable_retry_logging and RETRY_LOGGER_AVAILABLE
+        self._retry_logger = None
+        if self._retry_logging_enabled:
+            from .retry_logger import RetryLogger
+            self._retry_logger = RetryLogger()
+            logger.info("[SESSION MEMORY] Retry logging enabled")
+        else:
+            logger.debug("[SESSION MEMORY] Retry logging disabled or unavailable")
+
         if self._reasoning_trace_enabled:
             logger.info(f"[SESSION MEMORY] Reasoning trace enabled for session {self.session_id}")
 
@@ -132,6 +260,9 @@ class SessionMemory:
         # Note: SessionManager also uses locks, but this provides additional safety
         # when SessionMemory is accessed directly from multiple threads/coroutines
         self._lock = Lock()
+
+        # Context bus for standardized context exchange
+        self._context_bus = ContextBus()
 
         logger.info(f"[SESSION MEMORY] Created session: {self.session_id}")
 
@@ -357,6 +488,143 @@ class SessionMemory:
                 "total_requests": self.metadata["total_requests"],
             }
         }
+
+    def build_context(
+        self,
+        profile: str = "compact",
+        purpose: str = "general",
+        max_tokens: Optional[int] = None
+    ) -> SessionContext:
+        """
+        Build a structured SessionContext bundle for agent consumption.
+
+        Follows MemGPT-style hierarchical memory with task-specific tailoring
+        and reasoning-token awareness for scalable LLM usage.
+
+        Args:
+            profile: Context size profile ("compact", "reasoning", "full")
+            purpose: Intended use case ("planner", "writer", "researcher", etc.)
+            max_tokens: Optional token budget for truncation
+
+        Returns:
+            SessionContext instance with structured data
+        """
+        with self._lock:
+            # Extract original query from most recent interaction
+            original_query = ""
+            if self.interactions:
+                original_query = self.interactions[-1].user_request
+
+            # Build context objects from shared context
+            context_objects = dict(self.shared_context)
+
+            # Add user context preferences as ontology records
+            context_objects.update({
+                "user_preferences": self.user_context.preferences,
+                "frequently_used_tools": self.user_context.frequently_used_tools,
+                "common_patterns": self.user_context.common_patterns,
+            })
+
+            # Build salience-ranked snippets from recent interactions
+            salience_ranked_snippets = []
+            recent_interactions = self.get_recent_interactions(5)
+            for i, interaction in enumerate(reversed(recent_interactions)):
+                salience_score = max(0.1, 1.0 - (i * 0.15))  # Decay salience
+                snippet = {
+                    "content": interaction.user_request,
+                    "timestamp": interaction.timestamp,
+                    "salience": salience_score,
+                    "type": "user_query"
+                }
+                salience_ranked_snippets.append(snippet)
+
+                if interaction.agent_response:
+                    response_snippet = {
+                        "content": interaction.agent_response.get("message", ""),
+                        "timestamp": interaction.timestamp,
+                        "salience": salience_score * 0.8,  # Slightly less salient
+                        "type": "agent_response"
+                    }
+                    salience_ranked_snippets.append(response_snippet)
+
+            # Sort by salience (highest first)
+            salience_ranked_snippets.sort(key=lambda x: x["salience"], reverse=True)
+
+            # Setup retrieval handles (MemGPT-style fast/slow memory)
+            retrieval_handles = {
+                "fast_memory": {
+                    "type": "in_memory",
+                    "keys": list(self.shared_context.keys()),
+                    "last_updated": self.last_active_at
+                },
+                "slow_memory": {
+                    "type": "persistent",
+                    "interaction_count": len(self.interactions),
+                    "session_id": self.session_id
+                }
+            }
+
+            # Token budget metadata for reasoning models
+            if profile == "compact":
+                token_budget_metadata = {"profile": "compact", "estimated_tokens": 500, "max_context": 1000}
+            elif profile == "reasoning":
+                token_budget_metadata = {"profile": "reasoning", "estimated_tokens": 2000, "max_context": 4000}
+            elif profile == "full":
+                token_budget_metadata = {"profile": "full", "estimated_tokens": 4000, "max_context": 8000}
+            else:
+                token_budget_metadata = {"profile": profile, "estimated_tokens": 1000, "max_context": 2000}
+
+            # Adjust for provided max_tokens
+            if max_tokens:
+                token_budget_metadata["max_tokens"] = max_tokens
+                token_budget_metadata["estimated_tokens"] = min(
+                    token_budget_metadata["estimated_tokens"], max_tokens
+                )
+
+            # Derive topic if we have an original query
+            derived_topic = None
+            if original_query:
+                temp_context = SessionContext(
+                    original_query=original_query,
+                    session_id=self.session_id,
+                    purpose=purpose
+                )
+                derived_topic = temp_context.headline()
+
+            session_context = SessionContext(
+                original_query=original_query,
+                session_id=self.session_id,
+                context_objects=context_objects,
+                salience_ranked_snippets=salience_ranked_snippets,
+                retrieval_handles=retrieval_handles,
+                token_budget_metadata=token_budget_metadata,
+                derived_topic=derived_topic,
+                purpose=purpose
+            )
+
+            # Publish through context bus for telemetry and validation
+            context_payload = self._context_bus.publish_context(
+                session_context=session_context,
+                from_component="session_memory",
+                to_component="orchestrator",
+                purpose=ContextPurpose(purpose) if purpose in [p.value for p in ContextPurpose] else ContextPurpose.GENERAL
+            )
+
+            logger.debug(f"[SESSION MEMORY] Published context via ContextBus: {context_payload['metadata']['exchange_id']}")
+            return session_context
+
+    def get_context_bus_telemetry(self) -> Dict[str, Any]:
+        """
+        Get telemetry data from the context bus.
+
+        Returns:
+            Dictionary with context exchange statistics
+        """
+        return self._context_bus.get_telemetry_summary()
+
+    def clear_context_bus_telemetry(self):
+        """Clear accumulated context bus telemetry."""
+        self._context_bus.clear_telemetry()
 
     def clear(self):
         """
@@ -693,6 +961,92 @@ class SessionMemory:
                 memory._reasoning_traces[iid] = ReasoningTrace.from_dict(trace_data)
 
         return memory
+
+    # Retry Logging Methods
+    def is_retry_logging_enabled(self) -> bool:
+        """Check if retry logging is enabled."""
+        return self._retry_logging_enabled and self._retry_logger is not None
+
+    def log_retry_attempt(
+        self,
+        interaction_id: str,
+        attempt_number: int,
+        reason: 'RetryReason',
+        priority: 'RecoveryPriority',
+        failed_action: str,
+        error_message: str,
+        error_type: str,
+        user_request: str,
+        execution_context: Dict[str, Any],
+        reasoning_trace: Optional[List[Dict[str, Any]]] = None,
+        critic_feedback: Optional[List[Dict[str, Any]]] = None,
+        agent_name: str = "",
+        tool_name: str = "",
+        execution_duration_ms: int = 0,
+        retry_possible: bool = True,
+        max_retries_reached: bool = False
+    ) -> Optional[str]:
+        """
+        Log a retry attempt with full context.
+
+        Returns:
+            retry_id if logged successfully, None if retry logging disabled
+        """
+        if not self.is_retry_logging_enabled():
+            return None
+
+        return self._retry_logger.log_retry_attempt(
+            session_id=self.session_id,
+            interaction_id=interaction_id,
+            attempt_number=attempt_number,
+            reason=reason,
+            priority=priority,
+            failed_action=failed_action,
+            error_message=error_message,
+            error_type=error_type,
+            user_request=user_request,
+            execution_context=execution_context,
+            reasoning_trace=reasoning_trace,
+            critic_feedback=critic_feedback,
+            agent_name=agent_name,
+            tool_name=tool_name,
+            execution_duration_ms=execution_duration_ms,
+            retry_possible=retry_possible,
+            max_retries_reached=max_retries_reached
+        )
+
+    def get_retry_context(self, interaction_id: str) -> Dict[str, Any]:
+        """
+        Get complete retry context for an interaction.
+
+        Returns:
+            Empty dict if retry logging disabled or no context available
+        """
+        if not self.is_retry_logging_enabled():
+            return {}
+
+        return self._retry_logger.get_retry_context(interaction_id)
+
+    def get_last_retry(self, interaction_id: str) -> Optional[Any]:
+        """Get the most recent retry entry for an interaction."""
+        if not self.is_retry_logging_enabled():
+            return None
+
+        return self._retry_logger.get_last_retry(interaction_id)
+
+    def clear_retry_history(self, interaction_id: str):
+        """Clear retry history for an interaction."""
+        if not self.is_retry_logging_enabled():
+            return
+
+        self._retry_logger.clear_retry_history(interaction_id)
+
+    def load_retry_history(self, interaction_id: str) -> List[Any]:
+        """Load retry history for an interaction from disk."""
+        if not self.is_retry_logging_enabled():
+            return []
+
+        return self._retry_logger.load_retry_history(interaction_id)
 
     def __repr__(self) -> str:
         return (

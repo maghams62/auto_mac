@@ -20,11 +20,14 @@ from .config.models import (
     IMessageSettings,
     MapsSettings,
     OpenAISettings,
+    ScreenshotSettings,
+    SpotifyAPISettings,
     TwitterSettings,
     VisionSettings,
     VoiceSettings,
     WhatsAppSettings,
 )
+from .utils.screenshot import DEFAULT_SCREENSHOT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +325,19 @@ class ConfigAccessor:
             audio_output_dir=voice_config.get("audio_output_dir", "data/audio"),
         )
 
+    def get_screenshot_config(self) -> ScreenshotSettings:
+        """
+        Get global screenshot configuration.
+
+        Returns:
+            ScreenshotSettings dataclass with the base directory.
+        """
+        screenshots_config = self.get("screenshots", {})
+        base_dir = screenshots_config.get("base_dir", DEFAULT_SCREENSHOT_DIR)
+        path = Path(base_dir).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        return ScreenshotSettings(base_dir=str(path))
+
     def get_vision_config(self) -> VisionSettings:
         """
         Get configuration for vision-assisted UI navigation.
@@ -385,6 +401,50 @@ class ConfigAccessor:
             embedding_model=openai_config.get("embedding_model", "text-embedding-3-small"),
             temperature=float(openai_config.get("temperature", 0.7)),
             max_tokens=int(openai_config.get("max_tokens", 2000)),
+        )
+
+    def get_spotify_api_config(self) -> SpotifyAPISettings:
+        """
+        Get Spotify API configuration.
+
+        Returns:
+            SpotifyAPISettings dataclass with client credentials and OAuth settings.
+        """
+        spotify_config = self.get("spotify_api", {})
+        client_id = spotify_config.get("client_id")
+        client_secret = spotify_config.get("client_secret")
+        redirect_uri = spotify_config.get("redirect_uri")
+
+        # Validate required fields
+        missing = []
+        if not client_id or client_id.startswith("${"):
+            missing.append("client_id")
+        if not client_secret or client_secret.startswith("${"):
+            missing.append("client_secret")
+        if not redirect_uri or redirect_uri.startswith("${"):
+            missing.append("redirect_uri")
+
+        if missing:
+            raise ConfigValidationError(
+                f"Spotify API credentials not configured. Missing: {', '.join(missing)}. "
+                "Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and SPOTIFY_REDIRECT_URI environment variables."
+            )
+
+        scopes = spotify_config.get("scopes", [
+            "user-read-playback-state",
+            "user-modify-playback-state",
+            "user-read-currently-playing",
+            "streaming"
+        ])
+
+        token_storage_path = spotify_config.get("token_storage_path", "data/spotify_tokens.json")
+
+        return SpotifyAPISettings(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            scopes=scopes,
+            token_storage_path=token_storage_path,
         )
 
     def get_search_config(self) -> Dict[str, Any]:

@@ -84,10 +84,16 @@ def _expand_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
     elif isinstance(config, list):
         return [_expand_env_vars(item) for item in config]
     elif isinstance(config, str):
-        # Replace ${VAR} or $VAR with environment variable
+        # Replace ${VAR} or ${VAR:-default} with environment variable
         if config.startswith('${') and config.endswith('}'):
-            var_name = config[2:-1]
-            return os.getenv(var_name, config)
+            var_content = config[2:-1]
+            # Handle ${VAR:-default} syntax
+            if ':-' in var_content:
+                var_name, default_value = var_content.split(':-', 1)
+                return os.getenv(var_name, default_value)
+            else:
+                var_name = var_content
+                return os.getenv(var_name, config)
         return config
     else:
         return config
@@ -224,6 +230,7 @@ def ensure_directories():
 
 # Export structured logger
 from .logger import StructuredLogger, setup_structured_logging, get_logger, RequestContext
+from .screenshot import get_screenshot_dir, DEFAULT_SCREENSHOT_DIR
 
 # Export writing UI formatter
 from .writing_ui_formatter import (
@@ -260,5 +267,7 @@ __all__ = [
     'format_writing_output',
     'parse_json_with_retry',
     'validate_json_structure',
+    'get_screenshot_dir',
+    'DEFAULT_SCREENSHOT_DIR',
 ]
 

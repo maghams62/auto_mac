@@ -9,6 +9,8 @@ import fitz  # PyMuPDF
 from PIL import Image
 import io
 
+from ..utils.screenshot import get_screenshot_dir
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +29,14 @@ class DocumentScreenshot:
         """
         self.config = config
         self.dpi = 150  # Resolution for screenshots
+        self.default_output_dir = get_screenshot_dir(config)
 
     def screenshot_pages(
         self,
         file_path: str,
         page_numbers: Optional[List[int]] = None,
         search_text: Optional[str] = None,
-        output_dir: str = "data/screenshots"
+        output_dir: Optional[str] = None
     ) -> List[str]:
         """
         Take screenshots of document pages.
@@ -48,6 +51,7 @@ class DocumentScreenshot:
             List of paths to saved screenshot images
         """
         file_path = Path(file_path)
+        target_dir = Path(output_dir).expanduser() if output_dir else self.default_output_dir
 
         if not file_path.exists():
             logger.error(f"File not found: {file_path}")
@@ -58,7 +62,7 @@ class DocumentScreenshot:
         try:
             if file_ext == '.pdf':
                 return self._screenshot_pdf(
-                    file_path, page_numbers, search_text, output_dir
+                    file_path, page_numbers, search_text, target_dir
                 )
             elif file_ext == '.docx':
                 # For DOCX, we'd need to convert to PDF first or use other methods
@@ -77,7 +81,7 @@ class DocumentScreenshot:
         file_path: Path,
         page_numbers: Optional[List[int]],
         search_text: Optional[str],
-        output_dir: str
+        output_dir: Path
     ) -> List[str]:
         """
         Screenshot PDF pages using PyMuPDF.
@@ -92,8 +96,7 @@ class DocumentScreenshot:
             List of screenshot file paths
         """
         screenshots = []
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Open PDF
         doc = fitz.open(str(file_path))
@@ -135,7 +138,7 @@ class DocumentScreenshot:
 
                 # Save screenshot
                 filename = f"{file_path.stem}_page_{page_idx + 1}.png"
-                output_file = output_path / filename
+                output_file = output_dir / filename
                 img.save(output_file, "PNG")
 
                 screenshots.append(str(output_file))

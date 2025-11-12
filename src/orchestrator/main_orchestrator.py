@@ -24,6 +24,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from ..memory import SessionManager
+from ..memory.session_memory import SessionContext
 from .planner import Planner
 from .executor import PlanExecutor, ExecutionStatus
 from .tools_catalog import generate_tool_catalog, get_tool_specs_as_dicts
@@ -101,15 +102,32 @@ class MainOrchestrator:
         logger.info(f"Processing request: {user_request}")
         logger.info("=" * 80)
 
-        # Merge session context with provided context
+        # Build SessionContext for structured memory access
+        session_context_obj = None
         if self.session_manager and session_id:
+            session_memory = self.session_manager.get_or_create_session(session_id)
+
+            # Determine profile based on model capabilities
+            model_name = self.config.get("openai", {}).get("model", "gpt-4o")
+            if "o1" in model_name.lower() or "reasoning" in model_name.lower():
+                profile = "reasoning"
+            else:
+                profile = "compact"
+
+            session_context_obj = session_memory.build_context(
+                profile=profile,
+                purpose="planner",
+                max_tokens=self.config.get("openai", {}).get("max_tokens")
+            )
+
+            # Also get legacy langgraph context for backward compatibility
             session_context = self.session_manager.get_langgraph_context(session_id)
             if context is None:
                 context = session_context
             else:
                 # Merge contexts
                 context = {**session_context, **context}
-            logger.info(f"[SESSION] Loaded context for session: {session_id}")
+            logger.info(f"[SESSION] Loaded context for session: {session_id} (profile: {profile})")
 
         # Initialize state
         attempt = 0
@@ -123,9 +141,19 @@ class MainOrchestrator:
 
             # Step 1: Create plan
             logger.info(">>> PLANNING PHASE")
+
+            # Ensure we have a SessionContext (create minimal one if needed)
+            if session_context_obj is None:
+                # Fallback for cases without session management
+                from ..memory.session_memory import SessionMemory
+                temp_memory = SessionMemory()
+                temp_memory.add_interaction(user_request)
+                session_context_obj = temp_memory.build_context(profile="compact", purpose="planner")
+
             plan_result = self.planner.create_plan(
                 goal=user_request,
                 available_tools=self.tool_catalog,  # Pass ToolSpec objects, not dicts
+                session_context=session_context_obj,
                 context=context,
                 previous_plan=previous_plan,
                 feedback=feedback

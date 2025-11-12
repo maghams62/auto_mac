@@ -11,6 +11,8 @@ import CollapsibleMessage from "./CollapsibleMessage";
 import FileList from "./FileList";
 import StatusRow from "./StatusRow";
 import TimelineStep from "./TimelineStep";
+import SummaryCanvas from "./SummaryCanvas";
+import TaskCompletionCard from "./TaskCompletionCard";
 import { useToast } from "@/lib/useToast";
 
 interface MessageBubbleProps {
@@ -85,12 +87,53 @@ function renderMessageWithLinks(text: string, isUser: boolean): React.ReactNode 
 
 const MessageBubble = memo(function MessageBubble({ message, index }: MessageBubbleProps) {
   const { addToast } = useToast();
+  const [isCanvasOpen, setIsCanvasOpen] = useState(false);
   const isUser = message.type === "user";
   const isSystem = message.type === "system";
   const isError = message.type === "error";
   const isStatus = message.type === "status";
   const isPlan = message.type === "plan";
   const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan;
+  
+  // Detect if message contains a summary (has separator pattern)
+  const summaryData = useMemo(() => {
+    if (!message.message || isUser || isPlan) return null;
+    
+    const msg = message.message;
+    // Check for double newline separator (message\n\ndetails pattern)
+    const separatorIndex = msg.indexOf("\n\n");
+    
+    if (separatorIndex > 0) {
+      const messagePart = msg.substring(0, separatorIndex).trim();
+      const summaryPart = msg.substring(separatorIndex + 2).trim();
+      
+      // Only show canvas if summary part is substantial (more than 50 chars)
+      if (summaryPart.length > 50) {
+        return {
+          message: messagePart,
+          summary: summaryPart,
+        };
+      }
+    }
+    
+    // Also check for long messages that might be summaries (over 200 chars)
+    if (msg.length > 200 && !msg.includes("\n\n")) {
+      // Check if it looks like a summary (contains common summary keywords)
+      const summaryKeywords = [
+        "summary", "summarize", "overview", "in summary", "to summarize",
+        "the story", "the narrator", "the main", "key points", "highlights"
+      ];
+      const lowerMsg = msg.toLowerCase();
+      if (summaryKeywords.some(keyword => lowerMsg.includes(keyword))) {
+        return {
+          message: "",
+          summary: msg,
+        };
+      }
+    }
+    
+    return null;
+  }, [message.message, isUser, isPlan]);
 
   // Detect delivery actions from message content
   const messageText = message.message?.toLowerCase() || "";
@@ -171,7 +214,9 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
       initial="hidden"
       animate="visible"
       variants={messageEntrance}
-      className={cn("flex w-full mb-4 group", isUser ? "justify-end" : "justify-start")}
+      className={cn("flex w-full mb-2 group", isUser ? "justify-end" : "justify-start")}
+      whileHover={{ scale: 1.01 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
     >
       <div
         className={cn(
@@ -218,18 +263,58 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
 
         {/* Message content */}
         {!isPlan && (
-          <CollapsibleMessage
-            content={message.message}
-            className={cn(
-              "leading-[1.4]",
-              isAssistant && "text-text-primary font-medium",
-              isUser && "text-text-primary",
-              isSystem && "text-text-primary",
-              isError && "text-accent-danger"
+          <div>
+            <CollapsibleMessage
+              content={message.message}
+              className={cn(
+                "leading-[1.4]",
+                isAssistant && "text-text-primary font-medium",
+                isUser && "text-text-primary",
+                isSystem && "text-text-primary",
+                isError && "text-accent-danger"
+              )}
+            >
+              {renderMessageWithLinks(message.message || "", isUser)}
+            </CollapsibleMessage>
+            
+            {/* Summary Canvas Button */}
+            {summaryData && isAssistant && (
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => setIsCanvasOpen(true)}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-3 py-1.5 rounded-lg",
+                    "text-sm font-medium transition-colors",
+                    "bg-accent-primary/10 hover:bg-accent-primary/20",
+                    "text-accent-primary border border-accent-primary/20",
+                    "hover:border-accent-primary/40"
+                  )}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  <span>View Summary</span>
+                </button>
+              </div>
             )}
-          >
-            {renderMessageWithLinks(message.message || "", isUser)}
-          </CollapsibleMessage>
+          </div>
+        )}
+
+        {/* Task Completion Card - Rich feedback for completed actions */}
+        {isAssistant && message.completion_event && (
+          <TaskCompletionCard
+            completionEvent={message.completion_event}
+          />
         )}
 
         {/* Status indicator */}
@@ -237,8 +322,8 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
           <StatusRow status={message.status} className="mt-2" />
         )}
 
-        {/* Inline delivery feedback */}
-        {isAssistant && deliveryStatus && (
+        {/* Inline delivery feedback - fallback for messages without completion_event */}
+        {isAssistant && deliveryStatus && !message.completion_event && (
           <div className={cn(
             "mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium",
             deliveryStatus.variant === "success" 
@@ -273,6 +358,40 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
           </div>
         )}
       </div>
+      
+      {/* Summary Canvas */}
+      {summaryData && (
+        <SummaryCanvas
+          isOpen={isCanvasOpen}
+          onClose={() => setIsCanvasOpen(false)}
+          title={(() => {
+            // Try to extract a meaningful title from the message
+            const msg = summaryData.message || message.message || "";
+            // Look for document/book titles or author names
+            const titlePatterns = [
+              /(?:summary|summarize|summary of)\s+(?:the\s+)?["']?([^"']+)["']?/i,
+              /(?:book|document|story|work)\s+(?:by|from)\s+([^,\.]+)/i,
+              /["']([^"']+)["']?\s+(?:by|from)\s+([^,\.]+)/i,
+            ];
+            
+            for (const pattern of titlePatterns) {
+              const match = msg.match(pattern);
+              if (match && match[1]) {
+                return `${match[1].trim()} Summary`;
+              }
+            }
+            
+            // Fallback: use first few words of message if it's short
+            if (msg.length > 0 && msg.length < 50) {
+              return msg;
+            }
+            
+            return "Document Summary";
+          })()}
+          summary={summaryData.summary}
+          message={summaryData.message}
+        />
+      )}
     </motion.div>
   );
 });

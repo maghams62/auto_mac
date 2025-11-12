@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_context_headline_derivation",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_session_context.TestSessionContext object at 0x10629c2d0>\n\n    def test_context_headline_derivation(self):\n        \"\"\"Test automatic headline derivation from queries.\"\"\"\n        # Why question\n        context = SessionContext(\n            original_query=\"Why did Arsenal draw against Chelsea?\",\n            session_id=\"test_session_123\"\n        )\n        assert context.headline() == \"Why Arsenal Draw Against Chelsea\"\n    \n        # How question\n        context = SessionContext(\n            original_query=\"How do I reset my password?\",\n            session_id=\"test_session_123\"\n        )\n>       assert context.headline() == \"How-to: reset my password\"\nE       AssertionError: assert 'How-to: do I reset' == 'How-to: reset my password'\nE         - How-to: reset my password\nE         + How-to: do I reset\n\ntests/test_session_context.py:54: AssertionError",
+    "duration": 0.000289541989332065
+  },
+  "timestamp": "2025-11-12T12:49:27.847986",
+  "test_name": "session_context"
+}

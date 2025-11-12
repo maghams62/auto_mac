@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 import re
 
+from ..utils.screenshot import get_screenshot_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -335,6 +337,8 @@ class SlashCommandParser:
             '/spotify play Viva la Vida',
             '/spotify play Viva la something',
             '/spotify play that song called Viva la something',
+            '/spotify play album Abbey Road',
+            '/spotify play artist The Beatles',
             '/spotify status',
             '/music pause',
         ],
@@ -1750,8 +1754,9 @@ class SlashCommandHandler:
 
         # Screenshot
         if any(kw in task_lower for kw in ["screenshot", "capture", "snap"]):
+            screenshot_dir = get_screenshot_dir(self.config)
             return "take_screenshot", {
-                "save_path": "data/screenshots"
+                "save_path": str(screenshot_dir)
             }, None
 
         # List/show all files matching query
@@ -2368,22 +2373,26 @@ class SlashCommandHandler:
     def _route_spotify_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
         """
         Route /spotify or /music commands to Spotify tools.
-        
+
         Routing Logic (Priority Order):
         1. Pause/Stop → pause_music (exact match: "pause", "stop")
         2. Status → get_spotify_status (contains: "status", "what", "current", "playing")
-        3. Song Play → play_song (contains "play"/"start"/"resume" + song name)
-        4. Simple Play → play_music (just "play"/"start"/"resume" without song name)
-        5. Default → play_music
-        
-        Song Name Extraction:
-        - Removes play keywords: "play", "start", "resume"
-        - Removes natural language prefixes: "that song called", "the song", "song"
-        - Preserves rest as song name (may be fuzzy/imprecise)
-        
+        3. Album/Artist Play → play_album/play_artist (contains "album"/"artist" keyword)
+        4. Song Play → play_song (contains "play"/"start"/"resume" + song name)
+        5. Simple Play → play_music (just "play"/"start"/"resume" without song name)
+        6. Default → play_music
+
+        Content Extraction:
+        - Album commands: Extract text after "album" keyword
+        - Artist commands: Extract text after "artist" keyword
+        - Song commands: Remove play keywords and natural language prefixes
+        - Preserves rest as content name (may be fuzzy/imprecise)
+
         Examples:
         - "/spotify pause" → ("pause_music", {}, None)
         - "/spotify play" → ("play_music", {}, None)
+        - "/spotify play album Abbey Road" → ("play_album", {"album_name": "Abbey Road"}, None)
+        - "/spotify play artist The Beatles" → ("play_artist", {"artist_name": "The Beatles"}, None)
         - "/spotify play Viva la Vida" → ("play_song", {"song_name": "Viva la Vida"}, None)
         - "/spotify play Viva la something" → ("play_song", {"song_name": "Viva la something"}, None)
         - "/spotify play that song called Viva la something" → ("play_song", {"song_name": "Viva la something"}, None)
@@ -2438,16 +2447,39 @@ class SlashCommandHandler:
                 if what_pos < playing_pos:
                     return "get_spotify_status", {}, None
         
-        # Priority 3: Check for song play requests
-        # Pattern: play/start/resume + song name (more than just the keyword)
+        # Priority 3: Check for album/artist play requests
+        # Pattern: play/start/resume + album/artist + name
         play_keywords = ["play", "start", "resume"]
         play_match = re.search(r'\b(' + '|'.join(play_keywords) + r')\b', task_lower)
-        
+
         if play_match:
             # Extract everything after the play keyword
             play_pos = play_match.end()
             after_play = task_original[play_pos:].strip()
-            
+
+            # Check for album commands
+            album_match = re.search(r'\balbum\b', after_play, re.IGNORECASE)
+            if album_match:
+                album_pos = album_match.end()
+                album_name = after_play[album_pos:].strip()
+                if album_name:
+                    return "play_album", {"album_name": album_name}, None
+
+            # Check for artist commands
+            artist_match = re.search(r'\bartist\b', after_play, re.IGNORECASE)
+            if artist_match:
+                artist_pos = artist_match.end()
+                artist_name = after_play[artist_pos:].strip()
+                if artist_name:
+                    return "play_artist", {"artist_name": artist_name}, None
+
+        # Priority 4: Check for song play requests
+        # Pattern: play/start/resume + song name (more than just the keyword)
+        if play_match:
+            # Extract everything after the play keyword
+            play_pos = play_match.end()
+            after_play = task_original[play_pos:].strip()
+
             # Remove natural language prefixes
             natural_lang_patterns = [
                 r"^that\s+song\s+called\s+",
@@ -2457,7 +2489,7 @@ class SlashCommandHandler:
             ]
             for pattern in natural_lang_patterns:
                 after_play = re.sub(pattern, '', after_play, flags=re.IGNORECASE).strip()
-            
+
             # If there's substantial content after "play", it's a song name
             if after_play and len(after_play) > 2:
                 return "play_song", {"song_name": after_play}, None

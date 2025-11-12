@@ -230,7 +230,7 @@ export default function HelpOverlay({ isOpen, onClose }: HelpOverlayProps) {
                             title={command.label}
                             description={command.description}
                             examples={[command.command]}
-                            icon={command.category === "Files" ? "📁" : command.category === "Web" ? "🌐" : command.category === "Communication" ? "💬" : "⚡"}
+                            icon={command.emoji || (command.category === "Files" ? "📁" : command.category === "Web" ? "🌐" : command.category === "Communication" ? "💬" : "⚡")}
                             className={cn(
                               isSelected && "ring-2 ring-accent-primary"
                             )}

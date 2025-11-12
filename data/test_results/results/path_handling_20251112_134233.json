@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_keynote_composer_valid_image",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.004517499997746199
+  },
+  "timestamp": "2025-11-12T13:42:33.446048",
+  "test_name": "path_handling"
+}

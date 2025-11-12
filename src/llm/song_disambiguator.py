@@ -54,6 +54,9 @@ When identifying songs, think step-by-step:
 
 SPECIFIC GUIDANCE:
 - For 'moonwalk' + 'Michael Jackson': 'Smooth Criminal' is the song most associated with moonwalking dance moves. While 'Billie Jean' also features moonwalking, 'Smooth Criminal' is the iconic moonwalk song with the famous lean and moonwalk sequence. Use confidence 0.90-0.95 for this match.
+- For truncated titles like "breaking the", complete them to full song names (e.g., "Breaking the Habit" by Linkin Park)
+- For "new" artist queries like "new Taylor Swift song", identify the most recent popular release or current hit
+- For album queries like "that album by Taylor Swift", identify the most likely album based on current popularity
 
 CONFIDENCE GUIDANCE:
 - For well-known iconic matches (moonwalk + MJ, space song, etc.), use confidence 0.90-0.95
@@ -120,7 +123,32 @@ Response:
 
 CRITICAL: For moonwalk queries with Michael Jackson, ALWAYS return "Smooth Criminal" as the primary match, NOT "Billie Jean". "Smooth Criminal" is the song most associated with moonwalking.
 
-4. PARTIAL DESCRIPTION WITH ARTIST:
+4. TRUNCATED TITLE:
+Input: "play breaking the"
+Response:
+{{
+  "song_name": "Breaking the Habit",
+  "artist": "Linkin Park",
+  "confidence": 0.90,
+  "reasoning": "Completed truncated title 'breaking the' to 'Breaking the Habit' by Linkin Park. This is a well-known song from their Meteora album.",
+  "alternatives": []
+}}
+
+5. NEW RELEASE QUERY:
+Input: "play that new Taylor Swift song"
+Response:
+{{
+  "song_name": "Cruel Summer",
+  "artist": "Taylor Swift",
+  "confidence": 0.85,
+  "reasoning": "For 'new Taylor Swift song' queries, identify the most recent popular release. 'Cruel Summer' is a current hit from Taylor Swift's recent work, widely recognized as one of her recent successful singles.",
+  "alternatives": [
+    {{"song_name": "Anti-Hero", "artist": "Taylor Swift"}},
+    {{"song_name": "Lavender Haze", "artist": "Taylor Swift"}}
+  ]
+}}
+
+6. PARTIAL DESCRIPTION WITH ARTIST:
 Input: "play that song that's something around it's it starts with space by Eminem"
 Response:
 {{
@@ -358,3 +386,148 @@ class SongDisambiguator:
         cleaned = re.sub(r"\s+on\s+spotify\s*$", "", cleaned, flags=re.IGNORECASE)
 
         return cleaned.strip()
+
+    def disambiguate_with_uri(self, fuzzy_name: str) -> Dict[str, Any]:
+        """
+        Resolve fuzzy song name to canonical name + artist + Spotify URI using LLM + API search.
+
+        This enhanced version uses the Spotify API to resolve disambiguated songs to URIs,
+        enabling direct API playback without string-based search.
+
+        Args:
+            fuzzy_name: Fuzzy, partial, or imprecise song name
+
+        Returns:
+            Dictionary with enhanced fields:
+            {
+                "song_name": str,           # Canonical song title
+                "artist": str | None,       # Artist name
+                "uri": str | None,          # Spotify URI (spotify:track:xxx)
+                "spotify_id": str | None,   # Spotify ID
+                "confidence": float,        # 0.0-1.0 confidence score
+                "reasoning": str,           # Explanation of the match
+                "alternatives": List[Dict], # Alternative matches
+                "search_performed": bool,   # Whether API search was successful
+                "error": str (optional)     # Error if URI resolution failed
+            }
+        """
+        logger.info(f"[SONG DISAMBIGUATOR] Resolving with URI: {fuzzy_name}")
+
+        # First, get the basic disambiguation
+        basic_result = self.disambiguate(fuzzy_name)
+
+        # If disambiguation failed or confidence is too low, return basic result
+        if basic_result.get("confidence", 0) < 0.4:
+            basic_result["uri"] = None
+            basic_result["spotify_id"] = None
+            basic_result["search_performed"] = False
+            return basic_result
+
+        # Try to resolve to URI using Spotify API
+        try:
+            from ..integrations.spotify_api import SpotifyAPIClient
+            from ..config_validator import get_config_accessor
+
+            accessor = get_config_accessor(self.config)
+            api_config = accessor.get_spotify_api_config()
+
+            # Initialize API client (will use cached token if available)
+            api_client = SpotifyAPIClient(
+                client_id=api_config.client_id,
+                client_secret=api_config.client_secret,
+                redirect_uri=api_config.redirect_uri,
+                token_storage_path=api_config.token_storage_path,
+            )
+
+            if not api_client.is_authenticated():
+                logger.warning("[SONG DISAMBIGUATOR] Spotify API not authenticated, skipping URI resolution")
+                basic_result["uri"] = None
+                basic_result["spotify_id"] = None
+                basic_result["search_performed"] = False
+                return basic_result
+
+            # Build search query
+            song_name = basic_result["song_name"]
+            artist = basic_result["artist"]
+            query = song_name
+            if artist:
+                query = f"{song_name} {artist}"
+
+            # Search for tracks
+            search_result = api_client.search_tracks(query, limit=5)
+
+            if search_result and search_result.get("tracks", {}).get("items"):
+                tracks = search_result["tracks"]["items"]
+
+                # Find best match
+                best_match = None
+                best_score = 0
+
+                for track in tracks:
+                    score = self._calculate_match_score(song_name, artist, track)
+                    if score > best_score:
+                        best_score = score
+                        best_match = track
+
+                if best_match and best_score > 0.6:  # Require decent match
+                    # Enhance result with URI info
+                    basic_result["uri"] = best_match["uri"]
+                    basic_result["spotify_id"] = best_match["id"]
+                    basic_result["search_performed"] = True
+
+                    # Update confidence based on search match quality
+                    search_confidence = min(1.0, basic_result["confidence"] + (best_score - 0.6))
+                    basic_result["confidence"] = search_confidence
+
+                    # Add search reasoning
+                    basic_result["reasoning"] += f" | API search confirmed: {best_match['name']} by {best_match['artists'][0]['name']}"
+
+                    logger.info(f"[SONG DISAMBIGUATOR] Resolved URI: {basic_result['uri']} (score: {best_score:.2f})")
+                else:
+                    logger.warning(f"[SONG DISAMBIGUATOR] No good API match found for '{query}'")
+                    basic_result["uri"] = None
+                    basic_result["spotify_id"] = None
+                    basic_result["search_performed"] = True
+            else:
+                logger.warning(f"[SONG DISAMBIGUATOR] API search failed for '{query}'")
+                basic_result["uri"] = None
+                basic_result["spotify_id"] = None
+                basic_result["search_performed"] = False
+
+        except Exception as e:
+            logger.error(f"[SONG DISAMBIGUATOR] URI resolution failed: {e}")
+            basic_result["uri"] = None
+            basic_result["spotify_id"] = None
+            basic_result["search_performed"] = False
+            basic_result["error"] = f"URI resolution failed: {str(e)}"
+
+        return basic_result
+
+    def _calculate_match_score(self, target_song: str, target_artist: str, track: Dict[str, Any]) -> float:
+        """
+        Calculate how well a Spotify track matches the target song/artist.
+
+        Returns score from 0.0 to 1.0
+        """
+        track_name = track.get("name", "").lower()
+        track_artists = [artist["name"].lower() for artist in track.get("artists", [])]
+
+        target_song_lower = target_song.lower()
+        target_artist_lower = target_artist.lower() if target_artist else None
+
+        # Exact name match gets high score
+        name_score = 1.0 if target_song_lower == track_name else 0.7 if target_song_lower in track_name else 0.0
+
+        # Artist match
+        artist_score = 0.0
+        if target_artist_lower:
+            if any(target_artist_lower in artist for artist in track_artists):
+                artist_score = 1.0
+            elif any(artist in target_artist_lower for artist in track_artists):
+                artist_score = 0.8
+        else:
+            # No target artist, give partial credit
+            artist_score = 0.5
+
+        # Combine scores (weighted average)
+        return (name_score * 0.7) + (artist_score * 0.3)

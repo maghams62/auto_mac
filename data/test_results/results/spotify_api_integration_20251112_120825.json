@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_song_command_routing_still_works",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0002489589969627559
+  },
+  "timestamp": "2025-11-12T12:08:25.371980",
+  "test_name": "spotify_api_integration"
+}

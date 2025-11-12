@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_browse_and_play_song_found",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_execution_router.TestExecutionRouter testMethod=test_browse_and_play_song_found>\n\n    def test_browse_and_play_song_found(self):\n        \"\"\"Test successful browsing and playing a song.\"\"\"\n        router = ExecutionRouter(self.mock_config)\n    \n        # Mock vision automation for successful browse\n        mock_result = {\n            \"success\": True,\n            \"action\": \"browse_and_play\",\n            \"song_name\": \"Test Song\",\n            \"artist\": \"Test Artist\",\n            \"message\": \"Found and started playing 'Test Song' from browsed list\",\n            \"browse_attempts\": 2,\n            \"scroll_attempts\": 1,\n            \"method\": \"vision_browse\"\n        }\n        router._execute_vision = Mock(return_value=mock_result)\n    \n        # Mock the routing to return VISION strategy\n        router.route_execution = Mock(return_value={\n            \"strategy\": Mock(value=\"vision\"),\n            \"escalation_trigger\": \"vision fails\"\n        })\n    \n        result = router.execute_with_feedback_loop(\n            operation=\"browse_and_play\",\n            song_name=\"Test Song\",\n            artist=\"Test Artist\"\n        )\n    \n>       self.assertTrue(result[\"success\"])\nE       AssertionError: False is not true\n\ntests/test_execution_router.py:328: AssertionError",
+    "duration": 0.03782258299179375
+  },
+  "timestamp": "2025-11-12T10:42:44.018619",
+  "test_name": "execution_router"
+}

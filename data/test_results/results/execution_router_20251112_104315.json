@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_execute_with_feedback_loop_escalation_to_vision",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.01696066602016799
+  },
+  "timestamp": "2025-11-12T10:43:15.599697",
+  "test_name": "execution_router"
+}

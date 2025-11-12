@@ -11,6 +11,170 @@ Complete specification of available tools for the automation agent.
 
 ---
 
+## AppleScript Automation Playbook
+
+> **Quoting rule:** Wrap all string parameters in double quotes. Escape embedded double quotes or apostrophes by doubling them (`"O""Brien"`). Provide absolute file paths and ISO-8601 timestamps whenever possible.
+
+### compose_email (Terminal)
+**Purpose:** Draft or send email via Mail.app. Triggered by delivery verbs (email/send/attach/mail/share).
+
+**Complete Call Example:**
+```json
+{
+  "action": "compose_email",
+  "parameters": {
+    "subject": "Weekly NVIDIA Update for O\"\"Brien",
+    "body": "Attached deck covers NVDA closing price trends and highlights.",
+    "recipient": "siddharth@example.com",
+    "attachments": [
+      "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"
+    ],
+    "send": true
+  }
+}
+```
+
+**Validation Checklist:**
+- `recipient` is a concrete email or `null` (to draft); use memory default only when user says "email me".
+- `attachments` is a list of existing absolute paths; confirm via `get_trace_attachments` before calling.
+- `body` is a string (convert dict/list outputs to text before passing).
+- `send` matches user intent: `true` for "send/email", `false` for "draft/create".
+- Commitments logged: add `send_email` and `attach_documents` to reasoning trace before execution.
+
+**Common Failure Modes & Recovery:**
+- *Mail.app closed* → Note in `post_check` to relaunch or alert user.
+- *Attachment missing* → Re-run producer step or alert user; do not send without attachment.
+- *Permission denied* → Inform user and provide path so they can grant access.
+
+**Terminal Rule:** Call only after all upstream artifacts exist. Follow immediately with `reply_to_user` summarizing delivery status.
+
+### create_reminder
+**Purpose:** Create time-bound reminders in Reminders.app.
+
+**Complete Call Example:**
+```json
+{
+  "action": "create_reminder",
+  "parameters": {
+    "title": "Bring umbrella for O\"\"Brien",
+    "due_time": "2024-05-21T07:00:00-07:00",
+    "list_name": "Personal",
+    "notes": "Rain probability $step0.precipitation_chance% from Dark Sky"
+  }
+}
+```
+
+**Validation Checklist:**
+- `title` reflects the commitment and includes context.
+- Use ISO timestamps or clear natural-language phrases the tool can parse.
+- Specify `list_name` explicitly when user names a list; otherwise document default in `reasoning`.
+- `notes` captures source data or follow-up instructions for trace transparency.
+- `post_check`: confirm `reminder_id` returned and log it via `update_reasoning_entry`.
+
+**Common Failure Modes & Recovery:**
+- *List not found* → Retry with default list or ask user; document resolution in reasoning trace.
+- *Parsing failure for due_time* → Reformat time (e.g., convert "tomorrow morning" to specific ISO) using Writing Agent if needed.
+
+### create_note
+**Purpose:** Persist summaries or artifacts in Apple Notes.
+
+**Complete Call Example:**
+```json
+{
+  "action": "create_note",
+  "parameters": {
+    "title": "Tesla Brief - 2024-05-21",
+    "body": "Summary:\n- Delivery commitments met\n- Attachments saved at /Users/...",
+    "folder": "Work"
+  }
+}
+```
+
+**Validation Checklist:**
+- Provide explicit `folder` when user specifies location; otherwise mention default in reasoning.
+- Ensure `body` is plain text/markdown; convert structured data to readable format first.
+- `post_check`: capture `note_id` from observation and log in reasoning trace for future reference.
+
+**Common Failure Modes & Recovery:**
+- *Folder missing* → Retry without `folder` or create via UI; inform user.
+- *Large payload* → Summarize or chunk content before creation.
+
+### create_keynote
+**Purpose:** Generate Keynote decks from structured text.
+
+**Complete Call Example:**
+```json
+{
+  "action": "create_keynote",
+  "parameters": {
+    "title": "NVDA Stock Highlights",
+    "content": "$step3.formatted_slide_content",
+    "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"
+  }
+}
+```
+
+**Validation Checklist:**
+- `content` must be Writing-Agent formatted (headings + bullets); never pass raw extracts.
+- Choose deterministic `output_path` so downstream delivery can attach the file.
+- `post_check`: verify `keynote_path` exists on disk and add to reasoning trace attachments.
+
+**Common Failure Modes & Recovery:**
+- *Malformed content* → Re-run Writing Agent to structure bullets before retrying.
+- *Output path null* → Set explicit path to avoid locating file later.
+
+### create_keynote_with_images
+**Purpose:** Build decks from screenshots or images.
+
+**Complete Call Example:**
+```json
+{
+  "action": "create_keynote_with_images",
+  "parameters": {
+    "title": "Stock Chart Highlights",
+    "image_paths": [
+      "/Users/siddharthsuresh/Desktop/NVDA_Daily.png",
+      "/Users/siddharthsuresh/Desktop/NVDA_Volume.png"
+    ],
+    "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Charts.key"
+  }
+}
+```
+
+**Validation Checklist:**
+- Ensure every `image_path` exists (capture screenshots before this call).
+- Maintain image order per story arc; mention ordering in `reasoning` if critical.
+- `post_check`: confirm slide count ≥ number of images and record `keynote_path`.
+
+**Common Failure Modes & Recovery:**
+- *Image missing* → Re-run screenshot step or adjust selection before retrying.
+- *Keynote not saved* → Provide explicit `output_path` and re-run.
+
+### play_song (Spotify)
+**Purpose:** Play specific tracks in Spotify using semantic song matching.
+
+**Complete Call Example:**
+```json
+{
+  "action": "play_song",
+  "parameters": {
+    "song_name": "Breaking the Habit"
+  }
+}
+```
+
+**Validation Checklist:**
+- Use the user's phrasing when confident; rely on tool's semantic resolver before attempting web fallback.
+- Note confidence in `reasoning`; if uncertain, add `post_check` to confirm playback status via `get_spotify_status`.
+- Log commitment `play_music` in reasoning trace when user expects playback.
+
+**Common Failure Modes & Recovery:**
+- *Ambiguous query* → First run `google_search`/`extract_page_content` to disambiguate, then call `play_song` with resolved title.
+- *Spotify not running* → Include recovery instruction to relaunch app or alert user.
+- *Playback blocked* → Notify user and suggest manual intervention (e.g., premium subscription).
+
+---
+
 ## 1. search_documents
 
 **Purpose:** Find documents using semantic search
@@ -310,6 +474,110 @@ Complete specification of available tools for the automation agent.
 
 ---
 
+## 4. capture_screenshot
+
+**Purpose:** Capture focused-window screenshots for app-specific content (e.g., Weather, Stocks, Safari).
+
+**When to use:**
+- User wants to capture specific app content (e.g., "screenshot the weather app")
+- Need visual content from macOS applications for presentations or analysis
+- Focused-window capture (not full screen)
+
+**When NOT to use:**
+- Need full-screen capture (use mode="full")
+- Need region-specific capture (use mode="region")
+- Need to capture web content (use take_web_screenshot instead)
+
+**Parameters:**
+```json
+{
+  "app_name": "string - REQUIRED for focused capture - App name (e.g., 'Weather', 'Stocks', 'Safari')",
+  "mode": "string - Capture mode: 'focused' (default), 'full' (entire screen), 'region' (specific coords)",
+  "output_name": "string - OPTIONAL - Custom filename prefix (auto-generated if not provided)",
+  "window_title": "string - OPTIONAL - Window title filter (best-effort)",
+  "region": "object - OPTIONAL - For mode='region': {x, y, width, height}"
+}
+```
+
+**Returns:**
+```json
+{
+  "screenshot_path": "string - Absolute path to saved PNG",
+  "app_name": "string - App that was captured",
+  "mode": "string - Capture mode used",
+  "message": "string - Success message with filename"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ScreenshotError | PermissionError",
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example - Weather App Capture:**
+```json
+{
+  "action": "capture_screenshot",
+  "parameters": {
+    "app_name": "Weather",
+    "mode": "focused",
+    "output_name": "weather_today"
+  }
+}
+```
+
+**Use this when:**
+- User says "take a screenshot of the weather", "capture weather app"
+- Need to capture specific macOS application windows
+- Building presentations with app screenshots
+
+**Weather Usage Pattern:**
+```json
+// User: "send a presentation on today's weather"
+[
+  {
+    "action": "launch_app",
+    "parameters": {"app_name": "Weather"}
+  },
+  {
+    "action": "capture_screenshot",
+    "parameters": {
+      "app_name": "Weather",
+      "mode": "focused",
+      "output_name": "weather_today"
+    }
+  },
+  {
+    "action": "create_keynote_with_images",
+    "parameters": {
+      "title": "Today's Weather",
+      "image_paths": ["$step1.screenshot_path"],
+      "output_path": "/Users/siddharthsuresh/Documents/Weather_Presentation.key"
+    }
+  },
+  {
+    "action": "reply_to_user",
+    "parameters": {
+      "message": "Weather presentation created with today's forecast",
+      "artifacts": ["$step2.keynote_path"]
+    }
+  }
+]
+```
+
+**Notes:**
+- Uses macOS `screencapture` with CGWindowID for focused windows
+- Automatically activates target app before capture
+- Falls back gracefully if focused capture unavailable
+- Saves to `data/screenshots/` directory (configurable via config.yaml)
+
+---
+
 ## 5. create_keynote
 
 **Purpose:** Generate Keynote presentation from content
@@ -533,6 +801,151 @@ Complete specification of available tools for the automation agent.
 - Use `include_extensions` to target specific file types (e.g., only PDFs).
 - No need to create temporary folders; filtering happens during ZIP creation.
 - Pair with `compose_email` when the user wants the ZIP sent out.
+
+---
+
+## 10. folder_summarize
+
+**Purpose:** Generate comprehensive folder overview with statistics and insights for user understanding.
+
+**Parameters:**
+```json
+{
+  "folder_path": "string - OPTIONAL - Path to analyze (defaults to sandbox root)",
+  "items": "list - OPTIONAL - Pre-fetched folder items to avoid redundant listing"
+}
+```
+
+**Returns:**
+```json
+{
+  "summary": "string - Natural language overview",
+  "statistics": "object - File counts, sizes, types, age analysis",
+  "insights": "list[string] - Key observations about patterns",
+  "recommendations": "list[string] - Actionable suggestions",
+  "folder_path": "string - Path analyzed"
+}
+```
+
+**Usage:** Read-only analysis tool called when users want to understand folder contents ("summarize this folder", "what's in here", "give me an overview").
+
+---
+
+## 11. folder_sort_by
+
+**Purpose:** Sort folder contents by criteria with contextual explanations.
+
+**Parameters:**
+```json
+{
+  "folder_path": "string - OPTIONAL - Path to analyze (defaults to sandbox root)",
+  "items": "list - OPTIONAL - Pre-fetched folder items",
+  "criteria": "string - Sort criteria: 'name', 'date', 'size', 'type', 'extension'",
+  "direction": "string - 'ascending' or 'descending'"
+}
+```
+
+**Returns:**
+```json
+{
+  "sorted_items": "list - Sorted file list with metadata",
+  "criteria": "string - Sort criteria used",
+  "direction": "string - Sort direction used",
+  "explanation": "string - Why this sorting is useful",
+  "insights": "list[string] - Key observations from sorted view",
+  "total_items": "int - Total items sorted"
+}
+```
+
+**Usage:** Read-only tool for viewing files in organized arrangements ("sort by date", "arrange by size").
+
+---
+
+## 12. folder_explain_file
+
+**Purpose:** Explain file contents and purpose using cross-agent content analysis.
+
+**Parameters:**
+```json
+{
+  "file_path": "string - REQUIRED - Path to file to explain"
+}
+```
+
+**Returns:**
+```json
+{
+  "explanation": "string - Natural language file description",
+  "key_topics": "list[string] - Main content areas/themes",
+  "suggested_actions": "list[string] - Recommended next steps",
+  "content_summary": "string - Brief content overview",
+  "file_info": "object - Detailed file metadata"
+}
+```
+
+**Usage:** Cross-agent tool combining folder metadata with file agent content analysis ("explain this file", "what is this document about").
+
+---
+
+## 13. folder_archive_old
+
+**Purpose:** Move old/unused files to timestamped archive folders to reduce clutter.
+
+**Parameters:**
+```json
+{
+  "folder_path": "string - OPTIONAL - Source folder (defaults to sandbox root)",
+  "items": "list - OPTIONAL - Pre-fetched folder items",
+  "age_threshold_days": "int - OPTIONAL - Files older than this (default: 180)",
+  "dry_run": "boolean - OPTIONAL - Show plan only (default: true, requires confirmation)"
+}
+```
+
+**Returns:**
+```json
+{
+  "archive_plan": "object - What will be archived (dry_run=true)",
+  "files_moved": "list - Successfully archived files (dry_run=false)",
+  "archive_created": "string - Archive folder path",
+  "space_freed_mb": "float - Space recovered",
+  "dry_run": "boolean",
+  "needs_confirmation": "boolean",
+  "confirmation_message": "string"
+}
+```
+
+**Security:** Files are moved to archive folders, not deleted. Always requires confirmation.
+
+---
+
+## 14. folder_organize_by_category
+
+**Purpose:** Organize files into semantic categories based on content analysis.
+
+**Parameters:**
+```json
+{
+  "folder_path": "string - OPTIONAL - Source folder (defaults to sandbox root)",
+  "items": "list - OPTIONAL - Pre-fetched folder items",
+  "categorization": "object - OPTIONAL - Pre-computed categorization results",
+  "dry_run": "boolean - OPTIONAL - Show plan only (default: true, requires confirmation)"
+}
+```
+
+**Returns:**
+```json
+{
+  "categories": "object - Semantic categories and file assignments",
+  "new_structure": "list[string] - Proposed folder structure",
+  "folders_created": "list[string] - New category folders",
+  "files_moved": "list - Successfully organized files",
+  "total_organized": "int - Files organized",
+  "dry_run": "boolean",
+  "needs_confirmation": "boolean"
+}
+```
+
+**Usage:** Advanced organization tool using content analysis for semantic groupings ("group by project", "organize by topic").
 
 ---
 

@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_new_tools_available",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_spotify_api_integration.TestSpotifyAgentIntegration object at 0x10499f450>\n\n    def test_new_tools_available(self):\n        \"\"\"Test that new album/artist tools are available.\"\"\"\n        from src.agent.spotify_agent import SPOTIFY_AGENT_TOOLS\n    \n>       tool_names = [tool.__name__ for tool in SPOTIFY_AGENT_TOOLS]\n\ntests/test_spotify_api_integration.py:193: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\n.0 = <list_iterator object at 0x147674c70>\n\n>   tool_names = [tool.__name__ for tool in SPOTIFY_AGENT_TOOLS]\nE   AttributeError: 'StructuredTool' object has no attribute '__name__'\n\ntests/test_spotify_api_integration.py:193: AttributeError",
+    "duration": 5.49282062498969
+  },
+  "timestamp": "2025-11-12T12:08:23.220482",
+  "test_name": "spotify_api_integration"
+}

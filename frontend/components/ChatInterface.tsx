@@ -10,9 +10,12 @@ import ScrollToBottom from "./ScrollToBottom";
 import HelpOverlay from "./HelpOverlay";
 import KeyboardShortcutsOverlay from "./KeyboardShortcutsOverlay";
 import RecordingIndicator from "./RecordingIndicator";
+import SpotifyPlayer from "./SpotifyPlayer";
 import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
 import logger from "@/lib/logger";
 import StartupOverlay from "./StartupOverlay";
+import Header from "./Header";
+import { motion } from "framer-motion";
 
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
 
@@ -90,6 +93,7 @@ export default function ChatInterface() {
 
       if (data.text && data.text.trim()) {
         sendMessage(data.text.trim());
+        setVoiceError(null); // Clear any previous errors on success
         return;
       }
 
@@ -131,6 +135,7 @@ export default function ChatInterface() {
       }
 
       sendMessage(`❌ **Transcription Error:** ${detailedMessage}. Please try typing instead.`);
+      setVoiceError(detailedMessage);
     } finally {
       setIsTranscribing(false);
     }
@@ -141,7 +146,7 @@ export default function ChatInterface() {
     await transcribeAudio(audioBlob);
   }, [transcribeAudio]);
 
-  const { isRecording, startRecording, stopRecording, error: voiceError } = useVoiceRecorder({
+  const { isRecording, startRecording, stopRecording, error: voiceRecorderError } = useVoiceRecorder({
     onAutoStop: handleAutoStopTranscription,
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -151,6 +156,7 @@ export default function ChatInterface() {
   const [inputValue, setInputValue] = useState("");
   const [showHelpOverlay, setShowHelpOverlay] = useState(false);
   const [showShortcutsOverlay, setShowShortcutsOverlay] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -217,9 +223,44 @@ export default function ChatInterface() {
 
   const hasMessages = messages.length > 0;
 
-  // Handle help and shortcuts keyboard shortcuts
+  // Screen reader announcements for voice recording state changes
+  const [screenReaderAnnouncement, setScreenReaderAnnouncement] = useState("");
+
+  useEffect(() => {
+    if (isRecording && !isTranscribing) {
+      setScreenReaderAnnouncement("Voice recording started. Press Space or Escape to stop recording.");
+    } else if (isTranscribing) {
+      setScreenReaderAnnouncement("Recording stopped. Processing your voice...");
+    } else if (!isRecording && !isTranscribing) {
+      setScreenReaderAnnouncement("Voice recording ready.");
+    }
+  }, [isRecording, isTranscribing]);
+
+  // Handle help, shortcuts, and voice recording keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      // Voice recording shortcuts (Space to toggle, Escape to stop)
+      if (e.code === "Space" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        // Only handle space if not in an input field and not composing
+        const activeElement = document.activeElement;
+        const isInputField = activeElement?.tagName === "TEXTAREA" ||
+                            activeElement?.tagName === "INPUT" ||
+                            activeElement?.contentEditable === "true";
+
+        if (!isInputField && !isProcessing && !isTranscribing) {
+          e.preventDefault();
+          handleVoiceRecord();
+        }
+      }
+
+      // Escape to stop recording
+      if (e.key === "Escape" && (isRecording || isTranscribing)) {
+        e.preventDefault();
+        if (isRecording) {
+          handleStopRecording();
+        }
+      }
+
       // ⌘/ or ⌘? to show help
       if ((e.metaKey || e.ctrlKey) && (e.key === "/" || e.key === "?")) {
         e.preventDefault();
@@ -234,7 +275,7 @@ export default function ChatInterface() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isRecording, isTranscribing, isProcessing, handleVoiceRecord, handleStopRecording]);
 
   // Handle /help command
   useEffect(() => {
@@ -271,25 +312,97 @@ export default function ChatInterface() {
   return (
     <>
       <StartupOverlay show={bootOverlayVisible} />
+
+      {/* Screen reader announcements */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        role="status"
+      >
+        {screenReaderAnnouncement}
+      </div>
+
       <div className="flex-1 flex flex-col min-h-0" role="main">
+        <Header
+          isConnected={isConnected}
+          messageCount={messages.length}
+          onClearSession={() => sendCommand("clear")}
+          onShowHelp={() => setShowHelpOverlay(true)}
+        />
       {/* Main chat area - centered, no sidebars */}
       <div className="flex-1 flex flex-col w-full max-w-3xl mx-auto px-4 sm:px-6" role="region" aria-label="Chat conversation">
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0 py-4">
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0 py-2">
           {!hasMessages ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-2xl glass rounded-2xl p-8 shadow-elevated backdrop-blur-glass">
-                <h1 className="text-4xl font-semibold mb-4 text-text-primary">
+            <motion.div
+              className="flex-1 flex items-center justify-center"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
+            >
+              <motion.div
+                className="text-center max-w-2xl glass rounded-2xl p-6 shadow-elevated backdrop-blur-glass"
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.6, delay: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+                whileHover={{ scale: 1.02 }}
+              >
+                {/* Animated logo */}
+                <motion.div
+                  className="mb-4 flex justify-center"
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ duration: 0.5, delay: 0.6, type: "spring", bounce: 0.3 }}
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-primary-hover flex items-center justify-center shadow-lg">
+                    <motion.span
+                      className="text-2xl font-bold text-white"
+                      animate={{ rotate: [0, -5, 5, 0] }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      C
+                    </motion.span>
+                  </div>
+                </motion.div>
+
+                <motion.h1
+                  className="text-4xl font-semibold mb-3 text-text-primary"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.8 }}
+                >
                   Cerebro OS
-                </h1>
-                <p className="text-text-muted text-lg mb-8">
+                </motion.h1>
+
+                <motion.p
+                  className="text-text-muted text-lg mb-6"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 1.0 }}
+                >
                   How can I help you today?
-                </p>
-              </div>
-            </div>
+                </motion.p>
+
+                {/* Pulsing hint */}
+                <motion.div
+                  className="text-xs text-text-subtle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.6, delay: 1.2 }}
+                >
+                  <motion.span
+                    animate={{ opacity: [0.5, 1, 0.5] }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  >
+                    Press ⌘K or click to start typing
+                  </motion.span>
+                </motion.div>
+              </motion.div>
+            </motion.div>
           ) : (
             <div
               ref={messagesContainerRef}
-              className="flex-1 overflow-y-auto space-y-4 min-h-0 relative"
+              className="flex-1 overflow-y-auto space-y-2 min-h-0 relative"
               role="log"
               aria-live="polite"
               aria-label="Chat messages"
@@ -319,7 +432,7 @@ export default function ChatInterface() {
 
         {/* Connection status banner */}
         {!isConnected && (
-          <div className="rounded-lg border border-danger-border bg-danger-bg px-4 py-2 text-center mb-4" role="alert" aria-live="assertive">
+          <div className="rounded-lg border border-danger-border bg-danger-bg px-4 py-2 text-center mb-2" role="alert" aria-live="assertive">
             <p className="text-accent-danger text-sm">
               Disconnected from server. Attempting to reconnect...
             </p>
@@ -327,7 +440,7 @@ export default function ChatInterface() {
         )}
 
         {/* Input area */}
-        <div className="pb-6">
+        <div className="pb-4">
           <InputArea
             onSend={handleSend}
             disabled={!isConnected || isTranscribing}
@@ -346,6 +459,14 @@ export default function ChatInterface() {
         isRecording={isRecording}
         isTranscribing={isTranscribing}
         onStop={handleStopRecording}
+        error={voiceError || voiceRecorderError}
+        onRetry={() => {
+          setVoiceError(null);
+          handleVoiceRecord();
+        }}
+        onCancel={() => {
+          setVoiceError(null);
+        }}
       />
 
       {/* Help and Shortcuts Overlays */}
@@ -354,6 +475,9 @@ export default function ChatInterface() {
         isOpen={showShortcutsOverlay}
         onClose={() => setShowShortcutsOverlay(false)}
       />
+
+      {/* Spotify Web Player */}
+      <SpotifyPlayer />
       </div>
     </>
   );

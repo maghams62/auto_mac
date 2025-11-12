@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_context_headline_derivation",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_session_context.TestSessionContext object at 0x1052af990>\n\n    def test_context_headline_derivation(self):\n        \"\"\"Test automatic headline derivation from queries.\"\"\"\n        # Why question\n        context = SessionContext(\n            original_query=\"Why did Arsenal draw against Chelsea?\",\n            session_id=\"test_session_123\"\n        )\n>       assert context.headline() == \"Why Arsenal Drew\"\nE       AssertionError: assert 'Why Arsenal ...ainst Chelsea' == 'Why Arsenal Drew'\nE         - Why Arsenal Drew\nE         + Why Arsenal Draw Against Chelsea\n\ntests/test_session_context.py:47: AssertionError",
+    "duration": 0.00017604100867174566
+  },
+  "timestamp": "2025-11-12T12:49:17.985106",
+  "test_name": "session_context"
+}

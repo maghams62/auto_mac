@@ -1,0 +1,23 @@
+{
+  "session_id": "53b1b975-2f4a-43db-b8ab-e19c67451b74",
+  "status": "cleared",
+  "created_at": "2025-11-12T13:43:11.288653",
+  "last_active_at": "2025-11-12T13:44:13.874125",
+  "interactions": [],
+  "shared_context": {},
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 0,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": [],
+    "cleared_at": "2025-11-12T13:44:13.873420",
+    "previous_session_duration": 0
+  },
+  "reasoning_trace_enabled": true,
+  "reasoning_traces": {}
+}

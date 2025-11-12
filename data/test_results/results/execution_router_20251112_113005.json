@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_playlist_navigation_action",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_execution_router.TestExecutionRouter testMethod=test_playlist_navigation_action>\n\n    def test_playlist_navigation_action(self):\n        \"\"\"Test generating navigation actions for playlists.\"\"\"\n        from src.automation.vision_spotify_automation import VisionSpotifyAutomation, SpotifyUIState\n    \n        vision_auto = VisionSpotifyAutomation(self.mock_config)\n    \n        # Test navigation from library view\n        ui_state = SpotifyUIState()\n        ui_state.active_view = \"library\"\n    \n        action = vision_auto._navigate_to_playlist(\"My Playlist\", ui_state)\n        self.assertEqual(action[\"action\"], \"click_playlist_tab\")\n        self.assertIn(\"My Playlist\", action[\"description\"])\n    \n        # Test navigation from home view\n        ui_state.active_view = \"home\"\n        action = vision_auto._navigate_to_playlist(\"Workout Mix\", ui_state)\n>       self.assertEqual(action[\"action\"], \"search_for_playlist\")\nE       AssertionError: 'go_to_library' != 'search_for_playlist'\nE       - go_to_library\nE       + search_for_playlist\n\ntests/test_execution_router.py:465: AssertionError",
+    "duration": 0.0002332500007469207
+  },
+  "timestamp": "2025-11-12T11:30:05.702177",
+  "test_name": "execution_router"
+}

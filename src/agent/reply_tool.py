@@ -49,10 +49,13 @@ def reply_to_user(
     message: str,
     details: Optional[str] = None,
     artifacts: Optional[List[str]] = None,
-    status: str = "success"
+    status: str = "success",
+    action_type: Optional[str] = None,
+    summary: Optional[str] = None,
+    artifact_metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Compose the final UI-facing reply message.
+    Compose the final UI-facing reply message with rich completion event data.
 
     Use this as the last step after completing all required actions so the
     interface can present a concise, human-friendly summary instead of
@@ -63,12 +66,16 @@ def reply_to_user(
         details: Optional secondary context (bullet list, next steps).
         artifacts: Optional list of paths or URLs to highlight.
         status: Overall outcome indicator (success|partial_success|info|error).
+        action_type: Type of action completed (e.g., 'email_sent', 'report_created', 'presentation_created').
+        summary: Brief summary of what was accomplished (for completion cards).
+        artifact_metadata: Rich metadata about artifacts (e.g., {'recipients': [...], 'file_type': 'pdf', 'file_size': 12345}).
 
     Returns:
         Structured payload recorded in step_results so the UI can render it.
     """
     artifacts = artifacts or []
     details = details or ""
+    artifact_metadata = artifact_metadata or {}
 
     # AUTO-FORMAT: If details is a list (structured data), format it nicely
     if isinstance(details, list):
@@ -90,6 +97,17 @@ def reply_to_user(
         "status": status,
         "error": False,
     }
+
+    # Add completion event data if action_type is provided
+    if action_type:
+        payload["completion_event"] = {
+            "action_type": action_type,
+            "summary": summary or message,
+            "status": status,
+            "artifact_metadata": artifact_metadata,
+            "artifacts": artifacts
+        }
+        logger.info("[REPLY TOOL] Added completion_event: %s", payload["completion_event"])
 
     logger.info("[REPLY TOOL] Prepared reply payload: %s", payload)
     return payload

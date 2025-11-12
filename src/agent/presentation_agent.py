@@ -65,26 +65,38 @@ def create_keynote(
                         "content": para.strip()
                     })
 
+        # Construct the path before creation
+        if output_path:
+            final_path = output_path
+        else:
+            import os
+            final_path = os.path.expanduser(f"~/Documents/{title}.key")
+
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=final_path
         )
 
         if success:
-            # Construct the path if not provided
-            if output_path:
-                final_path = output_path
+            # KeynoteComposer already verifies the file exists, but double-check here
+            import os
+            if os.path.exists(final_path) and os.path.isfile(final_path):
+                logger.info(f"✅ Keynote file verified at: {final_path}")
+                return {
+                    "keynote_path": final_path,
+                    "slide_count": len(slides) + 1,  # +1 for title slide
+                    "message": "Keynote presentation created successfully"
+                }
             else:
-                import os
-                final_path = os.path.expanduser(f"~/Documents/{title}.key")
-
-            return {
-                "keynote_path": final_path,
-                "slide_count": len(slides) + 1,  # +1 for title slide
-                "message": "Keynote presentation created successfully"
-            }
+                logger.error(f"❌ Keynote reported success but file not found: {final_path}")
+                return {
+                    "error": True,
+                    "error_type": "KeynoteError",
+                    "error_message": f"Keynote file not saved to {final_path} - file not found after creation",
+                    "retry_possible": True
+                }
         else:
             return {
                 "error": True,
@@ -224,21 +236,22 @@ def create_keynote_with_images(
         )
 
         if success:
-            # Verify the file actually exists
+            # KeynoteComposer already verifies the file exists, but double-check here
             import os
-            if os.path.exists(output_path):
+            if os.path.exists(output_path) and os.path.isfile(output_path):
+                logger.info(f"✅ Keynote file with images verified at: {output_path}")
                 return {
                     "keynote_path": output_path,
                     "slide_count": len(slides) + 1,  # +1 for title slide
                     "message": f"Keynote presentation created with {len(slides)} image slides"
                 }
             else:
-                logger.error(f"[PRESENTATION AGENT] Keynote reported success but file not found: {output_path}")
+                logger.error(f"[PRESENTATION AGENT] ❌ Keynote reported success but file not found: {output_path}")
                 return {
                     "error": True,
                     "error_type": "KeynoteError",
-                    "error_message": f"Keynote file not saved to {output_path}",
-                    "retry_possible": False
+                    "error_message": f"Keynote file not saved to {output_path} - file not found after creation",
+                    "retry_possible": True
                 }
         else:
             return {

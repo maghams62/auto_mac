@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_scroll_position_detection",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "tests/test_execution_router.py:444: in test_scroll_position_detection\n    self.assertEqual(ui_state.current_scroll_position, \"top\")\nE   AssertionError: 'middle' != 'top'\nE   - middle\nE   + top",
+    "duration": 0.0002787910052575171
+  },
+  "timestamp": "2025-11-12T10:43:16.172258",
+  "test_name": "execution_router"
+}

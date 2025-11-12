@@ -3,7 +3,7 @@
 # OpenAI API Configuration
 openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
-  model: "gpt-4o-mini"  # Chat-compatible model for all LLM tasks
+  model: "gpt-4o"  # Highest generally available reasoning model
   embedding_model: "text-embedding-3-small"
   temperature: 0.7
   max_tokens: 2000
@@ -36,7 +36,60 @@ delivery:
     reject_missing_tool: true  # Reject plan if delivery verb present but compose_email missing
     auto_correct: false  # Do not auto-add compose_email (let planner learn)
 
+  # Map tools to commitments they fulfill (used by reasoning trace)
+  tool_commitments:
+    compose_email:
+      - send_email
+
+# Atomic Prompt Loading Configuration
+atomic_prompts:
+  enabled: true  # Enable atomic prompt loading (default: true)
+  max_tokens: 2000  # Maximum tokens to allocate for examples per request
+  fallback_to_full: true  # Fallback to full examples if atomic loading fails
+  log_usage: true  # Log token usage and example selection
+
 document_directory: "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs"
+
+# Screenshot Configuration
+screenshots:
+  base_dir: "data/screenshots"
+
+# Playback Configuration
+playback:
+  # Intent detection verbs for Spotify playback requests
+  intent_verbs:
+    - play
+    - queue
+    - listen
+    - start
+
+  # Tool that must appear in plans when playback intent detected
+  required_tool: play_song
+
+  # Verification tool to confirm playback before responding
+  verification_tool: get_spotify_status
+  require_status_check: true
+
+  # Force API-based playback for Spotify (no vision automation)
+  use_api: true
+
+  # Disable fallback to automation when API is not available
+  # When true, playback will only work through web API (requires authentication)
+  disable_automation_fallback: true
+
+  # Retry configuration for playback automation (consumed by routers)
+  retry:
+    max_attempts: 3
+    base_delay_seconds: 2
+
+  # Commitments produced by specific tools
+  tool_commitments:
+    play_song:
+      - play_music
+
+  # Messaging used during finalization
+  success_message: "Started playback in Spotify."
+  failure_message: "Unable to confirm Spotify playback. Please ensure Spotify is running and try again."
 
 # Document Configuration
 documents:
@@ -109,6 +162,38 @@ maps:
 ui:
   mode: "terminal"  # Options: terminal, gui (future)
   theme: "dark"
+  # Redirect URL configuration
+  # Note: Spotify requires 127.0.0.1 (loopback) for HTTP redirects, not localhost
+  redirect_url: "${REDIRECT_URL:-http://127.0.0.1:3000/redirect}"  # Default redirect URL for OAuth callbacks
+
+# OAuth Configuration
+oauth:
+  # Base redirect URL (used for OAuth callbacks)
+  # Note: Spotify requires 127.0.0.1 (loopback) for HTTP redirects, not localhost
+  redirect_base_url: "${REDIRECT_BASE_URL:-http://127.0.0.1:3000}"
+  redirect_path: "/redirect"  # Path component of redirect URL
+  # Allowed redirect destinations (for security)
+  allowed_redirect_domains:
+    - "localhost"
+    - "127.0.0.1"
+    # Add your production domain here when deploying
+
+# Spotify API Configuration
+spotify_api:
+  # OAuth credentials (set via environment variables)
+  client_id: "${SPOTIFY_CLIENT_ID}"
+  client_secret: "${SPOTIFY_CLIENT_SECRET}"
+  # Redirect URI for Spotify OAuth (must match Spotify Developer Dashboard)
+  # Use 127.0.0.1 (loopback) for local development - Spotify requires this format for HTTP
+  redirect_uri: "${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:3000/redirect}"
+  # Scopes required for Spotify API access
+  scopes:
+    - "user-read-playback-state"
+    - "user-modify-playback-state"
+    - "user-read-currently-playing"
+    - "streaming"
+    - "user-read-email"
+    - "user-read-private"
 
 # Browser/Web Configuration
 browser:
@@ -144,6 +229,29 @@ logging:
   max_bytes: 10485760  # 10MB - max size before rotation
   backup_count: 5  # Number of backup log files to keep
   json_format: true  # Use JSON format for structured logging (true) or human-readable (false)
+
+# Retry Logging Configuration (Experimental)
+# Enables comprehensive logging of failed attempts and reasoning chains for recovery
+retry_logging:
+  enabled: true  # EXPERIMENTAL: Enable retry logging (default: true for better error recovery)
+  # When enabled, the system tracks:
+  # - Failed execution attempts with full context
+  # - Reasoning chains that led to failures
+  # - Critic feedback and suggested fixes
+  # - Recovery patterns and alternative approaches
+  # This enables smarter retries and better LLM handoffs
+
+  # Retry behavior settings
+  max_attempts: 3  # Maximum retry attempts per operation
+  base_delay_seconds: 1.0  # Base delay between retries
+  max_delay_seconds: 30.0  # Maximum delay cap
+  backoff_multiplier: 2.0  # Exponential backoff multiplier
+
+  # Logging settings
+  log_directory: "data/retry_logs"  # Directory for retry logs
+  max_logs_per_interaction: 10  # Maximum log files per interaction
+  compress_old_logs: true  # Compress logs older than retention period
+  retention_days: 7  # Days to keep retry logs
 
 # Twitter Configuration
 twitter:

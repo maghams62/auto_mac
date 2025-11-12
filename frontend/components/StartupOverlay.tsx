@@ -31,15 +31,17 @@ export default function StartupOverlay({ show }: StartupOverlayProps) {
     };
   }, []);
 
-  // Update loading phase based on show prop
+  // Simple connection sequence
   useEffect(() => {
-    if (!show && loadingPhase === 'connecting') {
+    if (!show || prefersReducedMotion) return;
+
+    const timer = setTimeout(() => {
       setLoadingPhase('ready');
-      // Brief moment to show ready state before transitioning to complete
-      const timer = setTimeout(() => setLoadingPhase('complete'), 400);
-      return () => clearTimeout(timer);
-    }
-  }, [show, loadingPhase]);
+      setTimeout(() => setLoadingPhase('complete'), 800);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [show, prefersReducedMotion]);
 
   const overlayTransition = useMemo(
     () => ({
@@ -124,26 +126,15 @@ export default function StartupOverlay({ show }: StartupOverlayProps) {
                     Ready.
                   </motion.span>
                 ) : (
-                  <TypeAnimation
-                    sequence={[
-                      "Initializing Cerebro OS…",
-                      1000,
-                      "Loading automation agents…",
-                      900,
-                      "Connecting to services…",
-                      900,
-                      "Establishing secure channels…",
-                      900,
-                      "Standing by…",
-                      800,
-                    ]}
-                    speed={65}
-                    deletionSpeed={45}
-                    repeat={Infinity}
-                    wrapper="span"
-                    cursor
+                  <motion.span
+                    key={loadingPhase}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
                     className="text-neutral-200"
-                  />
+                  >
+                    {loadingPhase === 'connecting' && "Connecting to Cerebro..."}
+                  </motion.span>
                 )}
               </div>
 

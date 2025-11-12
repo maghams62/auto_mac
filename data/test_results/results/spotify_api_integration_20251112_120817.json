@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_uri_detection",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_spotify_api_integration.TestSpotifyPlaybackService object at 0x10499fc10>\n\n    def test_uri_detection(self):\n        \"\"\"Test URI detection in play_track method.\"\"\"\n        from src.integrations.spotify_playback_service import SpotifyPlaybackService, PlaybackResult\n    \n        config = {\"playback\": {\"use_api\": False}}  # Force automation for testing\n        service = SpotifyPlaybackService(config)\n    \n        # Mock automation backend\n        mock_result = PlaybackResult(\n            success=True,\n            action=\"play_track\",\n            message=\"Track started\",\n            backend=service.automation_backend.backend_type\n        )\n    \n        with patch.object(service.automation_backend, 'play_track', return_value=mock_result):\n            # Test track URI\n            result = service.play_track(\"spotify:track:4uLU6hMCjMI75M1A2tKUQC\")\n            assert result.success is True\n            assert result.action == \"play_track\"\n    \n            # Test album URI\n            result = service.play_track(\"spotify:album:4uLU6hMCjMI75M1A2tKUQC\")\n>           assert result.success is True\nE           assert False is True\nE            +  where False = <src.integrations.spotify_playback_service.PlaybackResult object at 0x1050d9110>.success\n\ntests/test_spotify_api_integration.py:175: AssertionError",
+    "duration": 0.0034824169997591525
+  },
+  "timestamp": "2025-11-12T12:08:17.506228",
+  "test_name": "spotify_api_integration"
+}

@@ -395,8 +395,7 @@ def capture_google_finance_chart(url: str, output_name: Optional[str] = None) ->
 
     try:
         from src.automation.web_browser import SyncWebBrowser
-        from src.utils import load_config
-        from pathlib import Path
+        from src.utils import load_config, get_screenshot_dir
 
         config = load_config()
         browser = SyncWebBrowser(config, headless=False)
@@ -426,8 +425,7 @@ def capture_google_finance_chart(url: str, output_name: Optional[str] = None) ->
             ticker = ticker_match.group(1) if ticker_match else "stock"
             filename = f"{ticker}_gfinance_{timestamp}.png"
 
-        screenshot_dir = Path("data/screenshots")
-        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_dir = get_screenshot_dir(config)
         screenshot_path = screenshot_dir / filename
 
         # Capture the full page

@@ -362,26 +362,36 @@ def create_keynote(
                         "content": para.strip()
                     })
 
+        # Determine output path and ensure the parent directory exists
+        import os
+        final_path = output_path or f"~/Documents/{title}.key"
+        final_path = os.path.expanduser(final_path)
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=final_path
         )
 
         if success:
-            # Construct the path if not provided
-            if output_path:
-                final_path = output_path
+            # KeynoteComposer already verifies the file exists, but double-check here
+            if os.path.exists(final_path) and os.path.isfile(final_path):
+                logger.info(f"✅ Keynote file verified at: {final_path}")
+                return {
+                    "keynote_path": final_path,
+                    "slide_count": len(slides) + 1,  # +1 for title slide
+                    "message": "Keynote presentation created successfully"
+                }
             else:
-                import os
-                final_path = os.path.expanduser(f"~/Documents/{title}.key")
-
-            return {
-                "keynote_path": final_path,
-                "slide_count": len(slides) + 1,  # +1 for title slide
-                "message": "Keynote presentation created successfully"
-            }
+                logger.error(f"❌ Keynote reported success but file not found: {final_path}")
+                return {
+                    "error": True,
+                    "error_type": "KeynoteError",
+                    "error_message": f"Keynote file not saved to {final_path} - file not found after creation",
+                    "retry_possible": True
+                }
         else:
             return {
                 "error": True,
@@ -429,34 +439,35 @@ def create_keynote_with_images(
             })
 
         # Determine output path - generate default if not provided
-        if not output_path:
-            import os
-            output_path = os.path.expanduser(f"~/Documents/{title}.key")
+        import os
+        resolved_path = output_path or f"~/Documents/{title}.key"
+        resolved_path = os.path.expanduser(resolved_path)
+        os.makedirs(os.path.dirname(resolved_path), exist_ok=True)
 
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=resolved_path
         )
 
         if success:
-            # Verify the file actually exists
-            import os
-            if os.path.exists(output_path):
+            # KeynoteComposer already verifies the file exists, but double-check here
+            if os.path.exists(resolved_path) and os.path.isfile(resolved_path):
+                logger.info(f"✅ Keynote file with images verified at: {resolved_path}")
                 return {
-                    "keynote_path": output_path,
+                    "keynote_path": resolved_path,
                     "slide_count": len(slides) + 1,  # +1 for title slide
                     "message": f"Keynote presentation created with {len(slides)} image slides"
                 }
-            else:
-                logger.error(f"Keynote reported success but file not found: {output_path}")
-                return {
-                    "error": True,
-                    "error_type": "KeynoteError",
-                    "error_message": f"Keynote file not saved to {output_path}",
-                    "retry_possible": False
-                }
+
+            logger.error(f"Keynote reported success but file not found after waiting: {resolved_path}")
+            return {
+                "error": True,
+                "error_type": "KeynoteError",
+                "error_message": f"Keynote file not saved to {resolved_path}",
+                "retry_possible": False
+            }
         else:
             return {
                 "error": True,

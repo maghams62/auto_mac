@@ -18,6 +18,7 @@ from .agent_capabilities import build_agent_capabilities
 from .intent_planner import IntentPlanner
 from .agent_router import AgentRouter
 from ..utils import get_temperature_for_model
+from ..memory.session_memory import SessionContext
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class Planner:
         self,
         goal: str,
         available_tools: List[Dict[str, Any]],
+        session_context: SessionContext,
         context: Optional[Dict[str, Any]] = None,
         previous_plan: Optional[List[Dict[str, Any]]] = None,
         feedback: Optional[str] = None
@@ -75,6 +77,7 @@ class Planner:
         Args:
             goal: User's goal/request
             available_tools: List of available tool specifications
+            session_context: SessionContext with original query and structured memory
             context: Additional context (previous results, user preferences, etc.)
             previous_plan: Previous plan if replanning
             feedback: Feedback on why previous plan failed (for replanning)
@@ -98,6 +101,7 @@ class Planner:
             prompt = self._build_planning_prompt(
                 goal=goal,
                 available_tools=filtered_tools,
+                session_context=session_context,
                 context=context,
                 previous_plan=previous_plan,
                 feedback=feedback,
@@ -192,6 +196,7 @@ CRITICAL: Return pure JSON only. Do NOT include comments like "// comment". Do N
         self,
         goal: str,
         available_tools: List[Any],
+        session_context: SessionContext,
         context: Optional[Dict[str, Any]] = None,
         previous_plan: Optional[List[Dict[str, Any]]] = None,
         feedback: Optional[str] = None,
@@ -209,6 +214,15 @@ CRITICAL: Return pure JSON only. Do NOT include comments like "// comment". Do N
             file_context['note'] = "When working with user files (zip, search, organize), use these document folders"
 
         prompt_parts = [
+            f"ORIGINAL USER QUERY: {session_context.original_query}",
+            "",
+            f"DERIVED TOPIC: {session_context.headline()}",
+            "",
+            "CONTEXT OBJECTS:",
+            json.dumps(session_context.context_objects, indent=2),
+            "",
+            f"REASONING BUDGET: {session_context.token_budget_metadata}",
+            "",
             f"GOAL: {goal}",
             "",
             "AVAILABLE TOOLS:",
@@ -297,6 +311,11 @@ CRITICAL: Return pure JSON only. Do NOT include comments like "// comment". Do N
             "  * If step result is dict/list, convert to JSON string or extract string field",
             "  * reply_to_user.message and reply_to_user.details must be strings",
             "  * compose_email.body must be a string",
+            "- For rich UI feedback, use reply_to_user with completion_event parameters:",
+            "  * After compose_email (send=true): use action_type='email_sent', include recipient in artifact_metadata",
+            "  * After create_stock_report/create_local_document_report: use action_type='report_created', include report_path in artifacts",
+            "  * After create_keynote/create_keynote_with_images: use action_type='presentation_created', include keynote_path in artifacts",
+            "  * Use get_message_for_action(action_type) from message_personality for fun celebratory messages",
             "",
             "Remember:",
             "- Use LLM reasoning for all decisions and parameter extraction",

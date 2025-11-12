@@ -93,6 +93,23 @@ class KeynoteComposer:
                 if "Error:" in output:
                     logger.error(f"Keynote AppleScript error: {output}")
                     return False
+
+                # If output_path was provided, verify the file exists
+                if output_path:
+                    import os
+                    import time
+                    expanded_path = str(Path(output_path).expanduser().resolve())
+                    max_wait = 10  # Wait up to 10 seconds for file to appear
+                    for i in range(max_wait):
+                        if os.path.exists(expanded_path) and os.path.isfile(expanded_path):
+                            logger.info(f"Keynote presentation created and verified at: {expanded_path}")
+                            return True
+                        logger.debug(f"Waiting for Keynote file to appear... ({i+1}/{max_wait})")
+                        time.sleep(1)
+
+                    logger.error(f"Keynote AppleScript succeeded but file not found at: {expanded_path}")
+                    return False
+
                 logger.info("Keynote presentation created successfully")
                 return True
             else:
@@ -191,7 +208,11 @@ class KeynoteComposer:
         # Save if path provided (BEFORE closing the newDoc tell block)
         if output_path:
             escaped_path = self._escape_applescript_string(output_path)
-            script_parts.append(f'        save newDoc in POSIX file "{escaped_path}"')
+            script_parts.extend([
+                f'        save newDoc in POSIX file "{escaped_path}"',
+                '        delay 1',  # Wait for file to be written to disk
+                '        close newDoc saving no',  # Close the document to ensure it's flushed
+            ])
 
         script_parts.append('        end tell')
 

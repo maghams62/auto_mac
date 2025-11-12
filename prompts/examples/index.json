@@ -26,7 +26,8 @@
     ],
     "file": [
       "file/01_example_21_file_agent_zip_non_music_files_and_email_new.md",
-      "file/02_example_22_file_agent_rag_summary_email_new.md"
+      "file/02_example_22_file_agent_rag_summary_email_new.md",
+      "file/03_example_file_search_and_analysis.md"
     ],
     "disambiguation": [
       "disambiguation/01_example_files_summarize_vs_zip_new.md"
@@ -40,7 +41,8 @@
       "general/06_example_4_complex_task_7_steps.md",
       "general/07_example_5_parallel_execution_complex.md",
       "general/08_example_search_and_email.md",
-      "general/09_example_delivery_email_draft_vs_send.md"
+      "general/09_example_delivery_email_draft_vs_send.md",
+      "general/10_example_simple_web_search.md"
     ],
     "web": [
       "web/01_example_29_web_local_research_with_bluesky_signals_new.md"
@@ -57,7 +59,8 @@
     ],
     "safety": [
       "safety/01_example_30_safety_guardrail_unsupported_media_edit_new.md",
-      "safety/02_example_31_safety_refuse_outside_sandbox_new.md"
+      "safety/02_example_31_safety_refuse_outside_sandbox_new.md",
+      "safety/03_example_error_handling_and_recovery.md"
     ],
     "screen": [
       "screen/01_example_12_screen_agent_stock_analysis_with_screenshot_new.md"
@@ -84,6 +87,14 @@
       "weather/01_example_weather_conditional_reminder.md",
       "weather/02_example_weather_conditional_note.md",
       "weather/03_example_multi_conditional_branching.md"
+    ],
+    "folder": [
+      "folder/01_example_folder_summarize.md",
+      "folder/02_example_explain_file.md",
+      "folder/03_example_sort_by_criteria.md",
+      "folder/04_example_archive_old_files.md",
+      "folder/05_example_content_based_grouping.md",
+      "folder/06_example_duplicate_triage.md"
     ]
   },
   "agents": {
@@ -104,7 +115,8 @@
       "core",
       "general",
       "file",
-      "disambiguation"
+      "disambiguation",
+      "folder"
     ],
     "google": [
       "core",

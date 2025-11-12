@@ -2,17 +2,24 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 interface RecordingIndicatorProps {
   isRecording: boolean;
   isTranscribing: boolean;
   onStop: () => void;
+  error?: string | null;
+  onRetry?: () => void;
+  onCancel?: () => void;
 }
 
 export default function RecordingIndicator({
   isRecording,
   isTranscribing,
   onStop,
+  error,
+  onRetry,
+  onCancel,
 }: RecordingIndicatorProps) {
   const [recordingTime, setRecordingTime] = useState(0);
 
@@ -40,118 +47,173 @@ export default function RecordingIndicator({
 
   return (
     <AnimatePresence>
-      {(isRecording || isTranscribing) && (
-        <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 20, scale: 0.95 }}
-          transition={{ duration: 0.3, ease: "easeOut" }}
-          className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50"
-        >
-          {/* Pulsing rings effect - ChatGPT style */}
-          {isRecording && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              {[0, 1, 2].map((i) => (
-                <motion.div
-                  key={i}
-                  className="absolute rounded-full border-2 border-red-500/30"
-                  initial={{ width: 0, height: 0, opacity: 0.8 }}
-                  animate={{
-                    width: 200 + i * 40,
-                    height: 200 + i * 40,
-                    opacity: [0.8, 0.4, 0],
-                  }}
-                  transition={{
-                    duration: 2,
-                    repeat: Infinity,
-                    delay: i * 0.3,
-                    ease: "easeOut",
-                  }}
-                />
-              ))}
-            </div>
-          )}
+      {(isRecording || isTranscribing || error) && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40"
+            onClick={onStop} // Allow clicking backdrop to stop
+          />
 
-          <div className="relative glass rounded-2xl p-6 shadow-2xl border border-white/20 min-w-[320px] backdrop-blur-xl">
-            {/* Glow effect when recording */}
-            {isRecording && (
+          {/* Modal */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+            className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          >
+            <div className="relative w-full max-w-sm">
+              {/* Pulsing background rings */}
+              {isRecording && (
+                <>
+                  <motion.div
+                    className="absolute inset-0 rounded-3xl border-2 border-accent-danger/30"
+                    animate={{
+                      scale: [1, 1.2, 1],
+                      opacity: [0.3, 0, 0.3],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
+                  />
+                  <motion.div
+                    className="absolute inset-0 rounded-3xl border-2 border-accent-danger/20"
+                    animate={{
+                      scale: [1, 1.4, 1],
+                      opacity: [0.2, 0, 0.2],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      delay: 0.5,
+                    }}
+                  />
+                </>
+              )}
+
+              {/* Main modal */}
               <motion.div
-                className="absolute inset-0 rounded-2xl bg-red-500/10 blur-xl -z-10"
-                animate={{
-                  opacity: [0.3, 0.6, 0.3],
-                }}
+                className={cn(
+                  "relative rounded-3xl p-8 shadow-elevated backdrop-blur-glass border min-h-[300px] flex flex-col items-center justify-center",
+                  isRecording
+                    ? "bg-glass-elevated border-accent-danger/20"
+                    : "bg-glass-elevated border-accent-cyan/20"
+                )}
+                animate={isRecording ? {
+                  boxShadow: [
+                    "0 20px 60px rgba(0, 0, 0, 0.35)",
+                    "0 20px 60px rgba(239, 68, 68, 0.15)",
+                    "0 20px 60px rgba(0, 0, 0, 0.35)"
+                  ]
+                } : {}}
                 transition={{
                   duration: 2,
-                  repeat: Infinity,
-                  ease: "easeInOut",
+                  repeat: isRecording ? Infinity : 0,
+                  ease: "easeInOut"
                 }}
-              />
-            )}
-
-            {isTranscribing ? (
-              <div className="flex items-center justify-center space-x-4">
-                <div className="flex space-x-1">
-                  {[0, 1, 2].map((i) => (
+              >
+                {error ? (
+                  /* Error State */
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex flex-col items-center space-y-6 text-center"
+                  >
+                    {/* Error icon */}
                     <motion.div
-                      key={i}
-                      className="w-2 h-8 bg-accent-cyan rounded-full"
+                      className="w-16 h-16 rounded-full bg-accent-danger/10 flex items-center justify-center"
                       animate={{
-                        height: [8, 24, 8],
-                        opacity: [0.5, 1, 0.5],
+                        scale: [1, 1.1, 1],
                       }}
                       transition={{
-                        duration: 0.6,
+                        duration: 2,
                         repeat: Infinity,
-                        delay: i * 0.2,
                         ease: "easeInOut",
                       }}
-                    />
-                  ))}
-                </div>
-                <div className="text-white font-medium">Transcribing...</div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center space-y-4">
-                {/* Enhanced waveform animation */}
-                <div className="flex items-center justify-center space-x-0.5 h-16 relative">
-                  {Array.from({ length: 24 }).map((_, i) => {
-                    // More dynamic animation with varying patterns
-                    const pattern = i % 4;
-                    const baseHeight = pattern === 0 ? 4 : pattern === 1 ? 8 : pattern === 2 ? 12 : 6;
-                    const peakHeight = pattern === 0 ? 20 : pattern === 1 ? 32 : pattern === 2 ? 28 : 24;
-                    const duration = 0.3 + (pattern * 0.1);
-                    const delay = i * 0.03;
-                    
-                    return (
-                      <motion.div
-                        key={i}
-                        className="w-1.5 bg-gradient-to-t from-red-500 to-red-400 rounded-full shadow-sm"
-                        style={{
-                          boxShadow: "0 0 4px rgba(239, 68, 68, 0.5)",
-                        }}
-                        animate={{
-                          height: [baseHeight, peakHeight, baseHeight],
-                          opacity: [0.4, 1, 0.4],
-                        }}
-                        transition={{
-                          duration: duration,
-                          repeat: Infinity,
-                          delay: delay,
-                          ease: "easeInOut",
-                        }}
-                      />
-                    );
-                  })}
-                </div>
+                    >
+                      <svg
+                        className="w-8 h-8 text-accent-danger"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+                        />
+                      </svg>
+                    </motion.div>
 
-                {/* Recording status and timer */}
-                <div className="flex items-center space-x-3">
-                  <div className="flex items-center space-x-2">
+                    {/* Error message */}
+                    <div className="space-y-3">
+                      <h3 className="text-xl font-semibold text-text-primary">
+                        Recording Failed
+                      </h3>
+                      <p className="text-sm text-text-muted max-w-xs">
+                        {error || "An unexpected error occurred while recording."}
+                      </p>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center space-x-3">
+                      {onRetry && (
+                        <motion.button
+                          onClick={onRetry}
+                          className="flex items-center space-x-2 px-6 py-3 bg-accent-primary hover:bg-accent-primary-hover text-white rounded-xl font-medium transition-all"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          aria-label="Retry voice recording"
+                        >
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                          </svg>
+                          <span>Try Again</span>
+                        </motion.button>
+                      )}
+
+                      <motion.button
+                        onClick={onCancel || onStop}
+                        className="flex items-center space-x-2 px-6 py-3 bg-glass-hover hover:bg-glass-elevated text-text-primary rounded-xl font-medium transition-all border border-glass"
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        aria-label="Cancel and close"
+                      >
+                        <span>Cancel</span>
+                      </motion.button>
+                    </div>
+                  </motion.div>
+                ) : isTranscribing ? (
+                  /* Transcribing State */
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex flex-col items-center space-y-6 text-center"
+                  >
+                    {/* Processing animation */}
                     <motion.div
-                      className="w-3 h-3 bg-red-500 rounded-full relative"
-                      animate={{ 
-                        opacity: [1, 0.6, 1],
-                        scale: [1, 1.2, 1],
+                      className="flex items-end justify-center space-x-1 h-12"
+                      animate={{
+                        scale: [1, 1.05, 1],
                       }}
                       transition={{
                         duration: 1.5,
@@ -159,53 +221,146 @@ export default function RecordingIndicator({
                         ease: "easeInOut",
                       }}
                     >
-                      {/* Inner pulse */}
-                      <motion.div
-                        className="absolute inset-0 bg-red-500 rounded-full"
-                        animate={{
-                          scale: [1, 1.8],
-                          opacity: [0.6, 0],
-                        }}
+                      {[0, 1, 2, 3].map((i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2 bg-accent-cyan rounded-full"
+                          animate={{
+                            height: [8, 24, 8],
+                            opacity: [0.4, 1, 0.4],
+                          }}
+                          transition={{
+                            duration: 0.8,
+                            repeat: Infinity,
+                            ease: "easeInOut",
+                            delay: i * 0.1,
+                          }}
+                        />
+                      ))}
+                    </motion.div>
+
+                    {/* Status text */}
+                    <div className="space-y-2">
+                      <motion.h3
+                        className="text-xl font-semibold text-text-primary"
+                        animate={{ opacity: [0.7, 1, 0.7] }}
                         transition={{
                           duration: 1.5,
                           repeat: Infinity,
-                          ease: "easeOut",
+                          ease: "easeInOut"
                         }}
-                      />
-                    </motion.div>
-                    <span className="text-white font-medium">Recording</span>
-                  </div>
-                  <span className="text-white/60 font-mono text-sm">
-                    {formatTime(recordingTime)}
-                  </span>
-                </div>
-
-                {/* Stop button with enhanced styling */}
-                <motion.button
-                  onClick={onStop}
-                  className="flex items-center space-x-2 px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-medium transition-all duration-200 shadow-lg relative overflow-hidden"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
+                      >
+                        Processing your voice...
+                      </motion.h3>
+                      <p className="text-sm text-text-muted">
+                        Converting speech to text
+                      </p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  /* Recording State */
                   <motion.div
-                    className="absolute inset-0 bg-white/20"
-                    initial={{ x: "-100%" }}
-                    whileHover={{ x: "100%" }}
-                    transition={{ duration: 0.5 }}
-                  />
-                  <svg
-                    className="w-5 h-5 relative z-10"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex flex-col items-center space-y-6 text-center"
                   >
-                    <path d="M6 6h12v12H6z" />
-                  </svg>
-                  <span className="relative z-10">Stop Recording</span>
-                </motion.button>
-              </div>
-            )}
-          </div>
-        </motion.div>
+                    {/* Enhanced waveform */}
+                    <motion.div
+                      className="flex items-center justify-center space-x-1 h-16 relative"
+                      animate={{
+                        scale: [1, 1.02, 1],
+                      }}
+                      transition={{
+                        duration: 1,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                      }}
+                    >
+                      {Array.from({ length: 20 }).map((_, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-1 bg-gradient-to-t from-accent-danger to-accent-danger/60 rounded-full"
+                          animate={{
+                            height: [
+                              8 + Math.sin(i * 0.3) * 4,
+                              16 + Math.sin(i * 0.3) * 8,
+                              8 + Math.sin(i * 0.3) * 4
+                            ],
+                            opacity: [
+                              0.4 + Math.cos(i * 0.2) * 0.3,
+                              0.8 + Math.cos(i * 0.2) * 0.2,
+                              0.4 + Math.cos(i * 0.2) * 0.3
+                            ],
+                          }}
+                          transition={{
+                            duration: 0.8,
+                            repeat: Infinity,
+                            ease: "easeInOut",
+                            delay: i * 0.05,
+                          }}
+                        />
+                      ))}
+                    </motion.div>
+
+                    {/* Recording status */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-center space-x-3">
+                        <motion.div
+                          className="w-3 h-3 bg-accent-danger rounded-full"
+                          animate={{
+                            scale: [1, 1.2, 1],
+                            opacity: [1, 0.7, 1],
+                          }}
+                          transition={{
+                            duration: 1,
+                            repeat: Infinity,
+                            ease: "easeInOut",
+                          }}
+                        />
+                        <span className="text-lg font-medium text-text-primary">
+                          Listening...
+                        </span>
+                      </div>
+
+                      <div className="text-sm text-text-muted font-mono">
+                        {formatTime(recordingTime)}
+                      </div>
+                    </div>
+
+                    {/* Stop button */}
+                    <motion.button
+                      onClick={onStop}
+                      className="flex items-center space-x-3 px-8 py-4 bg-accent-danger hover:bg-accent-danger/90 text-white rounded-2xl font-medium transition-all shadow-lg"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      aria-label="Stop voice recording"
+                    >
+                      <motion.svg
+                        className="w-6 h-6"
+                        fill="currentColor"
+                        viewBox="0 0 24 24"
+                        animate={{ scale: [1, 1.1, 1] }}
+                        transition={{
+                          duration: 0.5,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
+                      >
+                        <path d="M6 6h12v12H6z" />
+                      </motion.svg>
+                      <span>Stop Recording</span>
+                    </motion.button>
+
+                    {/* Hint text */}
+                    <p className="text-xs text-text-subtle">
+                      Recording stops automatically after 5 seconds of silence
+                    </p>
+                  </motion.div>
+                )}
+              </motion.div>
+            </div>
+          </motion.div>
+        </>
       )}
     </AnimatePresence>
   );

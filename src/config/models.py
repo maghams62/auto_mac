@@ -99,6 +99,20 @@ class VisionSettings:
 
 
 @dataclass(frozen=True)
+class ScreenshotSettings:
+    base_dir: str
+
+
+@dataclass(frozen=True)
+class SpotifyAPISettings:
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+    scopes: List[str]
+    token_storage_path: Optional[str] = "data/spotify_tokens.json"
+
+
+@dataclass(frozen=True)
 class OpenAISettings:
     api_key: str
     model: str

@@ -453,7 +453,7 @@ def detect_commitments_from_user_request(request: str, config: Dict[str, Any]) -
     Detect delivery commitments from user request.
 
     Uses config.yaml delivery.intent_verbs to identify when user
-    expects email sending, attachments, etc.
+    expects email sending, attachments, or playback commitments.
 
     Args:
         request: User's input string
@@ -470,14 +470,24 @@ def detect_commitments_from_user_request(request: str, config: Dict[str, Any]) -
     if not intent_verbs:
         intent_verbs = ["email", "send", "mail", "attach"]
 
-    # Check for delivery intent
+    detected_commitments = set()
+
+    # Check for delivery intent (email/send)
     if any(verb in request_lower for verb in intent_verbs):
         # Check for attachment intent (before adding send_email)
         attachment_keywords = ["attach", "include", "with", "files", "documents", "them", "it"]
         if any(kw in request_lower for kw in attachment_keywords):
-            commitments.append("attach_documents")
+            detected_commitments.add("attach_documents")
 
         # Always add send_email if delivery verbs present
-        commitments.append("send_email")
+        detected_commitments.add("send_email")
+
+    # Playback commitments (Spotify control)
+    playback_config = config.get("playback", {})
+    playback_verbs = playback_config.get("intent_verbs", ["play", "queue", "listen", "start"])
+    if any(verb in request_lower for verb in playback_verbs):
+        detected_commitments.add("play_music")
+
+    commitments.extend(sorted(detected_commitments))
 
     return commitments

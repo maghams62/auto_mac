@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_end_to_end_semantic_understanding",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 25.881798999995226
+  },
+  "timestamp": "2025-11-12T11:25:09.647492",
+  "test_name": "spotify_semantic"
+}

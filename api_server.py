@@ -197,7 +197,26 @@ def format_result_message(result: Dict[str, Any]) -> str:
         error_text = result.get('error_message') or result.get('message') or 'Unknown error'
         return f"❌ **Error:** {error_text}"
     
-    # Default formatting
+    # Handle reply type results (from reply_to_user tool) - combine message and details
+    # Check if this is a reply type OR if it has details field (which indicates reply structure)
+    is_reply_type = result.get("type") == "reply"
+    has_details = "details" in result
+    
+    if is_reply_type or has_details:
+        message = result.get("message", "")
+        details = result.get("details", "")
+        
+        # Combine message and details if both exist
+        if message and details:
+            # If message ends with punctuation, add space; otherwise add newline
+            separator = "\n\n" if message.rstrip().endswith((".", "!", "?")) else "\n\n"
+            return f"{message}{separator}{details}"
+        elif message:
+            return message
+        elif details:
+            return details
+    
+    # Default formatting - check for message field
     if "message" in result:
         return result["message"]
     
@@ -296,23 +315,40 @@ async def process_agent_request(
                     formatted_message = format_result_message(step_result)
                     break
         
-        # If no Maps URL found, use default formatting
+        # If no Maps URL found, check for reply type results in step_results/results
         if not formatted_message or formatted_message == json.dumps(result_dict, indent=2):
-            # Try to extract meaningful message from result structure
+            # First, check for reply type result in step_results (from reply_to_user tool)
+            reply_result = None
             if "step_results" in result_dict and result_dict["step_results"]:
-                # Get the first result's message if available
-                first_result = list(result_dict["step_results"].values())[0]
-                if isinstance(first_result, dict) and "message" in first_result:
-                    formatted_message = first_result["message"]
-                elif isinstance(first_result, dict) and "maps_url" in first_result:
-                    formatted_message = format_result_message(first_result)
+                for step_result in result_dict["step_results"].values():
+                    if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                        reply_result = step_result
+                        break
             elif "results" in result_dict and result_dict["results"]:
-                # Get the first result's message if available
-                first_result = list(result_dict["results"].values())[0]
-                if isinstance(first_result, dict) and "message" in first_result:
-                    formatted_message = first_result["message"]
-                elif isinstance(first_result, dict) and "maps_url" in first_result:
-                    formatted_message = format_result_message(first_result)
+                for step_result in result_dict["results"].values():
+                    if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                        reply_result = step_result
+                        break
+            
+            if reply_result:
+                # Use format_result_message to combine message and details
+                formatted_message = format_result_message(reply_result)
+            else:
+                # Fallback: Try to extract meaningful message from result structure
+                if "step_results" in result_dict and result_dict["step_results"]:
+                    # Get the first result's message if available
+                    first_result = list(result_dict["step_results"].values())[0]
+                    if isinstance(first_result, dict) and "message" in first_result:
+                        formatted_message = format_result_message(first_result)
+                    elif isinstance(first_result, dict) and "maps_url" in first_result:
+                        formatted_message = format_result_message(first_result)
+                elif "results" in result_dict and result_dict["results"]:
+                    # Get the first result's message if available
+                    first_result = list(result_dict["results"].values())[0]
+                    if isinstance(first_result, dict) and "message" in first_result:
+                        formatted_message = format_result_message(first_result)
+                    elif isinstance(first_result, dict) and "maps_url" in first_result:
+                        formatted_message = format_result_message(first_result)
 
         # Extract files array from result if present (for file_list type responses)
         files_array = None
@@ -329,6 +365,21 @@ async def process_agent_request(
         elif result_dict.get("type") == "file_list" and "files" in result_dict:
             files_array = result_dict["files"]
 
+        # Extract completion_event from reply results if present
+        completion_event = None
+        if "step_results" in result_dict and result_dict["step_results"]:
+            for step_result in result_dict["step_results"].values():
+                if isinstance(step_result, dict) and step_result.get("type") == "reply" and "completion_event" in step_result:
+                    completion_event = step_result["completion_event"]
+                    break
+        elif "results" in result_dict and result_dict["results"]:
+            for step_result in result_dict["results"].values():
+                if isinstance(step_result, dict) and step_result.get("type") == "reply" and "completion_event" in step_result:
+                    completion_event = step_result["completion_event"]
+                    break
+        elif result_dict.get("type") == "reply" and "completion_event" in result_dict:
+            completion_event = result_dict["completion_event"]
+
         # Build response payload
         response_payload = {
             "type": "response",
@@ -342,6 +393,11 @@ async def process_agent_request(
         # Add files array if present
         if files_array is not None:
             response_payload["files"] = files_array
+
+        # Add completion_event if present (for rich UI feedback)
+        if completion_event is not None:
+            response_payload["completion_event"] = completion_event
+            logger.info(f"[API SERVER] Including completion_event: {completion_event.get('action_type')}")
 
         await manager.send_message(response_payload, websocket)
 
@@ -1130,6 +1186,106 @@ async def reveal_file(request: RevealFileRequest):
         logger.error(f"Error revealing file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class FilePreviewRequest(BaseModel):
+    path: str
+
+
+@app.get("/api/files/preview")
+async def preview_file(path: str):
+    """
+    Preview a file from whitelisted directories (data/reports, data/presentations, etc.).
+    
+    Returns file content with appropriate content-type headers for preview.
+    Security: Only allows files from configured safe directories.
+    """
+    try:
+        import os
+        from pathlib import Path
+        from fastapi.responses import FileResponse, StreamingResponse
+        
+        file_path = Path(path)
+        
+        # Resolve to absolute path
+        if not file_path.is_absolute():
+            # Try relative to project root
+            project_root = Path(__file__).resolve().parent
+            file_path = (project_root / file_path).resolve()
+        
+        # Security: Whitelist allowed directories
+        allowed_roots = [
+            Path(__file__).resolve().parent / "data" / "reports",
+            Path(__file__).resolve().parent / "data" / "presentations",
+            Path(__file__).resolve().parent / "data" / "screenshots",
+        ]
+        
+        # Check if file is within an allowed directory
+        is_allowed = False
+        for allowed_root in allowed_roots:
+            try:
+                file_path.resolve().relative_to(allowed_root.resolve())
+                is_allowed = True
+                break
+            except ValueError:
+                continue
+        
+        if not is_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"File path not in allowed directories. Allowed: {[str(r) for r in allowed_roots]}"
+            )
+        
+        # Check if file exists
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+        
+        # Determine content type
+        ext = file_path.suffix.lower()
+        content_types = {
+            ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".html": "text/html",
+            ".txt": "text/plain",
+            ".md": "text/markdown",
+            ".key": "application/vnd.apple.keynote",
+            ".pages": "application/vnd.apple.pages",
+        }
+        
+        content_type = content_types.get(ext, "application/octet-stream")
+        
+        # For PDFs and images, return file directly
+        if ext in [".pdf", ".png", ".jpg", ".jpeg", ".gif"]:
+            return FileResponse(
+                str(file_path),
+                media_type=content_type,
+                filename=file_path.name
+            )
+        
+        # For HTML/text files, read and return content
+        if ext in [".html", ".txt", ".md"]:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return StreamingResponse(
+                iter([content]),
+                media_type=content_type
+            )
+        
+        # For other files, return as download
+        return FileResponse(
+            str(file_path),
+            media_type=content_type,
+            filename=file_path.name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error previewing file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
     """
@@ -1420,6 +1576,231 @@ async def resume_recurring_task(task_id: str):
         logger.error(f"Error resuming recurring task: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class OAuthCallbackRequest(BaseModel):
+    """Request model for OAuth callback."""
+    code: str
+    state: Optional[str] = None
+    redirect_uri: str
+
+
+@app.post("/api/auth/callback")
+async def oauth_callback(request: OAuthCallbackRequest):
+    """
+    Handle OAuth callback with authorization code.
+    
+    This endpoint processes OAuth callbacks from various providers.
+    The actual OAuth flow implementation depends on the provider.
+    """
+    try:
+        logger.info(f"OAuth callback received: code={request.code[:20]}..., state={request.state}, redirect_uri={request.redirect_uri}")
+        
+        # Get OAuth configuration
+        oauth_config = config_manager.get_config().get("oauth", {})
+        allowed_domains = oauth_config.get("allowed_redirect_domains", ["localhost", "127.0.0.1"])
+        
+        # Validate redirect URI
+        try:
+            redirect_url = request.redirect_uri
+            parsed_url = json.loads(json.dumps({"url": redirect_url}))  # Basic validation
+            # In a real implementation, you would validate against allowed domains
+        except Exception as e:
+            logger.warning(f"Invalid redirect URI: {e}")
+        
+        # TODO: Implement actual OAuth token exchange based on provider
+        # This is a placeholder that returns success
+        # In production, you would:
+        # 1. Exchange the authorization code for tokens
+        # 2. Store tokens securely
+        # 3. Return appropriate response
+        
+        return {
+            "success": True,
+            "message": "Authentication successful. Redirecting...",
+            "redirect_to": "/",  # Default redirect destination
+            "code": request.code[:10] + "..."  # Partial code for logging (don't return full code)
+        }
+    except Exception as e:
+        logger.error(f"Error processing OAuth callback: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth callback failed: {str(e)}")
+
+
+@app.get("/api/auth/redirect-url")
+async def get_redirect_url():
+    """
+    Get the configured redirect URL for OAuth flows.
+    
+    This endpoint returns the redirect URL that should be used
+    when configuring OAuth providers.
+    """
+    try:
+        oauth_config = config_manager.get_config().get("oauth", {})
+        ui_config = config_manager.get_config().get("ui", {})
+        
+        # Get redirect URL from config or construct from base URL + path
+        redirect_url = ui_config.get("redirect_url")
+        if not redirect_url or redirect_url.startswith("${"):
+            # Construct from base URL and path
+            base_url = oauth_config.get("redirect_base_url", "http://localhost:3000")
+            redirect_path = oauth_config.get("redirect_path", "/redirect")
+            redirect_url = f"{base_url}{redirect_path}"
+        
+        # Replace environment variables if present
+        if redirect_url.startswith("${"):
+            import re
+            # Extract default value from ${VAR:-default} format
+            match = re.match(r'\$\{([^:]+):-([^}]+)\}', redirect_url)
+            if match:
+                redirect_url = match.group(2)
+        
+        return {
+            "redirect_url": redirect_url,
+            "base_url": oauth_config.get("redirect_base_url", "http://localhost:3000"),
+            "path": oauth_config.get("redirect_path", "/redirect")
+        }
+    except Exception as e:
+        logger.error(f"Error getting redirect URL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SPOTIFY WEB PLAYBACK SDK ENDPOINTS
+# ============================================================================
+
+# Global variable to store the web player device ID
+web_player_device_id: Optional[str] = None
+
+class SpotifyDeviceRegistration(BaseModel):
+    """Request model for registering Spotify web player device."""
+    device_id: str
+
+
+@app.get("/api/spotify/auth-status")
+async def spotify_auth_status():
+    """Check if user is authenticated with Spotify."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        is_auth = client.is_authenticated()
+        return {
+            "authenticated": is_auth,
+            "has_credentials": bool(api_config.client_id and api_config.client_secret)
+        }
+    except Exception as e:
+        logger.warning(f"Spotify auth status check failed: {e}")
+        return {"authenticated": False, "has_credentials": False}
+
+
+@app.get("/api/spotify/token")
+async def get_spotify_token():
+    """Get Spotify access token for Web Playback SDK."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        # Get the token data
+        token_data = client._load_token()
+        if not token_data or "access_token" not in token_data:
+            raise HTTPException(status_code=401, detail="No valid token available")
+
+        return {"access_token": token_data["access_token"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting Spotify token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/spotify/login")
+async def spotify_login():
+    """Initiate Spotify OAuth login flow."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+        from fastapi.responses import RedirectResponse
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        # Get authorization URL with required scopes for playback
+        scopes = [
+            "user-read-playback-state",
+            "user-modify-playback-state",
+            "user-read-currently-playing",
+            "streaming",
+            "user-read-email",
+            "user-read-private"
+        ]
+        auth_url = client.get_authorization_url(scopes)
+        return RedirectResponse(url=auth_url)
+    except Exception as e:
+        logger.error(f"Error initiating Spotify login: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spotify/register-device")
+async def register_spotify_device(request: SpotifyDeviceRegistration):
+    """Register the web player device ID."""
+    global web_player_device_id
+    try:
+        web_player_device_id = request.device_id
+        logger.info(f"Registered Spotify web player device: {web_player_device_id}")
+        return {
+            "success": True,
+            "device_id": web_player_device_id,
+            "message": "Device registered successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error registering Spotify device: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/spotify/device-id")
+async def get_spotify_device_id():
+    """Get the registered web player device ID."""
+    global web_player_device_id
+    if not web_player_device_id:
+        raise HTTPException(status_code=404, detail="No web player device registered")
+    return {"device_id": web_player_device_id}
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { getApiBaseUrl } from "@/lib/apiConfig";
+import DocumentPreviewModal from "./DocumentPreviewModal";
 
 interface ArtifactCardProps {
   path: string;
@@ -34,8 +35,24 @@ export default function ArtifactCard({
 }: ArtifactCardProps) {
   const [copied, setCopied] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
   const fileType = type === "file" ? getFileType(path) : "other";
+  
+  // Check if file is previewable
+  const isPreviewable = useMemo(() => {
+    if (type !== "file") return false;
+    const ext = path.toLowerCase().split('.').pop() || '';
+    return ['pdf', 'html', 'png', 'jpg', 'jpeg', 'gif'].includes(ext);
+  }, [path, type]);
+  
+  const previewFileType = useMemo(() => {
+    const ext = path.toLowerCase().split('.').pop() || '';
+    if (ext === 'pdf') return 'pdf';
+    if (ext === 'html') return 'html';
+    if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) return 'image';
+    return 'pdf';
+  }, [path]);
   
   // Generate preview URL for images and PDFs
   useEffect(() => {
@@ -221,6 +238,19 @@ export default function ArtifactCard({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {type === "file" && isPreviewable && (
+            <button
+              onClick={() => setShowPreviewModal(true)}
+              className={cn(
+                "px-3 py-1.5 text-xs rounded-lg transition-all duration-200 font-medium",
+                "bg-accent-primary/10 hover:bg-accent-primary/20 border border-accent-primary/20",
+                "text-accent-primary"
+              )}
+              title="Preview"
+            >
+              Preview
+            </button>
+          )}
           {type === "file" && (
             <button
               onClick={handleReveal}
@@ -248,6 +278,16 @@ export default function ArtifactCard({
           </button>
         </div>
       </div>
+      
+      {/* Preview Modal */}
+      {isPreviewable && (
+        <DocumentPreviewModal
+          isOpen={showPreviewModal}
+          onClose={() => setShowPreviewModal(false)}
+          filePath={path}
+          fileType={previewFileType}
+        />
+      )}
     </motion.div>
   );
 }

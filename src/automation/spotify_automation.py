@@ -322,71 +322,28 @@ class SpotifyAutomation:
             # URL-encode the search query for Spotify URI (preserves Unicode)
             encoded_query = quote(search_query, safe="")
             
-            # Build AppleScript string safely using character codes to avoid reserved word issues
-            # This ensures words like "Space" are treated as string literals, not class names
-            def build_applescript_string_safe(s: str) -> str:
-                """
-                Build an AppleScript string literal using character codes to avoid parsing issues.
-                
-                Args:
-                    s: String to convert (handles None, empty strings, and Unicode)
-                
-                Returns:
-                    AppleScript string construction using character codes
-                """
-                # Handle None and empty strings
-                if s is None:
-                    logger.warning("[SPOTIFY AUTOMATION] Received None value for string construction, using empty string")
-                    return '""'
-                
-                if not isinstance(s, str):
-                    s = str(s)
-                
-                if not s:
-                    return '""'
-                
-                # Handle very long strings (>1000 chars) - truncate with warning
-                if len(s) > 1000:
-                    logger.warning(f"[SPOTIFY AUTOMATION] String length ({len(s)}) exceeds 1000 chars, truncating")
-                    s = s[:1000]
-                
-                # Build string character-by-character using character codes
-                # This ensures AppleScript always treats it as a string literal
-                char_parts = []
-                for char in s:
-                    code = ord(char)
-                    # Use character code for all characters to avoid any parsing issues
-                    char_parts.append(f"ASCII character {code}")
-                
-                result = " & ".join(char_parts)
-                logger.debug(f"[SPOTIFY AUTOMATION] Built AppleScript string using character codes (length: {len(s)})")
-                return result
-            
-            # Build the search query string using character codes
-            search_query_chars = build_applescript_string_safe(search_query)
-            
-            # Use stdin approach (like Maps automation) for more reliable execution
-            # Build the AppleScript with character-code-based string construction
+            # Use Spotify URI approach with keyboard simulation
             applescript = f'''tell application "Spotify"
     activate
     try
-        -- Build search query string using character codes to avoid reserved word parsing issues
-        -- This ensures words like "Space" are treated as string literals, not class names
-        set searchQuery to {search_query_chars}
-        set searchResults to search track searchQuery
-        
-        -- Check if we got results
-        if (count of searchResults) = 0 then
-            return "ERROR: No results found for " & searchQuery
-        end if
-        
-        -- Play the first search result
-        play track (item 1 of searchResults)
-        
+        -- Use Spotify search URI (more reliable than AppleScript search command)
+        open location "spotify:search:{encoded_query}"
+
+        -- Wait for search to load
+        delay 3
+
+        -- Try to play the first result by simulating keyboard input
+        -- Press Enter to play the first search result
+        tell application "System Events"
+            key code 76 -- Press Enter key
+        end tell
+
+        -- Wait a moment for playback to start
+        delay 2
+
         -- Return success with track info
-        set currentTrack to current track
-        set trackName to name of currentTrack
-        set artistName to artist of currentTrack
+        set trackName to name of current track
+        set artistName to artist of current track
         return "SUCCESS: " & trackName & " by " & artistName
     on error errMsg
         return "ERROR: " & errMsg

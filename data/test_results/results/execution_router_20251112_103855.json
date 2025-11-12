@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_should_use_vision_first_with_multiple_failures",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_execution_router.TestExecutionRouter testMethod=test_should_use_vision_first_with_multiple_failures>\n\n    def test_should_use_vision_first_with_multiple_failures(self):\n        \"\"\"Test routing to vision after multiple AppleScript failures.\"\"\"\n        router = ExecutionRouter(self.mock_config)\n        context = {\n            \"previous_attempts\": [\n                {\"strategy\": \"simple\", \"success\": False},\n                {\"strategy\": \"simple\", \"success\": False},\n                {\"strategy\": \"simple\", \"success\": False}\n            ]\n        }\n    \n        result = router.route_execution(\"play_song\", \"test song\", context=context)\n    \n        self.assertEqual(result[\"strategy\"], ExecutionStrategy.VISION)\n>       self.assertIn(\"AppleScript failures\", result[\"reasoning\"])\nE       AssertionError: 'AppleScript failures' not found in 'Direct vision routing for play_song based on context analysis'\n\ntests/test_execution_router.py:128: AssertionError",
+    "duration": 0.014735499978996813
+  },
+  "timestamp": "2025-11-12T10:38:55.395382",
+  "test_name": "execution_router"
+}

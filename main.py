@@ -8,7 +8,7 @@ AI-powered document search and email automation for macOS.
 import sys
 import logging
 import re
-from typing import Dict
+from typing import Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -50,6 +50,8 @@ def main():
         # Setup logging
         setup_logging(config)
 
+        # Get logger after setup
+        logger = logging.getLogger(__name__)
         logger.info("Starting Cerebro OS")
 
         # Check for OpenAI API key
@@ -58,10 +60,17 @@ def main():
             print("Please set it with: export OPENAI_API_KEY='your-key-here'")
             sys.exit(1)
 
-        # Initialize session manager
-        session_manager = SessionManager(storage_dir="data/sessions", config=config)
+        # Initialize session manager with retry logging enabled
+        retry_logging_enabled = config.get("retry_logging", {}).get("enabled", True)
+        session_manager = SessionManager(
+            storage_dir="data/sessions",
+            config=config,
+            enable_retry_logging=retry_logging_enabled
+        )
         session_id = "default"  # Single-user mode
         logger.info(f"Session manager initialized with session ID: {session_id}")
+        if retry_logging_enabled:
+            logger.info("Retry logging enabled for better error recovery")
 
         # Initialize agent registry with session support
         agent_registry = AgentRegistry(config, session_manager=session_manager)

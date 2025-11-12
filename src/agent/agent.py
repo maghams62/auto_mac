@@ -158,6 +158,118 @@ class AutomationAgent:
 
         return prompts
 
+    def _load_atomic_examples_for_request(self, user_request: str) -> str:
+        """
+        Load atomic few-shot examples based on the user request characteristics.
+
+        This replaces the monolithic few_shot_examples loading with task-specific
+        examples to reduce context window usage and improve reasoning quality.
+        """
+        atomic_config = self.config.get("atomic_prompts", {})
+        if not atomic_config.get("enabled", True):
+            return self.prompts.get("few_shot_examples", "")
+
+        try:
+            from src.prompt_repository import PromptRepository
+            repo = PromptRepository()
+
+            # Extract task characteristics from the user request
+            task_characteristics = self._extract_task_characteristics(user_request)
+
+            # Load atomic examples with token budget
+            max_tokens = atomic_config.get("max_tokens", 2000)
+            atomic_examples = repo.load_atomic_examples(
+                task_characteristics,
+                max_tokens=max_tokens
+            )
+
+            if atomic_examples:
+                token_count = repo._estimate_tokens(atomic_examples)
+                if atomic_config.get("log_usage", True):
+                    logger.info(
+                        f"[ATOMIC PROMPTS] Loaded {token_count}/{max_tokens} tokens "
+                        f"for task: {task_characteristics}"
+                    )
+                return atomic_examples
+
+        except Exception as exc:
+            logger.warning(f"Failed to load atomic examples: {exc}")
+
+        # Fallback behavior
+        if atomic_config.get("fallback_to_full", True):
+            logger.info("[ATOMIC PROMPTS] Falling back to pre-loaded examples")
+            return self.prompts.get("few_shot_examples", "")
+        else:
+            logger.info("[ATOMIC PROMPTS] Returning empty examples (no fallback)")
+            return ""
+
+    def _extract_task_characteristics(self, user_request: str) -> Dict[str, str]:
+        """
+        Extract task characteristics from a user request for atomic prompt loading.
+
+        Returns a dictionary with keys like 'task_type', 'domain', 'complexity'.
+        """
+        request_lower = user_request.lower()
+
+        characteristics = {}
+
+        # Determine task type based on keywords and patterns
+        if any(word in request_lower for word in ['email', 'mail', 'send', 'compose']):
+            characteristics['domain'] = 'email'
+            if 'summarize' in request_lower or 'summary' in request_lower:
+                characteristics['task_type'] = 'email_summarization'
+            elif 'read' in request_lower or 'latest' in request_lower:
+                characteristics['task_type'] = 'email_reading'
+            else:
+                characteristics['task_type'] = 'email_composition'
+
+        elif any(word in request_lower for word in ['stock', 'price', 'market', 'ticker']):
+            characteristics['domain'] = 'stocks'
+            characteristics['task_type'] = 'stock_analysis'
+
+        elif any(word in request_lower for word in ['file', 'document', 'pdf', 'zip', 'folder']):
+            characteristics['domain'] = 'file'
+            if 'zip' in request_lower or 'archive' in request_lower:
+                characteristics['task_type'] = 'file_archiving'
+            elif 'search' in request_lower or 'find' in request_lower:
+                characteristics['task_type'] = 'file_search'
+
+        elif any(word in request_lower for word in ['map', 'directions', 'route', 'trip']):
+            characteristics['domain'] = 'maps'
+            characteristics['task_type'] = 'trip_planning'
+
+        elif any(word in request_lower for word in ['presentation', 'slide', 'keynote', 'deck']):
+            characteristics['domain'] = 'writing'
+            characteristics['task_type'] = 'presentation_creation'
+
+        elif any(word in request_lower for word in ['screenshot', 'screen', 'capture']):
+            characteristics['domain'] = 'screen'
+            characteristics['task_type'] = 'screen_capture'
+
+        elif any(word in request_lower for word in ['weather', 'temperature', 'forecast']):
+            characteristics['domain'] = 'weather'
+            characteristics['task_type'] = 'weather_query'
+
+        elif any(word in request_lower for word in ['search', 'find', 'lookup', 'research']):
+            characteristics['domain'] = 'web'
+            characteristics['task_type'] = 'web_search'
+
+        elif any(word in request_lower for word in ['download', 'extract', 'scrape', 'crawl']):
+            characteristics['domain'] = 'web'
+            characteristics['task_type'] = 'web_scraping'
+
+        elif any(word in request_lower for word in ['error', 'fail', 'problem', 'issue']):
+            characteristics['domain'] = 'safety'
+            characteristics['task_type'] = 'error_handling'
+
+        # Estimate complexity (this could be enhanced with more sophisticated analysis)
+        if len(user_request.split()) > 20 or any(word in request_lower for word in ['complex', 'multiple', 'advanced']):
+            characteristics['complexity'] = 'complex'
+        else:
+            characteristics['complexity'] = 'simple'
+
+        return characteristics
+
     def _build_graph(self) -> StateGraph:
         """Build LangGraph workflow."""
         workflow = StateGraph(AgentState)
@@ -221,7 +333,9 @@ class AutomationAgent:
         # Build planning prompt
         system_prompt = self.prompts.get("system", "")
         task_decomp_prompt = self.prompts.get("task_decomposition", "")
-        few_shot_examples = self.prompts.get("few_shot_examples", "")
+
+        # Load atomic few-shot examples based on user request
+        few_shot_examples = self._load_atomic_examples_for_request(full_user_request)
         user_request_lower = full_user_request.lower()
 
         # Delivery intent detection - load from config instead of hardcoding
@@ -734,6 +848,17 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         # Add reasoning trace entry before tool execution
         execution_entry_id = None
         memory = state.get("memory")
+        tool_commitments: List[str] = []
+        if self.config:
+            delivery_commitments = self.config.get("delivery", {}).get("tool_commitments", {})
+            playback_commitments = self.config.get("playback", {}).get("tool_commitments", {})
+            for mapping in (delivery_commitments, playback_commitments):
+                if mapping and tool_name in mapping:
+                    tool_commitments.extend(mapping.get(tool_name, []))
+
+        if tool_commitments:
+            tool_commitments = sorted(set(tool_commitments))
+
         if memory and memory.is_reasoning_trace_enabled():
             try:
                 execution_entry_id = memory.add_reasoning_entry(
@@ -741,7 +866,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     thought=f"Executing {tool_name}",
                     action=tool_name,
                     parameters=resolved_params,
-                    outcome="pending"
+                    outcome="pending",
+                    commitments=tool_commitments
                 )
             except Exception as e:
                 logger.debug(f"[REASONING TRACE] Failed to add execution entry: {e}")
@@ -890,10 +1016,56 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 }
                 self._record_tool_error(state, tool_name, str(e))
 
+                # Log retry attempt if retry logging is enabled
+                memory = state.get("memory")
+                if memory and memory.is_retry_logging_enabled():
+                    try:
+                        from ..memory.retry_logger import RetryReason, RecoveryPriority
+                        interaction_id = state.get("interaction_id", str(uuid.uuid4()))
+
+                        memory.log_retry_attempt(
+                            interaction_id=interaction_id,
+                            attempt_number=attempt,
+                            reason=RetryReason.EXECUTION_ERROR,
+                            priority=RecoveryPriority.HIGH,
+                            failed_action=tool_name,
+                            error_message=str(e),
+                            error_type=type(e).__name__,
+                            user_request=state.get("user_request", ""),
+                            execution_context={
+                                'current_plan': state.get("steps", []),
+                                'execution_state': {
+                                    'current_step': current_idx,
+                                    'step_results': state.get("step_results", {})
+                                },
+                                'tool_parameters': resolved_params
+                            },
+                            reasoning_trace=self._get_reasoning_trace_for_retry(memory, interaction_id),
+                            critic_feedback=[],  # Could be populated from error analysis
+                            agent_name=self.__class__.__name__,
+                            tool_name=tool_name,
+                            execution_duration_ms=0,  # Not tracked here
+                            retry_possible=attempt < 3,  # Allow up to 3 attempts
+                            max_retries_reached=attempt >= 3
+                        )
+                    except Exception as retry_log_error:
+                        logger.debug(f"[RETRY LOGGING] Failed to log retry attempt: {retry_log_error}")
+
         # Move to next step
         state["current_step"] = current_idx + 1
 
         return state
+
+    def _get_reasoning_trace_for_retry(self, memory, interaction_id: str) -> List[Dict[str, Any]]:
+        """Get reasoning trace entries for retry logging."""
+        try:
+            if hasattr(memory, '_reasoning_traces') and interaction_id in memory._reasoning_traces:
+                trace_obj = memory._reasoning_traces[interaction_id]
+                if hasattr(trace_obj, 'entries'):
+                    return [entry.__dict__ if hasattr(entry, '__dict__') else entry for entry in trace_obj.entries]
+        except Exception as e:
+            logger.debug(f"[RETRY LOGGING] Failed to get reasoning trace: {e}")
+        return []
 
     def finalize(self, state: AgentState) -> AgentState:
         """
@@ -1043,6 +1215,81 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 else:
                     summary["message"] = note
 
+        playback_config = self.config.get("playback", {}) if self.config else {}
+        playback_verbs = playback_config.get("intent_verbs", ["play", "queue", "listen", "start"])
+        playback_required_tool = playback_config.get("required_tool", "play_song")
+        playback_verification_tool = playback_config.get("verification_tool")
+        playback_failure_message = playback_config.get(
+            "failure_message",
+            "Unable to confirm Spotify playback. Please ensure Spotify is running and try again."
+        )
+        playback_success_message = playback_config.get(
+            "success_message",
+            "Started playback in Spotify."
+        )
+
+        def _append_summary_message(note: str):
+            if not note:
+                return
+            base_message = summary.get("message", "")
+            if base_message:
+                summary["message"] = f"{base_message.rstrip('. ')}. {note}"
+            else:
+                summary["message"] = note
+
+        playback_intent = any(verb in request_lower for verb in playback_verbs)
+        if playback_intent:
+            playback_success = False
+            failure_details = None
+
+            play_step = next(
+                (s for s in steps if s.get("action") == playback_required_tool),
+                None
+            )
+            play_step_result = step_results.get(play_step.get("id")) if play_step and play_step.get("id") in step_results else None
+
+            if play_step_result:
+                if play_step_result.get("error"):
+                    failure_details = play_step_result.get("error_message") or play_step_result.get("message")
+                else:
+                    status_value = (play_step_result.get("status") or "").lower()
+                    playback_success = bool(
+                        play_step_result.get("success", False) or status_value == "playing"
+                    )
+            else:
+                failure_details = "Playback tool did not execute."
+
+            if playback_success and playback_verification_tool:
+                verification_step = next(
+                    (s for s in steps if s.get("action") == playback_verification_tool),
+                    None
+                )
+                verification_result = step_results.get(verification_step.get("id")) if verification_step and verification_step.get("id") in step_results else None
+
+                if not verification_result or verification_result.get("error"):
+                    playback_success = False
+                    failure_details = (
+                        verification_result.get("error_message")
+                        if verification_result and verification_result.get("error_message")
+                        else "Could not verify Spotify playback status."
+                    )
+                else:
+                    verification_status = (verification_result.get("status") or "").lower()
+                    if verification_status != "playing":
+                        playback_success = False
+                        failure_details = verification_result.get("message") or "Spotify is not reporting playback."
+
+            if playback_success and playback_success_message:
+                _append_summary_message(playback_success_message)
+
+            if not playback_success:
+                if summary["status"] == "success":
+                    summary["status"] = "partial_success"
+                note_parts = [playback_failure_message]
+                if failure_details and failure_details not in playback_failure_message:
+                    note_parts.append(failure_details)
+                _append_summary_message(" ".join(note_parts))
+
         # Check pending commitments from reasoning trace
         memory = state.get("memory")
         if memory and memory.is_reasoning_trace_enabled():
@@ -1054,7 +1301,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         step.get("action") == "reply_to_user"
                         for step in steps
                     )
-                    if has_reply_step and ("send_email" in pending or "attach_documents" in pending):
+                    critical_commitments = {"send_email", "attach_documents", "play_music"}
+                    if has_reply_step and critical_commitments.intersection(set(pending)):
                         if summary["status"] == "success":
                             summary["status"] = "partial_success"
                         warning_msg = f" Warning: Some commitments not fulfilled: {', '.join(pending)}"
@@ -1151,6 +1399,12 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         has_email = False
         keynote_step_id = None
         has_writing_tool = False
+        has_playback_step = False
+        has_playback_verification = False
+        playback_config = self.config.get("playback", {}) if self.config else {}
+        playback_required_tool = playback_config.get("required_tool", "play_song")
+        playback_verification_tool = playback_config.get("verification_tool")
+        playback_require_status_check = playback_config.get("require_status_check", True)
         candidate_body_steps: List[int] = []
 
         steps = plan.get("steps", [])
@@ -1165,9 +1419,20 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 has_email = True
             if action in ["synthesize_content", "create_detailed_report", "format_writing"]:
                 has_writing_tool = True
+            if action == playback_required_tool:
+                has_playback_step = True
+            if action == playback_verification_tool:
+                has_playback_verification = True
             step_id = step.get("id")
             if step_id is not None and action not in ["compose_email", "reply_to_user"]:
                 candidate_body_steps.append(step_id)
+
+        existing_ids = [
+            step.get("id") for step in steps
+            if isinstance(step.get("id"), int)
+        ]
+        next_step_id = max(existing_ids) + 1 if existing_ids else len(steps) + 1
+        verification_inserted = False
 
         # Second pass: Validate and fix each step
         for step in steps:
@@ -1289,6 +1554,32 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         )
 
             fixed_steps.append(step)
+
+            if (
+                playback_require_status_check
+                and has_playback_step
+                and not has_playback_verification
+                and not verification_inserted
+                and playback_verification_tool
+                and action == playback_required_tool
+            ):
+                verification_step = {
+                    "id": next_step_id,
+                    "action": playback_verification_tool,
+                    "parameters": {},
+                    "dependencies": [step.get("id")] if step.get("id") is not None else [],
+                    "reasoning": "Verify Spotify playback status before responding to the user."
+                }
+                next_step_id += 1
+                verification_inserted = True
+                has_playback_verification = True
+                fixed_steps.append(verification_step)
+                corrections_made.append(
+                    f"Inserted {playback_verification_tool} step after {playback_required_tool} to confirm playback."
+                )
+                logger.info(
+                    f"[PLAN VALIDATION] ✅ Auto-corrected: Added {playback_verification_tool} step to verify Spotify playback"
+                )
 
         # VALIDATION 3: Report/summary requests should use writing tools
         report_keywords = ["report", "summary", "summarize", "digest", "analysis", "analyze"]
