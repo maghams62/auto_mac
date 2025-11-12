@@ -1,0 +1,100 @@
+{
+  "session_id": "1f7ee6e4-fc2f-482d-8940-4f346f2ec5e8",
+  "status": "active",
+  "created_at": "2025-11-11T19:57:46.773075",
+  "last_active_at": "2025-11-11T19:57:59.643135",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T19:57:59.643135",
+      "user_request": "play music",
+      "agent_response": {
+        "goal": "Play music",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "🎵 Let's get this party started! Music is now jamming!",
+            "tool": "play_music"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music playback started.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "🎵 Let's get this party started! Music is now jamming!"
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start or resume music playback in Spotify",
+          "expected_output": "Dictionary with success status and message"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music playback started.",
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Confirm to the user that music has started playing",
+          "expected_output": "User confirmation message"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "🎵 Let's get this party started! Music is now jamming!",
+          "tool": "play_music"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music playback started.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Play music",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 2,
+    "agents_used": [],
+    "tools_used": [
+      "play_music",
+      "reply_to_user"
+    ]
+  }
+}

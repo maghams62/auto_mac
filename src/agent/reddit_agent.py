@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
-from src.utils import load_config
+from src.utils import load_config, get_temperature_for_model
 from src.automation.reddit_scanner import RedditScanner
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def _summarize_posts(config: Dict[str, Any], instruction: str, payload: Dict[str
         llm_config = config.get("openai", {})
         llm = ChatOpenAI(
             model=llm_config.get("model", "gpt-4o"),
-            temperature=0.2,
+            temperature=get_temperature_for_model(config, default_temperature=0.2),
             api_key=llm_config.get("api_key")
         )
 

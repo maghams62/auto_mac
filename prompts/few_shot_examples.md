@@ -29,8 +29,17 @@ Some requests are intentionally one-and-done for the **action** step. Mirror the
 | "Scan r/electricvehicles (hot, limit 5) and summarize the titles." | `scan_subreddit_posts` → `reply_to_user` | Summarize the titles from the returned payload. | Critic is optional—only call it on demand. |
 | "Play music" | `play_music` → `reply_to_user` | Start/resume Spotify playback, then confirm to user. | Skip critic—simple action. |
 | "Pause" or "Pause music" | `pause_music` → `reply_to_user` | Pause Spotify playback, then confirm to user. | Skip critic—simple action. |
+| "play that Michael Jackson song where he does the moonwalk" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool handles descriptive queries internally. | Skip critic—play_song uses LLM disambiguation. |
+| "play the space song" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool resolves vague references internally. | Skip critic—play_song uses LLM disambiguation. |
+| "play that song by Eminem that starts with space" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool handles partial descriptions with artist hints. | Skip critic—play_song uses LLM disambiguation. |
 
 If your plan has more than one action step for these shapes, revise before execution. Deterministic AppleScript-backed tools should not trigger verification loops unless something goes wrong. The only post-action step should be the reply.
+
+**CRITICAL: Song Queries**
+- ✅ **ALWAYS use `play_song` DIRECTLY for song queries - NO google_search first!**
+- ✅ `play_song` uses LLM-powered disambiguation internally - it can handle descriptive queries, vague references, and partial names
+- ❌ **NEVER** use `google_search` before `play_song` for song queries
+- ✅ Examples: "play that Michael Jackson song where he does the moonwalk" → `play_song("that Michael Jackson song where he does the moonwalk")` → `reply_to_user`
 
 ### 1. Capability Assessment (MUST DO BEFORE PLANNING!)
 **BEFORE creating any plan, verify you have the necessary tools:**
@@ -414,6 +423,52 @@ When passing data between steps:
   "complexity": "simple"
 }
 ```
+
+---
+
+## Example 1b: List Related Documents (2 steps)
+
+### User Request
+"Pull up all guitar tab documents"
+
+### Decomposition
+```json
+{
+  "goal": "List all guitar tab documents matching the query",
+  "steps": [
+    {
+      "id": 1,
+      "action": "list_related_documents",
+      "parameters": {
+        "query": "guitar tab documents",
+        "max_results": 10
+      },
+      "dependencies": [],
+      "reasoning": "User wants to see multiple matching files, not extract from a single one. Use list_related_documents to return structured list with metadata.",
+      "expected_output": "file_list type with files array containing name, path, score, meta"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "$step1.message",
+        "details": "",
+        "artifacts": [],
+        "status": "success"
+      },
+      "dependencies": [1],
+      "reasoning": "Format the file list result for UI display",
+      "expected_output": "User-friendly message with file list"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**Key Takeaways:**
+- Use `list_related_documents` when user wants to see multiple matching files (not extract from one)
+- Returns structured `file_list` type with `files` array
+- Single-step action pattern: list → reply (no extraction needed)
 
 ---
 
@@ -2345,6 +2400,203 @@ Note: Fallback opens Apple Maps but cannot return programmatic departure times
 
 ---
 
+## Example 21: SPOTIFY AGENT - Descriptive Song Query (CRITICAL!)
+
+### User Request: "play that Michael Jackson song where he does the moonwalk"
+
+**CRITICAL RULE: Use `play_song` DIRECTLY - NO google_search needed!**
+
+The `play_song` tool uses LLM-powered disambiguation internally. It can identify songs from descriptive queries, vague references, and partial names without needing external search.
+
+### Decomposition
+```json
+{
+  "goal": "Play the Michael Jackson song associated with moonwalking",
+  "steps": [
+    {
+      "id": 1,
+      "action": "play_song",
+      "parameters": {
+        "song_name": "that Michael Jackson song where he does the moonwalk"
+      },
+      "reasoning": "The play_song tool uses LLM disambiguation to identify 'Smooth Criminal' by Michael Jackson from the descriptive query about moonwalking. No google_search needed - the tool handles this internally.",
+      "expected_output": "Song playing: Smooth Criminal by Michael Jackson"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Now playing: Smooth Criminal by Michael Jackson 🎵"
+      },
+      "dependencies": [1],
+      "reasoning": "Confirm successful playback to the user"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**Key Points:**
+- ✅ `play_song` is called DIRECTLY with the user's exact query
+- ✅ NO `google_search` step - the tool handles identification internally
+- ✅ The LLM inside `play_song` reasons that "moonwalk" + "Michael Jackson" = "Smooth Criminal"
+- ✅ Simple 2-step plan: `play_song` → `reply_to_user`
+
+**WRONG Pattern (DO NOT DO THIS):**
+```json
+{
+  "steps": [
+    {"action": "google_search", "parameters": {"query": "Michael Jackson moonwalk song"}},  // ❌ WRONG!
+    {"action": "extract_page_content", ...},  // ❌ WRONG!
+    {"action": "play_song", ...}  // ❌ Should be first step!
+  ]
+}
+```
+
+**Other Examples:**
+- "play the space song" → `play_song("the space song")` → `reply_to_user` (identifies as "Space Song" by Beach House)
+- "play that song by Eminem that starts with space" → `play_song("that song by Eminem that starts with space")` → `reply_to_user` (identifies as "Space Bound")
+- "play Viva la Vida" → `play_song("Viva la Vida")` → `reply_to_user` (exact match)
+
+---
+
+## Example 22: SPOTIFY AGENT - Fallback with DuckDuckGo Search (CRITICAL!)
+
+### User Request: "play that song from the new Taylor Swift album"
+
+**CRITICAL RULE: Use `google_search` as fallback when you cannot identify the song!**
+
+The LLM cannot confidently identify which specific song from a new album the user is referring to. This requires web search to find the current album and song information.
+
+### Decomposition
+```json
+{
+  "goal": "Play a song from Taylor Swift's latest album",
+  "steps": [
+    {
+      "id": 1,
+      "action": "google_search",
+      "parameters": {
+        "query": "new Taylor Swift album songs 2024",
+        "num_results": 5
+      },
+      "reasoning": "Cannot identify the specific song from 'new Taylor Swift album' without knowing which album and which song. Need to search for current Taylor Swift album releases and popular songs.",
+      "expected_output": "Search results with Taylor Swift's latest album name and song titles"
+    },
+    {
+      "id": 2,
+      "action": "play_song",
+      "parameters": {
+        "song_name": "$step1.summary"
+      },
+      "dependencies": [1],
+      "reasoning": "Extract the most popular/recent song from the search results. The LLM will reason about which song is most likely what the user wants based on the search results summary.",
+      "expected_output": "Song playing: [song name] by Taylor Swift"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Now playing: [song name] by Taylor Swift from [album name] 🎵"
+      },
+      "dependencies": [2],
+      "reasoning": "Confirm successful playback with song and album details"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**Key Points:**
+- ✅ `google_search` is used FIRST because the LLM cannot identify the specific song
+- ✅ Search query includes context: "new Taylor Swift album songs 2024"
+- ✅ `play_song` uses the search results summary to identify the song
+- ✅ 3-step plan: `google_search` → `play_song` → `reply_to_user`
+
+**Alternative Pattern (if search results need extraction):**
+```json
+{
+  "steps": [
+    {
+      "id": 1,
+      "action": "google_search",
+      "parameters": {
+        "query": "new Taylor Swift album songs 2024",
+        "num_results": 5
+      }
+    },
+    {
+      "id": 2,
+      "action": "play_song",
+      "parameters": {
+        "song_name": "most popular song from $step1.results[0].snippet"
+      },
+      "dependencies": [1],
+      "reasoning": "Extract song name from first search result snippet using LLM reasoning"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Now playing: [song name] 🎵"
+      },
+      "dependencies": [2]
+    }
+  ]
+}
+```
+
+**Other Fallback Examples:**
+- "play that song I heard on the radio yesterday" → `google_search("popular songs radio yesterday")` → Extract song → `play_song` → `reply_to_user`
+- "play that obscure indie song about rain" → `google_search("indie song about rain")` → Extract song → `play_song` → `reply_to_user`
+- "play that new song by that artist" → `google_search("new songs trending")` → Extract song → `play_song` → `reply_to_user`
+
+**Decision Logic:**
+- **Can identify?** (e.g., "Michael Jackson moonwalk") → `play_song` directly
+- **Cannot identify?** (e.g., "new Taylor Swift album song") → `google_search` → `play_song`
+
+---
+
+### User Request
+"Walk me to the nearest coffee shop"
+
+### Decomposition
+```json
+{
+  "goal": "Get walking directions to nearest coffee shop",
+  "steps": [
+    {
+      "id": 1,
+      "action": "get_directions",
+      "parameters": {
+        "origin": "Current Location",
+        "destination": "nearest coffee shop",
+        "transportation_mode": "walking",
+        "open_maps": true
+      },
+      "dependencies": [],
+      "reasoning": "User wants walking directions. Use walking mode for pedestrian paths",
+      "expected_output": "Maps opens with walking directions showing pedestrian routes and time"
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**CRITICAL: Walking Directions Pattern**
+- ✅ Use `get_directions` with `transportation_mode: "walking"`
+- ✅ Maps will show pedestrian-friendly routes, sidewalks, crosswalks
+- ✅ Provides walking time estimates
+- ✅ Aliases: "walking", "walk" map to walking mode
+- ✅ "nearest coffee shop" → Maps will find closest match
+
+**Walking Query Variations:**
+- "walk to the park" → `transportation_mode: "walking"`
+- "how far is it on foot" → `transportation_mode: "walking"`
+- "walking directions to downtown" → `transportation_mode: "walking"`
+
+---
+
 ## Example 20d: MAPS AGENT - Driving Directions (NEW! Multi-Modal)
 
 ### User Request
@@ -3201,6 +3453,157 @@ read_emails_by_sender → summarize_emails → create_pages_doc → reply_to_use
 ```
 read_latest_emails → summarize_emails → create_slide_deck_content → create_keynote → reply_to_user
 ```
+
+---
+
+## Example: Calendar Meeting Brief Preparation
+
+### User Request
+"Prepare a brief for the Q4 Review meeting"
+
+### Decomposition
+
+**Step 1: Prepare Meeting Brief**
+- Use `prepare_meeting_brief` which automatically:
+  1. Fetches event details from Calendar.app
+  2. Uses LLM to generate semantic search queries from event metadata
+  3. Searches indexed documents
+  4. Synthesizes brief with relevant docs and talking points
+
+**Plan:**
+```json
+[
+  {
+    "id": 1,
+    "action": "prepare_meeting_brief",
+    "parameters": {
+      "event_title": "Q4 Review",
+      "save_to_note": false
+    },
+    "dependencies": [],
+    "reasoning": "User wants meeting preparation. prepare_meeting_brief handles event lookup, query generation, document search, and brief synthesis automatically.",
+    "expected_output": "Brief with event details, relevant documents, talking points, and search queries used"
+  },
+  {
+    "id": 2,
+    "action": "reply_to_user",
+    "parameters": {
+      "message": "I've prepared a brief for the Q4 Review meeting:\n\n$step1.brief\n\nRelevant Documents:\n" + (join([doc.file_name for doc in $step1.relevant_docs], "\n")) + "\n\nKey Talking Points:\n" + (join($step1.talking_points, "\n"))
+    },
+    "dependencies": [1],
+    "reasoning": "Present the brief to the user with relevant documents and talking points",
+    "expected_output": "User receives formatted meeting brief"
+  }
+]
+```
+
+**Key Points:**
+- `prepare_meeting_brief` is a single tool that orchestrates the entire workflow
+- No need to manually call `get_calendar_event_details` or `search_documents` first
+- The tool uses LLM to generate search queries from event metadata (title, notes, attendees)
+- Example: Event "Q4 Review" with notes "Discuss revenue, marketing strategy" → LLM generates queries like ["Q4 revenue report", "marketing strategy 2024", "quarterly financials"]
+- Brief includes relevant documents found, talking points extracted, and recommended pre-reading
+
+---
+
+## Example: Enriched Stock Presentation + Email
+
+### User Request
+"Create a presentation about NVIDIA stock and email it to me"
+
+### Decomposition
+```json
+{
+  "goal": "Create comprehensive stock presentation and email it",
+  "steps": [
+    {
+      "id": 1,
+      "action": "create_enriched_stock_presentation",
+      "parameters": {
+        "company": "NVIDIA"
+      },
+      "dependencies": [],
+      "reasoning": "Create enriched stock presentation with comprehensive web research, query rewriting, and intelligent parsing",
+      "expected_output": "Presentation file path, company info, stock data, enriched content"
+    },
+    {
+      "id": 2,
+      "action": "compose_email",
+      "parameters": {
+        "subject": "NVIDIA (NVDA) Stock Analysis Report",
+        "body": "I've created a comprehensive stock analysis presentation for NVIDIA (NVDA) based on current web research and market data.\n\nPRESENTATION SUMMARY:\n• Current Price: $step1.current_price\n• Price Change: $step1.price_change\n• Data Date: $step1.data_date\n\nThe presentation includes 5 slides covering:\n1. Stock Price Overview\n2. Performance Metrics\n3. Company Analysis\n4. Market Analysis\n5. Conclusion & Outlook\n\nPlease find the detailed presentation attached as a Keynote file.",
+        "attachments": ["$step1.presentation_path"],
+        "send": true
+      },
+      "dependencies": [1],
+      "reasoning": "User asked to email the presentation - MUST attach file and verify it exists",
+      "expected_output": "Email sent with presentation attached"
+    },
+    {
+      "id": 3,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Created NVIDIA stock analysis presentation and emailed it to you. The presentation includes 5 slides with comprehensive market research.",
+        "artifacts": ["$step1.presentation_path"],
+        "status": "success"
+      },
+      "dependencies": [2],
+      "reasoning": "Confirm completion to user"
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+**Key Points:**
+- `create_enriched_stock_presentation` performs:
+  1. Stock data fetch from yfinance
+  2. 5 comprehensive web searches with query rewriting
+  3. Intelligent parsing of search results
+  4. Planning stage for slide structure
+  5. AI synthesis into 5-slide presentation
+- **CRITICAL:** Must verify `presentation_path` exists before attaching
+- **CRITICAL:** Must use absolute path for attachment
+- **CRITICAL:** Email body should include presentation summary
+- Always use `send: true` when user says "email it"
+
+**Alternative: Using Combined Tool**
+```json
+{
+  "goal": "Create stock presentation and email it",
+  "steps": [
+    {
+      "id": 1,
+      "action": "create_stock_report_and_email",
+      "parameters": {
+        "company": "NVIDIA",
+        "recipient": "me"
+      },
+      "dependencies": [],
+      "reasoning": "Combined tool handles both presentation creation and emailing",
+      "expected_output": "Presentation created and emailed successfully"
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Created and emailed NVIDIA stock analysis presentation.",
+        "status": "success"
+      },
+      "dependencies": [1]
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+**Attachment Verification Pattern:**
+- ✅ Check file exists: `os.path.exists(presentation_path)`
+- ✅ Verify it's a file: `os.path.isfile(presentation_path)`
+- ✅ Check readability: `os.access(presentation_path, os.R_OK)`
+- ✅ Convert to absolute: `os.path.abspath(presentation_path)`
+- ✅ Log validation status before sending
+- ❌ Never attach without verification
 
 ---
 

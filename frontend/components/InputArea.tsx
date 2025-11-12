@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, KeyboardEvent, useRef, useEffect, useMemo } from "react";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS, SlashCommandDefinition } from "@/lib/slashCommands";
+import logger from "@/lib/logger";
 
 interface InputAreaProps {
   onSend: (message: string) => void;
@@ -16,15 +16,15 @@ interface InputAreaProps {
   onStop?: () => void;
 }
 
-export default function InputArea({ 
-  onSend, 
-  disabled, 
-  onVoiceRecord, 
-  isRecording,
+export default function InputArea({
+  onSend,
+  disabled,
   initialValue = "",
   onValueChange,
   isProcessing = false,
-  onStop
+  onStop,
+  onVoiceRecord,
+  isRecording = false,
 }: InputAreaProps) {
   const [input, setInput] = useState(initialValue);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -160,155 +160,126 @@ export default function InputArea({
   };
 
   return (
-    <div className="sticky bottom-0 backdrop-blur-xl bg-black/20 border-t border-white/10">
-      <div className="container mx-auto px-6 py-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="max-w-4xl mx-auto"
-        >
-          <div className="glass-input rounded-2xl p-4 flex items-end space-x-3 relative">
-            {showSlashPalette && (
-              <div className="absolute bottom-full left-0 right-0 mb-3 z-20">
-                <div className="rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-2xl p-3 max-h-96 overflow-y-auto">
-                  <div className="flex items-center justify-between px-2 pb-2">
-                    <p className="text-xs uppercase tracking-widest text-white/50">
-                      Slash Commands
-                    </p>
-                    <p className="text-[11px] text-white/40">
-                      ↑↓ navigate · Enter to select
-                    </p>
-                  </div>
-                  {filteredSlashCommands.length === 0 && (
-                    <div className="text-center text-xs text-white/50 py-4">
-                      No commands match "{slashQuery}"
-                    </div>
-                  )}
-                  {filteredSlashCommands.map((command, index) => {
-                    const isSelected = index === selectedCommandIndex;
-                    return (
-                      <button
-                        key={command.command}
-                        onClick={() => applySlashCommand(command)}
-                        onMouseEnter={() => setSelectedCommandIndex(index)}
-                        className={cn(
-                          "w-full text-left px-3 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-between gap-3",
-                          isSelected
-                            ? "bg-white/10 text-white"
-                            : "hover:bg-white/5 text-white/80"
-                        )}
-                      >
-                        <div>
-                          <p className="text-sm font-semibold">
-                            {command.label}
-                          </p>
-                          <p className="text-xs text-white/60">
-                            {command.description}
-                          </p>
-                        </div>
-                        <span className="text-xs font-mono text-white/70">
-                          {command.command}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+    <div className="w-full">
+      <div className="relative">
+        {showSlashPalette && (
+          <div className="absolute bottom-full left-0 right-0 mb-2 z-20">
+            <div className="rounded-lg border border-glass bg-glass-elevated backdrop-blur-glass shadow-elevated p-2 max-h-80 overflow-y-auto shadow-inset-border">
+              <div className="flex items-center justify-between px-2 pb-2 mb-1 border-b border-glass">
+                <p className="text-xs uppercase tracking-wider text-text-subtle font-medium">
+                  Commands
+                </p>
+                <p className="text-[11px] text-text-subtle font-medium">
+                  ↑↓ · Enter · Press ? for help
+                </p>
               </div>
-            )}
-            {/* Voice recording button */}
-            {onVoiceRecord && (
-              <button
-                onClick={onVoiceRecord}
-                disabled={disabled || isProcessing || isRecording}
-                className={cn(
-                  "rounded-xl p-3 transition-all duration-300 flex-shrink-0 relative",
-                  isRecording
-                    ? "bg-red-500/20 text-red-400 cursor-not-allowed"
-                    : "bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90",
-                  (disabled || isProcessing) && "opacity-50 cursor-not-allowed"
-                )}
-                title={isRecording ? "Recording in progress - use stop button above" : "Start voice recording"}
-              >
-                {isRecording ? (
-                  <>
-                    <svg
-                      className="w-5 h-5"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
-                    </svg>
-                    <motion.div
-                      className="absolute inset-0 rounded-xl border-2 border-red-400"
-                      animate={{
-                        scale: [1, 1.1, 1],
-                        opacity: [0.5, 0.8, 0.5],
-                      }}
-                      transition={{
-                        duration: 1.5,
-                        repeat: Infinity,
-                        ease: "easeInOut",
-                      }}
-                    />
-                  </>
-                ) : (
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+              {filteredSlashCommands.length === 0 && (
+                <div className="text-center text-xs text-text-muted py-4">
+                  No commands match "{slashQuery}"
+                </div>
+              )}
+              {filteredSlashCommands.map((command, index) => {
+                const isSelected = index === selectedCommandIndex;
+                return (
+                  <button
+                    key={command.command}
+                    onClick={() => applySlashCommand(command)}
+                    onMouseEnter={() => setSelectedCommandIndex(index)}
+                    className={cn(
+                      "w-full text-left px-2.5 py-2 rounded transition-colors flex items-center justify-between gap-2",
+                      isSelected
+                        ? "bg-glass-hover text-text-primary shadow-inset-border"
+                        : "hover:bg-glass-hover text-text-muted"
+                    )}
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                    />
-                  </svg>
-                )}
-              </button>
-            )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {command.label}
+                      </p>
+                      <p className="text-xs text-text-muted truncate">
+                        {command.description}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                const newValue = e.target.value;
-                setInput(newValue);
-                onValueChange?.(newValue);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your request here... (⌘K focus, ⌘L clear, / for commands)"
-              disabled={disabled}
-              autoFocus
-              className="flex-1 bg-transparent text-white placeholder-white/40 resize-none outline-none min-h-[24px] max-h-[200px]"
-              rows={1}
-              style={{
-                height: "auto",
-                minHeight: "24px",
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = "auto";
-                target.style.height = target.scrollHeight + "px";
-              }}
-              aria-label="Message input"
-              aria-describedby="input-help-text"
-            />
+        <div className="group relative rounded-2xl border border-glass bg-glass backdrop-blur-glass px-4 py-3 flex items-end gap-3 focus-within:border-accent-primary focus-within:shadow-glow-primary transition-all shadow-inset-border">
+          {/* Keyboard shortcut hint tooltip */}
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+            <div className="bg-glass-elevated backdrop-blur-glass border border-glass rounded-lg px-2 py-1 text-xs text-text-muted shadow-elevated whitespace-nowrap">
+              ⌘ Enter to send
+            </div>
+          </div>
+          
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => {
+              const newValue = e.target.value;
+              setInput(newValue);
+              onValueChange?.(newValue);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Message Cerebro..."
+            disabled={disabled}
+            autoFocus
+            className="flex-1 bg-transparent text-text-primary placeholder-text-subtle resize-none outline-none text-[15px] leading-[1.4] max-h-[200px]"
+            rows={1}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = "auto";
+              target.style.height = Math.min(target.scrollHeight, 200) + "px";
+            }}
+            aria-label="Message input"
+          />
 
+          <div className="flex items-center gap-2">
             {isProcessing && onStop && (
               <button
                 onClick={onStop}
-                className="glass-button rounded-xl px-4 py-3 font-medium transition-all duration-300 flex-shrink-0 bg-red-500/20 text-red-200 hover:bg-red-500/30 hover:text-white"
-                title="Stop current task"
+                className="rounded-lg p-2 text-xs font-medium transition-colors text-text-muted hover:text-text-primary hover:bg-glass-hover"
+                title="Stop"
               >
-                <div className="flex items-center space-x-2">
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 6h12v12H6z" />
-                  </svg>
-                  <span>Stop</span>
-                </div>
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 6h12v12H6z" />
+                </svg>
+              </button>
+            )}
+
+            {onVoiceRecord && (
+              <button
+                onClick={onVoiceRecord}
+                disabled={disabled || isProcessing}
+                className={cn(
+                  "rounded-lg p-2 transition-all relative",
+                  isRecording
+                    ? "text-accent-danger cursor-pointer"
+                    : disabled || isProcessing
+                    ? "text-text-muted opacity-40 cursor-not-allowed"
+                    : "text-text-muted hover:text-text-primary hover:bg-glass-hover cursor-pointer"
+                )}
+                title={isRecording ? "Stop recording" : "Start voice recording"}
+              >
+                {isRecording && (
+                  <span className="absolute inset-0 rounded-lg border-2 border-accent-danger animate-pulse opacity-75" />
+                )}
+                <svg
+                  className="w-5 h-5 relative z-10"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                  />
+                </svg>
               </button>
             )}
 
@@ -316,12 +287,12 @@ export default function InputArea({
               onClick={handleSend}
               disabled={!input.trim() || disabled || isProcessing}
               className={cn(
-                "glass-button rounded-xl px-6 py-3 font-medium transition-all duration-300 flex-shrink-0",
+                "rounded-lg p-2 transition-colors",
                 !input.trim() || disabled || isProcessing
-                  ? "opacity-50 cursor-not-allowed"
-                  : "hover:scale-105 active:scale-95 cursor-pointer"
+                  ? "text-text-muted opacity-40 cursor-not-allowed"
+                  : "text-text-primary hover:bg-glass-hover cursor-pointer"
               )}
-              title="Send (Enter)"
+              title="Send"
             >
               <svg
                 className="w-5 h-5"
@@ -333,30 +304,12 @@ export default function InputArea({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  d="M5 12h14M12 5l7 7-7 7"
                 />
               </svg>
             </button>
           </div>
-
-          {/* Example prompts */}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {[
-              "Search my documents for Tesla",
-              "Create a stock report for AAPL",
-              "Plan a trip from LA to San Diego",
-            ].map((example) => (
-              <button
-                key={example}
-                onClick={() => setInput(example)}
-                disabled={disabled || isProcessing}
-                className="text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90 transition-all duration-200 border border-white/10 cursor-pointer disabled:cursor-not-allowed"
-              >
-                {example}
-              </button>
-            ))}
-          </div>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

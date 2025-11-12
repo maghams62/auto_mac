@@ -72,6 +72,12 @@ We are now perfecting the agents one at a time. Each cycle follows the same reci
 - **Domain**: Bluesky (AT Protocol) discovery, summarization, and publishing
 - **LEVEL 1-3** hierarchy
 
+### 8. CALENDAR AGENT (`src/agent/calendar_agent.py`)
+- **3 tools**: list_calendar_events, get_calendar_event_details, prepare_meeting_brief
+- **Domain**: Calendar event reading and meeting preparation
+- **LEVEL 1-2** hierarchy
+- **Integration**: Uses Calendar.app via AppleScript, DocumentIndexer for semantic search
+
 ## Architecture
 
 ```

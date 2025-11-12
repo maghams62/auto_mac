@@ -32,6 +32,8 @@ def test_parser():
         ("/files Organize my PDFs", {"command": "files", "agent": "file", "task": "Organize my PDFs"}),
         ("/browse Search for Python tutorials", {"command": "browse", "agent": "browser", "task": "Search for Python tutorials"}),
         ("/maps Plan trip from LA to SF", {"command": "maps", "agent": "maps", "task": "Plan trip from LA to SF"}),
+        ("/calendar List my upcoming events", {"command": "calendar", "agent": "calendar", "task": "List my upcoming events"}),
+        ("/calendar prep for Q4 Review", {"command": "calendar", "agent": "calendar", "task": "prep for Q4 Review"}),
         ("/help", {"command": "help", "agent": None}),
         ("/agents", {"command": "agents", "agent": None}),
         ("/help files", {"command": "help", "agent": "files"}),

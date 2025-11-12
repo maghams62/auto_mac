@@ -2,7 +2,12 @@
 """Test the fix for 'zip all files starting with A and email it' request."""
 
 import sys
-sys.path.append('/Users/siddharthsuresh/Downloads/auto_mac')
+from pathlib import Path
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.orchestrator.main_orchestrator import MainOrchestrator
 from src.utils import load_config

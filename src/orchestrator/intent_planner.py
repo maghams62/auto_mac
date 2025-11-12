@@ -10,6 +10,8 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from ..utils import get_temperature_for_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ class IntentPlanner:
         openai_cfg = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_cfg.get("model", "gpt-4o"),
-            temperature=0.1,
+            temperature=get_temperature_for_model(config, default_temperature=0.1),
             api_key=openai_cfg.get("api_key"),
         )
         self.prompt_template = _load_prompt_template()

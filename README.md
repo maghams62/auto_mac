@@ -1,8 +1,8 @@
-# Mac Automation Assistant
+# Cerebro OS
 
 > AI-powered document search and email automation for macOS
 
-A Mac-native automation tool that uses GPT-4o to interpret natural language instructions and automate tasks on your machine. Similar in spirit to [Air.app](https://tryair.app), this assistant helps you find documents, extract specific sections, and compose emails—all through natural language.
+A Mac-native automation tool that uses GPT-4o to interpret natural language instructions and automate tasks on your machine. Similar in spirit to [Air.app](https://tryair.app), Cerebro OS helps you find documents, extract specific sections, and compose emails—all through natural language.
 
 ## Features
 
@@ -107,7 +107,7 @@ python main.py
 
 ## Usage
 
-The Mac Automation Assistant provides **two interfaces**: a modern web UI and a classic terminal UI. Choose whichever fits your workflow!
+Cerebro OS provides **two interfaces**: a modern web UI and a classic terminal UI. Choose whichever fits your workflow!
 
 ---
 
@@ -273,18 +273,48 @@ search:
 
 # Email settings
 email:
-  signature: "\n\n---\nSent via Mac Automation Assistant"
+  signature: "\n\n---\nSent via Cerebro OS"
 ```
+
+## Documentation
+
+**📚 Central Documentation Index**: See [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md) for a complete mapping of all documentation files.
+
+### Quick Links
+- **Getting Started**: [docs/quickstart/START_HERE.md](docs/quickstart/START_HERE.md) or [docs/quickstart/QUICK_START.md](docs/quickstart/QUICK_START.md)
+- **Architecture**: [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)
+- **Agent Guide**: [docs/MASTER_AGENT_GUIDE.md](docs/MASTER_AGENT_GUIDE.md) - **For developers and AI agents**
+- **Features**: [docs/features/SLASH_COMMANDS.md](docs/features/SLASH_COMMANDS.md)
+- **Testing**: [docs/testing/COMPREHENSIVE_TEST_REPORT.md](docs/testing/COMPREHENSIVE_TEST_REPORT.md)
+
+### Documentation Structure
+- **Architecture**: `docs/architecture/` - System design and architecture
+- **Agents**: `docs/agents/` - Agent-specific documentation
+- **Features**: `docs/features/` - Feature guides and summaries
+- **Testing**: `docs/testing/` - Test documentation and results
+- **Development**: `docs/development/` - Development guides
+- **Changelog**: `docs/changelog/` - Fix summaries and changelog
+- **Quick Start**: `docs/quickstart/` - Getting started guides
 
 ## Project Structure
 
 ```
-mac_auto/
+cerebro/
 ├── main.py                 # Terminal UI entry point
 ├── app.py                  # Web UI entry point (Gradio)
 ├── config.yaml            # Configuration file
 ├── requirements.txt       # Python dependencies
 ├── .env.example          # Environment variables template
+│
+├── docs/                  # Documentation (see DOCUMENTATION_INDEX.md)
+│   ├── DOCUMENTATION_INDEX.md  # Central documentation repository
+│   ├── architecture/     # System architecture docs
+│   ├── agents/           # Agent documentation
+│   ├── features/         # Feature guides
+│   ├── testing/          # Test documentation
+│   ├── development/      # Development guides
+│   ├── changelog/        # Fix summaries
+│   └── quickstart/       # Getting started guides
 │
 ├── src/
 │   ├── llm/              # LLM integration (GPT-4o)

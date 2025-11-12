@@ -12,27 +12,27 @@ echo ""
 case "$1" in
     --dry-run|dry)
         echo "Running DRY RUN (showing test definitions only)..."
-        python test_comprehensive_system.py --dry-run
+        python tests/test_comprehensive_system.py --dry-run
         ;;
 
     --file|file)
         echo "Running FILE AGENT tests..."
-        python test_comprehensive_system.py --category single_agent_file
+        python tests/test_comprehensive_system.py --category single_agent_file
         ;;
 
     --browser|browser)
         echo "Running BROWSER AGENT tests..."
-        python test_comprehensive_system.py --category single_agent_browser
+        python tests/test_comprehensive_system.py --category single_agent_browser
         ;;
 
     --presentation|presentation)
         echo "Running PRESENTATION AGENT tests..."
-        python test_comprehensive_system.py --category single_agent_presentation
+        python tests/test_comprehensive_system.py --category single_agent_presentation
         ;;
 
     --email|email)
         echo "Running EMAIL AGENT tests..."
-        python test_comprehensive_system.py --category single_agent_email
+        python tests/test_comprehensive_system.py --category single_agent_email
         ;;
 
     --multi|multi)
@@ -46,18 +46,18 @@ case "$1" in
         echo ""
         read -p "Enter category name (or press Enter for multi_agent_full): " category
         category=${category:-multi_agent_full}
-        python test_comprehensive_system.py --category "$category"
+        python tests/test_comprehensive_system.py --category "$category"
         ;;
 
     --original|original)
         echo "Running ORIGINAL FAILING TEST (now fixed!)..."
         echo "Test: Take screenshot of Google News, add to presentation, email it"
-        python test_comprehensive_system.py --category multi_agent_full
+        python tests/test_comprehensive_system.py --category multi_agent_full
         ;;
 
     --edge|edge)
         echo "Running EDGE CASE tests..."
-        python test_comprehensive_system.py --category edge_case
+        python tests/test_comprehensive_system.py --category edge_case
         ;;
 
     --all|all)
@@ -65,7 +65,7 @@ case "$1" in
         echo "WARNING: This will take a long time and require user confirmations!"
         read -p "Are you sure? (y/N): " confirm
         if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-            python test_comprehensive_system.py
+            python tests/test_comprehensive_system.py
         else
             echo "Cancelled."
         fi

@@ -1,0 +1,197 @@
+"use client";
+
+import { useState, useMemo } from "react";
+import { cn } from "@/lib/utils";
+import { SLASH_COMMANDS, SlashCommandDefinition } from "@/lib/slashCommands";
+import logger from "@/lib/logger";
+
+interface CommandPaletteSidebarProps {
+  onSelectCommand: (command: string) => void;
+}
+
+const CATEGORY_FILTERS = ["All", "Files", "Web", "Content", "Communication", "Navigation", "Finance", "Meta"];
+
+const QUICK_ACTIONS = [
+  { label: "Search Documents", command: "Search my documents for Tesla", icon: "📄", category: "Quick Actions" },
+  { label: "Stock Report", command: "Create a stock report for AAPL", icon: "📈", category: "Quick Actions" },
+  { label: "Plan Trip", command: "Plan a trip from LA to San Diego", icon: "🗺️", category: "Quick Actions" },
+];
+
+export default function CommandPaletteSidebar({ onSelectCommand }: CommandPaletteSidebarProps) {
+  const [selectedFilter, setSelectedFilter] = useState<string>("All");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredCommands = useMemo(() => {
+    let filtered = SLASH_COMMANDS;
+
+    // Apply category filter
+    if (selectedFilter !== "All") {
+      filtered = filtered.filter((cmd) => cmd.category === selectedFilter);
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (cmd) =>
+          cmd.command.toLowerCase().includes(query) ||
+          cmd.label.toLowerCase().includes(query) ||
+          cmd.description.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [selectedFilter, searchQuery]);
+
+  const filteredQuickActions = useMemo(() => {
+    let filtered = QUICK_ACTIONS;
+
+    // Apply search filter to quick actions
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (action) =>
+          action.command.toLowerCase().includes(query) ||
+          action.label.toLowerCase().includes(query)
+      );
+    }
+
+    // Show quick actions if "All" is selected or if search matches
+    return selectedFilter === "All" || searchQuery.trim() ? filtered : [];
+  }, [selectedFilter, searchQuery]);
+
+  const handleQuickActionClick = (command: string) => {
+    logger.info("Quick action clicked from command palette", { command });
+    onSelectCommand(command);
+  };
+
+  const groupedCommands = useMemo(() => {
+    const groups: Record<string, SlashCommandDefinition[]> = {};
+    filteredCommands.forEach((cmd) => {
+      const category = cmd.category || "Other";
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(cmd);
+    });
+    return groups;
+  }, [filteredCommands]);
+
+  return (
+    <div
+      className="fixed right-0 top-0 h-full w-[240px] bg-surface border-l border-surface-outline z-40 flex flex-col hidden md:flex"
+      style={{ paddingTop: "64px" }}
+    >
+      {/* Header */}
+      <div className="p-4 border-b border-surface-outline">
+        <h2 className="text-sm font-medium text-text-primary uppercase tracking-wider mb-3">
+          Command Palette
+        </h2>
+        
+        {/* Search input */}
+        <input
+          type="text"
+          placeholder="Search commands..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full px-3 py-1.5 rounded bg-surface-active border border-surface-outline text-text-primary placeholder-text-subtle text-sm focus:outline-none focus:border-accent-primary transition-colors duration-160"
+        />
+      </div>
+
+      {/* Category filters */}
+      <div className="p-4 border-b border-surface-outline overflow-x-auto">
+        <div className="flex gap-2">
+          {CATEGORY_FILTERS.map((filter) => (
+            <button
+              key={filter}
+              onClick={() => setSelectedFilter(filter)}
+              className={cn(
+                "px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors duration-160",
+                selectedFilter === filter
+                  ? "bg-accent-primary/10 border-accent-primary/30 text-accent-primary"
+                  : "bg-surface border border-surface-outline text-text-muted hover:bg-surface-active hover:text-text-primary hover:border-surface-outline-strong"
+              )}
+            >
+              {filter}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Commands list */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Quick Actions Section */}
+        {filteredQuickActions.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-medium text-text-subtle uppercase tracking-wider mb-2 px-2">
+              Quick Actions
+            </h3>
+            <div className="space-y-1">
+              {filteredQuickActions.map((action) => (
+                <button
+                  key={action.command}
+                  onClick={() => handleQuickActionClick(action.command)}
+                  className="w-full text-left px-3 py-2 rounded bg-accent-primary/10 hover:bg-accent-primary/15 border border-accent-primary/30 hover:border-accent-primary/40 text-text-primary hover:text-accent-primary transition-colors duration-160 cursor-pointer"
+                  title={`${action.label} • Click to use`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{action.icon}</span>
+                        <span className="text-sm font-medium text-text-primary">
+                          {action.label}
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-muted mt-1 line-clamp-1">
+                        {action.command}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Slash Commands Section */}
+        {Object.keys(groupedCommands).length === 0 ? (
+          <div className="text-center text-text-subtle text-sm py-8">
+            No commands found
+          </div>
+        ) : (
+          Object.entries(groupedCommands).map(([category, commands]) => (
+            <div key={category} className="mb-4">
+              <h3 className="text-xs font-medium text-text-subtle uppercase tracking-wider mb-2 px-2">
+                {category}
+              </h3>
+              <div className="space-y-1">
+                {commands.map((cmd) => (
+                  <button
+                    key={cmd.command}
+                    onClick={() => onSelectCommand(cmd.command)}
+                    className="w-full text-left px-3 py-2 rounded bg-surface border border-transparent hover:border-surface-outline hover:bg-surface-active text-text-muted hover:text-text-primary transition-colors duration-160 cursor-pointer"
+                    title={`${cmd.label} • ${cmd.description}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm text-text-primary">
+                            {cmd.command}
+                          </span>
+                        </div>
+                        <div className="text-xs text-text-muted mt-1 line-clamp-1">
+                          {cmd.description}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+

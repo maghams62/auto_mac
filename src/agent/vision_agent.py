@@ -12,7 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
-from ..utils import load_config
+from ..utils import load_config, get_temperature_for_model
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def analyze_ui_screenshot(
         openai_config = config.get("openai", {})
         llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,
+            temperature=get_temperature_for_model(config, default_temperature=0.0),
             api_key=openai_config.get("api_key")
         )
 

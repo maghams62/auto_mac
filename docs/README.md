@@ -2,6 +2,8 @@
 
 Welcome to the Auto Mac documentation! This directory contains all system documentation organized by topic.
 
+**📚 [Documentation Index](DOCUMENTATION_INDEX.md)** - **START HERE** - Central repository mapping all documentation files for easy discovery.
+
 ## 📚 Documentation Structure
 
 ### 🚀 [Quickstart](quickstart/)
@@ -117,9 +119,10 @@ See: [SLASH_COMMANDS.md](features/SLASH_COMMANDS.md)
 
 ## 📦 Additional Resources
 
+- **Documentation Index**: [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) - **Central documentation repository**
 - **Main README**: [../README.md](../README.md)
-- **Start Here**: [../START_HERE.md](../START_HERE.md)
-- **Tests**: [../tests/](../tests/)
+- **Start Here**: [quickstart/START_HERE.md](quickstart/START_HERE.md)
+- **Tests**: [../tests/](../tests/) - See [tests/TEST_INDEX.md](../tests/TEST_INDEX.md) for test organization
 - **Source Code**: [../src/](../src/)
 
 ---

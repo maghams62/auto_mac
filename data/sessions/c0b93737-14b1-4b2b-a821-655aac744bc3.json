@@ -1,0 +1,38 @@
+{
+  "session_id": "c0b93737-14b1-4b2b-a821-655aac744bc3",
+  "status": "active",
+  "created_at": "2025-11-11T23:16:03.192737",
+  "last_active_at": "2025-11-11T23:18:34.840593",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T23:18:34.840593",
+      "user_request": "[Tone: I'm curious]",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: The request is ambiguous: '[Tone: I\\u0027m curious]' does not specify any actionable task or objective. Please clarify what you would like me to do.",
+        "missing_capabilities": "The request is ambiguous: '[Tone: I\\u0027m curious]' does not specify any actionable task or objective. Please clarify what you would like me to do."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

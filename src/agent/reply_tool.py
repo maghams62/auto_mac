@@ -47,7 +47,7 @@ def _format_duplicate_details(duplicates: List[Dict[str, Any]]) -> str:
 @tool
 def reply_to_user(
     message: str,
-    details: str = "",
+    details: Optional[str] = None,
     artifacts: Optional[List[str]] = None,
     status: str = "success"
 ) -> Dict[str, Any]:
@@ -68,6 +68,7 @@ def reply_to_user(
         Structured payload recorded in step_results so the UI can render it.
     """
     artifacts = artifacts or []
+    details = details or ""
 
     # AUTO-FORMAT: If details is a list (structured data), format it nicely
     if isinstance(details, list):

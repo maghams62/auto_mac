@@ -188,12 +188,12 @@ class KeynoteComposer:
 
             script_parts.append('        end tell')
 
-        # Save if path provided
-        script_parts.append('        end tell')
-
+        # Save if path provided (BEFORE closing the newDoc tell block)
         if output_path:
             escaped_path = self._escape_applescript_string(output_path)
             script_parts.append(f'        save newDoc in POSIX file "{escaped_path}"')
+
+        script_parts.append('        end tell')
 
         script_parts.extend([
             '    end tell',

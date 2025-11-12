@@ -151,6 +151,66 @@ def setup_logging(config: Dict[str, Any]):
     logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
+def get_temperature_for_model(config: Dict[str, Any], default_temperature: float = 0.7) -> float:
+    """
+    Get appropriate temperature for the configured model.
+
+    o-series models (o1, o3, o4) only support temperature=1.
+    Other models use the config temperature or the provided default.
+
+    Args:
+        config: Configuration dictionary
+        default_temperature: Default temperature to use if not in config (only for non-o-series)
+
+    Returns:
+        Temperature value appropriate for the model
+    """
+    openai_config = config.get("openai", {})
+    model = openai_config.get("model", "gpt-4o")
+
+    # o-series models only support temperature=1
+    if model and model.startswith(("o1", "o3", "o4")):
+        return 1.0
+
+    # For other models, use config value or default
+    return openai_config.get("temperature", default_temperature)
+
+
+def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max_tokens: int = 2000) -> Dict[str, Any]:
+    """
+    Get LLM parameters compatible with the configured model.
+
+    o-series models (o1, o3, o4) have special requirements:
+    - Only support temperature=1
+    - Use max_completion_tokens instead of max_tokens
+
+    Args:
+        config: Configuration dictionary
+        default_temperature: Default temperature for non-o-series models
+        max_tokens: Maximum tokens (will be converted to max_completion_tokens for o-series)
+
+    Returns:
+        Dictionary of parameters to pass to ChatOpenAI()
+    """
+    openai_config = config.get("openai", {})
+    model = openai_config.get("model", "gpt-4o")
+
+    params = {
+        "model": model,
+        "api_key": openai_config.get("api_key"),
+    }
+
+    # o-series models have special requirements
+    if model and model.startswith(("o1", "o3", "o4")):
+        params["temperature"] = 1.0
+        params["max_completion_tokens"] = max_tokens
+    else:
+        params["temperature"] = openai_config.get("temperature", default_temperature)
+        params["max_tokens"] = max_tokens
+
+    return params
+
+
 def ensure_directories():
     """Create necessary directories if they don't exist."""
     directories = [
@@ -165,14 +225,32 @@ def ensure_directories():
 # Export structured logger
 from .logger import StructuredLogger, setup_structured_logging, get_logger, RequestContext
 
+# Export writing UI formatter
+from .writing_ui_formatter import (
+    format_report_for_ui,
+    format_slides_for_ui,
+    format_synthesis_for_ui,
+    format_quick_summary_for_ui,
+    format_email_for_ui,
+    format_writing_output,
+)
+
 __all__ = [
     'load_config',
     'save_config',
     'setup_logging',
+    'get_temperature_for_model',
+    'get_llm_params',
     'ensure_directories',
     'StructuredLogger',
     'setup_structured_logging',
     'get_logger',
     'RequestContext',
+    'format_report_for_ui',
+    'format_slides_for_ui',
+    'format_synthesis_for_ui',
+    'format_quick_summary_for_ui',
+    'format_email_for_ui',
+    'format_writing_output',
 ]
 

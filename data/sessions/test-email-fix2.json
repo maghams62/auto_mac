@@ -1,0 +1,131 @@
+{
+  "session_id": "test-email-fix2",
+  "status": "active",
+  "created_at": "2025-11-12T08:49:33.327376",
+  "last_active_at": "2025-11-12T08:49:41.854531",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-12T08:49:41.854531",
+      "user_request": "summarize my last 3 emails",
+      "agent_response": {
+        "goal": "Summarize the last 3 emails",
+        "steps_executed": 3,
+        "results": {
+          "1": {
+            "emails": [],
+            "count": 0,
+            "mailbox": "INBOX",
+            "account": "spamstuff062@gmail.com",
+            "tool": "read_latest_emails"
+          },
+          "2": {
+            "summary": "No emails to summarize.",
+            "count": 0,
+            "message": "The emails_data dictionary did not contain any emails. Make sure to call a read_* tool first (read_latest_emails, read_emails_by_sender, or read_emails_by_time) and pass its result to summarize_emails.",
+            "tool": "summarize_emails"
+          },
+          "3": {
+            "type": "reply",
+            "message": "No emails to summarize.",
+            "details": "Summary of the last 3 emails.",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "partial_success",
+        "reply_step_id": 3,
+        "message": "No emails to summarize. Email step was not executed. Please retry the request.",
+        "details": "Summary of the last 3 emails."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "read_latest_emails",
+          "parameters": {
+            "count": 3,
+            "mailbox": "INBOX"
+          },
+          "dependencies": [],
+          "reasoning": "Retrieve the latest 3 emails from the inbox to summarize.",
+          "expected_output": "Emails data for summarization"
+        },
+        {
+          "id": 2,
+          "action": "summarize_emails",
+          "parameters": {
+            "emails_data": "$step1",
+            "focus": null
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Summarize the retrieved emails to provide a concise overview.",
+          "expected_output": "Summary of the last 3 emails"
+        },
+        {
+          "id": 3,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "$step2.summary",
+            "details": "Summary of the last 3 emails.",
+            "status": "success"
+          },
+          "dependencies": [
+            2
+          ],
+          "reasoning": "Deliver the summary of the last 3 emails to the user.",
+          "expected_output": "User-facing confirmation of email summary"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "emails": [],
+          "count": 0,
+          "mailbox": "INBOX",
+          "account": "spamstuff062@gmail.com",
+          "tool": "read_latest_emails"
+        },
+        "2": {
+          "summary": "No emails to summarize.",
+          "count": 0,
+          "message": "The emails_data dictionary did not contain any emails. Make sure to call a read_* tool first (read_latest_emails, read_emails_by_sender, or read_emails_by_time) and pass its result to summarize_emails.",
+          "tool": "summarize_emails"
+        },
+        "3": {
+          "type": "reply",
+          "message": "No emails to summarize.",
+          "details": "Summary of the last 3 emails.",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Summarize the last 3 emails",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 3,
+    "agents_used": [],
+    "tools_used": [
+      "read_latest_emails",
+      "summarize_emails",
+      "reply_to_user"
+    ]
+  }
+}

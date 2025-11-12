@@ -63,21 +63,34 @@ class MailComposer:
             if attachment_paths:
                 all_attachments.extend(attachment_paths)
 
-            # Validate all attachment paths exist
+            # Validate all attachment paths exist (double-check, but email_agent should have already validated)
             import os
             validated_attachments = []
             for att_path in all_attachments:
-                if os.path.exists(att_path) and os.path.isfile(att_path):
-                    validated_attachments.append(att_path)
-                else:
-                    logger.warning(f"[MAIL COMPOSER] Attachment file not found, skipping: {att_path}")
+                # Convert to absolute path if not already
+                try:
+                    abs_path = os.path.abspath(os.path.expanduser(att_path))
+                except Exception as e:
+                    logger.warning(f"[MAIL COMPOSER] Failed to convert path to absolute: {att_path}, error: {e}")
                     invalid_attachments.append(att_path)
+                    continue
+                
+                if os.path.exists(abs_path) and os.path.isfile(abs_path) and os.access(abs_path, os.R_OK):
+                    validated_attachments.append(abs_path)
+                    logger.debug(f"[MAIL COMPOSER] ✅ Attachment validated: {abs_path}")
+                else:
+                    logger.warning(f"[MAIL COMPOSER] ⚠️  Attachment file not found or not accessible, skipping: {abs_path}")
+                    invalid_attachments.append(abs_path)
 
             # Log warning if some attachments were invalid
             if invalid_attachments:
-                logger.warning(f"[MAIL COMPOSER] {len(invalid_attachments)} attachment(s) not found: {invalid_attachments}")
+                logger.warning(f"[MAIL COMPOSER] ⚠️  {len(invalid_attachments)} attachment(s) failed validation: {invalid_attachments}")
 
             all_attachments = validated_attachments
+            
+            # Log final attachment count
+            if all_attachments:
+                logger.info(f"[MAIL COMPOSER] ✅ Proceeding with {len(all_attachments)} validated attachment(s)")
 
             # Build AppleScript
             script = self._build_applescript(

@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from ..integrations.bluesky_client import BlueskyAPIClient, BlueskyAPIError
+from ..utils.message_personality import get_bluesky_post_message
 from ..utils import load_config
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,11 @@ def _summarize_posts(config: Dict[str, Any], items: List[Dict[str, Any]]) -> str
     if not items:
         return "No posts were available to summarize."
 
-    openai_config = config.get("openai") or {}
-    llm = ChatOpenAI(
-        model=openai_config.get("model", "gpt-4o"),
-        temperature=0.2,
-        max_tokens=700,
-        api_key=openai_config.get("api_key"),
-    )
+    from ..utils import get_llm_params
+
+    # Get LLM parameters that work with both gpt-4o and o4-mini
+    llm_params = get_llm_params(config, default_temperature=0.2, max_tokens=700)
+    llm = ChatOpenAI(**llm_params)
 
     formatted = []
     for idx, item in enumerate(items, start=1):
@@ -350,13 +349,52 @@ def summarize_bluesky_posts(
     else:
         posts.sort(key=lambda item: (item["score"], item.get("created_at", "")), reverse=True)
     
-    highlights = posts[:max_highlights]
+    # Extract exact count if user requested "last N tweets"
+    requested_count = None
+    if use_author_feed and "last" in query_lower:
+        import re
+        num_match = re.search(r'(\d+)', query_lower)
+        if num_match:
+            requested_count = int(num_match.group(1))
+            # Ensure we return EXACTLY the requested count
+            highlights = posts[:requested_count]
+            logger.info(f"[BLUESKY AGENT] User requested last {requested_count} tweets, returning exactly {len(highlights)} posts")
+        else:
+            highlights = posts[:max_highlights]
+    else:
+        highlights = posts[:max_highlights]
+    
+    # Validate count accuracy for "last N tweets" queries
+    if requested_count is not None:
+        if len(highlights) != requested_count:
+            logger.warning(f"[BLUESKY AGENT] ⚠️  Count mismatch: requested {requested_count}, got {len(highlights)}")
+            # Try to get more posts if we don't have enough
+            if len(highlights) < requested_count and len(posts) >= requested_count:
+                highlights = posts[:requested_count]
+                logger.info(f"[BLUESKY AGENT] Expanded highlights to match requested count: {len(highlights)}")
+            elif len(highlights) < requested_count:
+                logger.warning(f"[BLUESKY AGENT] ⚠️  Only {len(highlights)} posts available, requested {requested_count}")
+    
+    # Validate chronological order (most recent first)
+    if highlights:
+        timestamps = [item.get("created_at", "") for item in highlights if item.get("created_at")]
+        if len(timestamps) > 1:
+            # Check if sorted descending (most recent first)
+            try:
+                parsed_times = [datetime.fromisoformat(ts.replace("Z", "+00:00")) for ts in timestamps]
+                is_descending = all(parsed_times[i] >= parsed_times[i+1] for i in range(len(parsed_times)-1))
+                if not is_descending:
+                    logger.warning(f"[BLUESKY AGENT] ⚠️  Posts not in chronological order (most recent first)")
+            except Exception as e:
+                logger.warning(f"[BLUESKY AGENT] Could not validate chronological order: {e}")
 
     summary_text = _summarize_posts(config, highlights)
 
     return {
         "summary": summary_text,
         "items": highlights,
+        "count": len(highlights),
+        "requested_count": requested_count,
         "query": query.strip(),
         "time_window": {
             "hours": lookback,
@@ -429,7 +467,7 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
         "uri": uri,
         "cid": cid,
         "url": url,
-        "message": "Bluesky post published successfully.",
+        "message": get_bluesky_post_message(),
     }
 
 

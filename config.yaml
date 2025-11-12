@@ -1,20 +1,37 @@
-# Mac Automation Assistant Configuration
+# Cerebro OS Configuration
 
 # OpenAI API Configuration
 openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
-  model: "o4-mini"  # o4-mini for all LLM tasks
+  model: "gpt-4o-mini"  # Chat-compatible model for all LLM tasks
   embedding_model: "text-embedding-3-small"
   temperature: 0.7
   max_tokens: 2000
 
-document_directory: "/Users/siddharthsuresh/Downloads/auto_mac/test_docs"
+# Delivery Intent Configuration (moved from hardcoded logic in agent.py)
+delivery:
+  # Intent detection verbs - when these appear in user request, plan must include compose_email
+  intent_verbs:
+    - email
+    - send
+    - mail
+    - attach
+
+  # Required tool when delivery intent is detected
+  required_tool: compose_email
+
+  # Validation behavior
+  validation:
+    reject_missing_tool: true  # Reject plan if delivery verb present but compose_email missing
+    auto_correct: false  # Do not auto-add compose_email (let planner learn)
+
+document_directory: "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs"
 
 # Document Configuration
 documents:
   # Folders to index (can add multiple paths)
   folders:
-    - "/Users/siddharthsuresh/Downloads/auto_mac/test_docs"
+    - "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs"
 
 
   # File types to index
@@ -39,7 +56,7 @@ email:
   account_email: "spamstuff062@gmail.com"  # YOUR email account - used for READING emails (SECURITY: only reads from this account)
   default_recipient: "spamstuff062@gmail.com"  # Default email address when user says "email to me"
   default_subject_prefix: "[Auto-generated]"
-  signature: "\n\n---\nSent via Mac Automation Assistant"
+  signature: "\n\n---\nSent via Cerebro OS"
 
 # iMessage Configuration
 imessage:
@@ -144,6 +161,18 @@ voice:
 # WhatsApp Configuration
 whatsapp:
   screenshot_dir: "data/screenshots"   # Directory for WhatsApp screenshots
+
+# Weather Configuration
+weather:
+  default_location: "San Francisco, CA"  # Default location for weather queries
+
+# Notes Configuration
+notes:
+  default_folder: "Notes"  # Default folder for creating notes
+
+# Reminders Configuration
+reminders:
+  default_list: "Reminders"  # Default list for creating reminders
 
 # Vision-Assisted UI Navigation
 vision:

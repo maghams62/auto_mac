@@ -43,7 +43,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(title="Mac Automation Assistant API")
+app = FastAPI(title="Cerebro OS API")
 
 # Configure CORS for frontend (allow configurable origins with sensible defaults)
 default_allowed_origins = [
@@ -81,20 +81,25 @@ from src.config_manager import get_global_config_manager, set_global_config_mana
 # Initialize global config manager
 config_manager = get_global_config_manager()
 
-# Get config from manager
-config = config_manager.get_config()
-
 # Initialize session manager
 session_manager = SessionManager(storage_dir="data/sessions")
 
 # Initialize agent registry with session support
-agent_registry = AgentRegistry(config, session_manager=session_manager)
+agent_registry = AgentRegistry(config_manager.get_config(), session_manager=session_manager)
 
 # Initialize automation agent with session support
-agent = AutomationAgent(config, session_manager=session_manager)
+agent = AutomationAgent(config_manager.get_config(), session_manager=session_manager)
 
 # Initialize workflow orchestrator for indexing
-orchestrator = WorkflowOrchestrator(config)
+orchestrator = WorkflowOrchestrator(config_manager.get_config())
+
+# Initialize recurring task scheduler
+from src.automation.recurring_scheduler import RecurringTaskScheduler
+recurring_scheduler = RecurringTaskScheduler(
+    agent_registry=agent_registry,
+    agent=agent,
+    session_manager=session_manager
+)
 
 # Store references for hot-reload
 config_manager.update_components(agent_registry, agent, orchestrator)
@@ -151,6 +156,7 @@ session_cancel_events: Dict[str, Event] = {}
 class ChatMessage(BaseModel):
     message: str
     timestamp: Optional[str] = None
+    session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -217,10 +223,57 @@ async def process_agent_request(
             "timestamp": datetime.now().isoformat()
         }, websocket)
         return
-    
+
+    # Get the current event loop
+    loop = asyncio.get_event_loop()
+
+    # Define callback to send plan to UI
+    def send_plan_to_ui(plan_data: Dict[str, Any]):
+        """Send plan steps to UI for task disambiguation display."""
+        try:
+            # Schedule the async send in the main event loop from the worker thread
+            asyncio.run_coroutine_threadsafe(
+                manager.send_message({
+                    "type": "plan",
+                    "message": "",  # Required by Message interface but not displayed for plan type
+                    "goal": plan_data.get("goal", ""),
+                    "steps": plan_data.get("steps", []),
+                    "timestamp": datetime.now().isoformat()
+                }, websocket),
+                loop
+            )
+        except Exception as e:
+            logger.error(f"Failed to send plan to UI: {e}")
+
+    # Pass callback through run() method instead of setting on agent instance to avoid cross-talk
     try:
-        result = await asyncio.to_thread(agent.run, user_message, session_id, cancel_event)
+        result = await asyncio.to_thread(agent.run, user_message, session_id, cancel_event, None, send_plan_to_ui)
         result_dict = result if isinstance(result, dict) else {"message": str(result)}
+        
+        # Check if this is a retry_with_orchestrator result from slash command
+        if isinstance(result_dict, dict) and result_dict.get("type") == "retry_with_orchestrator":
+            original_message = result_dict.get("original_message", user_message)
+            retry_message = result_dict.get("content", "Retrying via main assistant...")
+            context = result_dict.get("context", None)
+
+            # Send retry notification
+            await manager.send_message({
+                "type": "status",
+                "status": "processing",
+                "message": retry_message,
+                "timestamp": datetime.now().isoformat()
+            }, websocket)
+
+            # Log context if present (for debugging)
+            if context:
+                logger.info(f"[API SERVER] [EMAIL WORKFLOW] Retrying with context: {context}")
+
+            # Retry via orchestrator (agent.run will handle it as natural language)
+            # Pass context to orchestrator for email summarization hints
+            # Also pass callback to avoid cross-talk
+            result = await asyncio.to_thread(agent.run, original_message, session_id, cancel_event, context, send_plan_to_ui)
+            result_dict = result if isinstance(result, dict) else {"message": str(result)}
+        
         result_status = result_dict.get("status", "completed")
 
         session_memory = session_manager.get_or_create_session(session_id)
@@ -261,14 +314,36 @@ async def process_agent_request(
                 elif isinstance(first_result, dict) and "maps_url" in first_result:
                     formatted_message = format_result_message(first_result)
 
-        await manager.send_message({
+        # Extract files array from result if present (for file_list type responses)
+        files_array = None
+        if "step_results" in result_dict and result_dict["step_results"]:
+            for step_result in result_dict["step_results"].values():
+                if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
+                    files_array = step_result["files"]
+                    break
+        elif "results" in result_dict and result_dict["results"]:
+            for step_result in result_dict["results"].values():
+                if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
+                    files_array = step_result["files"]
+                    break
+        elif result_dict.get("type") == "file_list" and "files" in result_dict:
+            files_array = result_dict["files"]
+
+        # Build response payload
+        response_payload = {
             "type": "response",
             "message": formatted_message,
             "status": result_status,
             "session_id": session_id,
             "interaction_count": len(session_memory.interactions),
             "timestamp": datetime.now().isoformat()
-        }, websocket)
+        }
+        
+        # Add files array if present
+        if files_array is not None:
+            response_payload["files"] = files_array
+
+        await manager.send_message(response_payload, websocket)
 
         if result_status == "cancelled":
             await manager.send_message({
@@ -331,7 +406,7 @@ async def root():
     """Health check endpoint"""
     return {
         "status": "online",
-        "service": "Mac Automation Assistant API",
+        "service": "Cerebro OS API",
         "version": "1.0.0"
     }
 
@@ -348,7 +423,7 @@ async def get_stats():
 
         # Get available agents
         from src.agent.agent_registry import AgentRegistry
-        registry = AgentRegistry(config)
+        registry = AgentRegistry(config_manager.get_config())
         available_agents = list(registry.agents.keys())
 
         return SystemStats(
@@ -367,11 +442,12 @@ async def chat(message: ChatMessage):
     try:
         logger.info(f"Received chat message: {message.message}")
         
+        # Get session ID from request if available, otherwise use default
+        session_id = message.session_id or "default"
+        
         # Handle /clear command
         normalized_msg = message.message.strip().lower() if message.message else ""
         if normalized_msg == "/clear" or normalized_msg == "clear":
-            # Get session ID from request if available, otherwise use default
-            session_id = getattr(message, 'session_id', None) or "default"
             session_manager.clear_session(session_id)
             return ChatResponse(
                 response="✨ Context cleared. Starting a new session.",
@@ -380,11 +456,75 @@ async def chat(message: ChatMessage):
             )
 
         # Execute the task using the automation agent
-        result = agent.run(message.message)
+        result = agent.run(message.message, session_id=session_id)
+        
+        # Handle different return types
+        if isinstance(result, dict):
+            result_dict = result
+        elif isinstance(result, str):
+            # Try to parse if it's a string representation of a dict
+            try:
+                import ast
+                result_dict = ast.literal_eval(result)
+            except:
+                result_dict = {"message": result}
+        else:
+            result_dict = {"message": str(result)}
+        
+        # Check if this is a retry_with_orchestrator result from slash command
+        if isinstance(result_dict, dict) and result_dict.get("type") == "retry_with_orchestrator":
+            original_message = result_dict.get("original_message", message.message)
+            context = result_dict.get("context", None)
+            
+            # Log context if present (for debugging)
+            if context:
+                logger.info(f"[API SERVER] [REST] Retrying with context: {context}")
+            
+            # Convert slash command to natural language for orchestrator
+            # Strip the slash command prefix (e.g., "/email summarize..." -> "summarize...")
+            if original_message.strip().startswith('/'):
+                # Extract the command and task
+                parts = original_message.strip().split(None, 1)
+                if len(parts) > 1:
+                    # Remove the slash and command, keep the task
+                    natural_language = parts[1]
+                else:
+                    natural_language = original_message.replace('/', '').strip()
+            else:
+                natural_language = original_message
+            
+            # Retry via orchestrator (agent.run will handle it as natural language)
+            result = agent.run(natural_language, session_id=session_id, context=context)
+            result_dict = result if isinstance(result, dict) else {"message": str(result)}
+        
+        # Format the response
+        if isinstance(result_dict, dict):
+            # Check again if retry happened (in case retry also returned retry)
+            if result_dict.get("type") == "retry_with_orchestrator":
+                # This shouldn't happen, but if it does, return a helpful message
+                response_text = f"Request was delegated to orchestrator but did not complete. Original message: {result_dict.get('original_message', message.message)}"
+                status = "error"
+            else:
+                # Extract message from orchestrator result structure
+                # Orchestrator returns: {"status": "...", "message": "...", "final_result": {...}, "results": {...}}
+                if "final_result" in result_dict:
+                    # Prefer the message field, fall back to final_result content
+                    response_text = (
+                        result_dict.get("message") or 
+                        result_dict.get("response") or
+                        (result_dict.get("final_result", {}).get("message") if isinstance(result_dict.get("final_result"), dict) else None) or
+                        str(result_dict)
+                    )
+                else:
+                    response_text = result_dict.get("message") or result_dict.get("response") or str(result_dict)
+                status = result_dict.get("status", "completed")
+        else:
+            response_text = str(result_dict)
+            status = "completed"
 
         return ChatResponse(
-            response=str(result),
-            status="completed",
+            response=response_text,
+            status=status,
             timestamp=datetime.now().isoformat()
         )
     except Exception as e:
@@ -396,7 +536,7 @@ async def list_agents():
     """List all available agents and their capabilities"""
     try:
         from src.agent.agent_registry import AgentRegistry
-        registry = AgentRegistry(config)
+        registry = AgentRegistry(config_manager.get_config())
 
         agents_info = {}
         for agent_name, agent_instance in registry.agents.items():
@@ -628,23 +768,39 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
         import uuid
         session_id = str(uuid.uuid4())
 
-    await manager.connect(websocket, session_id)
+    try:
+        await manager.connect(websocket, session_id)
+        logger.info(f"WebSocket connection established for session {session_id}")
+    except Exception as e:
+        logger.error(f"Error accepting WebSocket connection: {e}", exc_info=True)
+        return
 
     # Get session memory
-    memory = session_manager.get_or_create_session(session_id)
-    is_new_session = memory.is_new_session()
+    try:
+        memory = session_manager.get_or_create_session(session_id)
+        is_new_session = memory.is_new_session()
+    except Exception as e:
+        logger.error(f"Error getting session memory: {e}", exc_info=True)
+        await manager.disconnect(websocket)
+        return
 
     try:
         # Send welcome message with session info
         await manager.send_message({
             "type": "system",
-            "message": "Connected to Mac Automation Assistant",
+            "message": "Connected to Cerebro OS",
             "session_id": session_id,
             "session_status": "new" if is_new_session else "resumed",
             "interactions": len(memory.interactions),
             "timestamp": datetime.now().isoformat()
         }, websocket)
+        logger.info(f"Welcome message sent to session {session_id}")
+    except Exception as e:
+        logger.error(f"Error sending welcome message: {e}", exc_info=True)
+        await manager.disconnect(websocket)
+        return
 
+    try:
         while True:
             data = await websocket.receive_json()
             message = data.get("message", "")
@@ -737,13 +893,23 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                                 indexed_count = result.get('indexed_documents', 0)
                                 stats = result.get('stats', {})
                                 total_chunks = stats.get('total_chunks', 0)
+                                unique_files = stats.get('unique_files', 0)
                                 
-                                folders = config.get('documents', {}).get('folders', [])
+                                folders = config_manager.get_config().get('documents', {}).get('folders', [])
                                 folders_str = ', '.join([Path(f).name for f in folders])
+                                
+                                # Show total documents in index (not just newly indexed)
+                                # If no new documents were indexed but index exists, show total count
+                                if indexed_count == 0 and unique_files > 0:
+                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- Total documents in index: {unique_files}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
+                                elif indexed_count > 0:
+                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- New documents indexed: {indexed_count}\n- Total documents in index: {unique_files}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
+                                else:
+                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- Documents indexed: {indexed_count}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
                                 
                                 await manager.send_message({
                                     "type": "response",
-                                    "message": f"✅ Indexing complete!\n\n📊 **Results:**\n- Documents indexed: {indexed_count}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context.",
+                                    "message": message,
                                     "timestamp": datetime.now().isoformat()
                                 }, websocket)
                                 
@@ -930,6 +1096,40 @@ async def reindex_documents():
         logger.error(f"Error reindexing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class RevealFileRequest(BaseModel):
+    path: str
+
+@app.post("/api/reveal-file")
+async def reveal_file(request: RevealFileRequest):
+    """
+    Reveal a file in Finder (macOS only).
+    
+    Accepts a JSON body with 'path' field.
+    """
+    try:
+        file_path = request.path
+        
+        import subprocess
+        import os
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+        
+        # Use macOS 'open' command to reveal file in Finder
+        subprocess.run(["open", "-R", file_path], check=True)
+        
+        return {
+            "success": True,
+            "message": f"Revealed {file_path} in Finder"
+        }
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error revealing file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reveal file: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error revealing file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
     """
@@ -955,8 +1155,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         if file_size > 25 * 1024 * 1024:  # 25MB limit
             raise HTTPException(status_code=400, detail=f"Audio file too large: {file_size} bytes (max 25MB)")
         
-        # Get OpenAI API key from config (already loaded at startup)
-        api_key = config.get("openai", {}).get("api_key")
+        # Get OpenAI API key from config manager (always fresh)
+        api_key = config_manager.get_config().get("openai", {}).get("api_key")
         if not api_key or api_key.startswith("${"):
             # Fallback to environment variable
             api_key = os.getenv("OPENAI_API_KEY")
@@ -1057,8 +1257,8 @@ async def text_to_speech_api(
                 detail=f"Speed must be between 0.25 and 4.0. Got: {speed}"
             )
         
-        # Get OpenAI API key
-        api_key = config.get("openai", {}).get("api_key")
+        # Get OpenAI API key from config manager (always fresh)
+        api_key = config_manager.get_config().get("openai", {}).get("api_key")
         if not api_key or api_key.startswith("${"):
             api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -1101,10 +1301,130 @@ async def text_to_speech_api(
         raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 
+# Startup and shutdown handlers for recurring scheduler
+@app.on_event("startup")
+async def startup_event():
+    """Start the recurring task scheduler on app startup."""
+    logger.info("Starting recurring task scheduler...")
+    await recurring_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the recurring task scheduler on app shutdown."""
+    logger.info("Stopping recurring task scheduler...")
+    await recurring_scheduler.stop()
+
+
+# API endpoint for managing recurring tasks
+@app.get("/api/recurring/tasks")
+async def get_recurring_tasks():
+    """Get all registered recurring tasks."""
+    try:
+        tasks = await recurring_scheduler.get_tasks()
+        return {
+            "success": True,
+            "tasks": [task.to_dict() for task in tasks]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching recurring tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/recurring/tasks")
+async def create_recurring_task(spec: Dict[str, Any] = Body(...)):
+    """
+    Create a new recurring task.
+
+    Body should contain:
+        - name: Task name
+        - command_text: Original command
+        - schedule: Schedule specification (type, weekday, time, tz)
+        - action: Action specification (kind, delivery, params)
+    """
+    try:
+        from src.automation.recurring_scheduler import ScheduleSpec, ActionSpec
+
+        # Parse specification
+        name = spec.get("name")
+        command_text = spec.get("command_text", "")
+        schedule_data = spec.get("schedule", {})
+        action_data = spec.get("action", {})
+
+        if not name or not schedule_data or not action_data:
+            raise HTTPException(status_code=400, detail="Missing required fields")
+
+        # Create specs
+        schedule = ScheduleSpec(**schedule_data)
+        action = ActionSpec(**action_data)
+
+        # Register task
+        task = await recurring_scheduler.register_task(
+            name=name,
+            command_text=command_text,
+            schedule=schedule,
+            action=action
+        )
+
+        return {
+            "success": True,
+            "task": task.to_dict(),
+            "message": f"Recurring task '{name}' created successfully. Next run: {task.next_run_at}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating recurring task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/recurring/tasks/{task_id}")
+async def delete_recurring_task(task_id: str):
+    """Delete a recurring task by ID."""
+    try:
+        await recurring_scheduler.delete_task(task_id)
+        return {
+            "success": True,
+            "message": f"Task {task_id} deleted successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting recurring task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/recurring/tasks/{task_id}/pause")
+async def pause_recurring_task(task_id: str):
+    """Pause a recurring task."""
+    try:
+        await recurring_scheduler.pause_task(task_id)
+        return {
+            "success": True,
+            "message": f"Task {task_id} paused successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error pausing recurring task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/recurring/tasks/{task_id}/resume")
+async def resume_recurring_task(task_id: str):
+    """Resume a paused recurring task."""
+    try:
+        await recurring_scheduler.resume_task(task_id)
+        return {
+            "success": True,
+            "message": f"Task {task_id} resumed successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error resuming recurring task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("Starting Mac Automation Assistant API Server...")
+    logger.info("Starting Cerebro OS API Server...")
     logger.info("API will be available at http://localhost:8000")
     logger.info("WebSocket endpoint: ws://localhost:8000/ws/chat")
     logger.info("API docs: http://localhost:8000/docs")

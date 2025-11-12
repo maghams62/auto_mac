@@ -16,6 +16,7 @@ from pathlib import Path
 import logging
 
 from ..config import get_config_context
+from ..utils import get_temperature_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,17 @@ def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
                 "retry_possible": True
             }
 
-        # Return top result
+        # Return top result with enhanced metadata for RAG
         result = results[0]
         return {
             "doc_path": result["file_path"],
             "doc_title": result.get("title", Path(result["file_path"]).name),
             "relevance_score": result.get("score", 0.0),
+            "content_preview": result.get("content_preview", "")[:500],  # First 500 chars for context
             "metadata": {
                 "file_type": Path(result["file_path"]).suffix[1:],
-                "chunk_count": result.get("chunk_count", 1)
+                "chunk_count": result.get("chunk_count", 1),
+                "page_count": result.get("total_pages", 0)
             }
         }
 
@@ -380,9 +383,9 @@ def create_zip_archive(
         Dictionary with zip_path, file_count, and total_size
 
     Examples:
-        - Zip entire folder: create_zip_archive("test_data", "backup.zip")
-        - Zip only PDFs: create_zip_archive("test_data", "pdfs.zip", include_extensions=["pdf"])
-        - Zip everything except music: create_zip_archive("test_data", "study_stuff.zip", exclude_extensions=["mp3", "wav", "flac"])
+        - Zip entire folder: create_zip_archive("backup.zip")  # Uses document directory
+        - Zip only PDFs: create_zip_archive("pdfs.zip", include_extensions=["pdf"])
+        - Zip everything except music: create_zip_archive("study_stuff.zip", exclude_extensions=["mp3", "wav", "flac"])
     """
     logger.info(f"[FILE AGENT] Tool: create_zip_archive(source='{source_path}', zip='{zip_name}')")
 
@@ -401,27 +404,32 @@ def create_zip_archive(
         if not zip_name.endswith('.zip'):
             zip_name += '.zip'
 
-        # Resolve source path (default to document directory if not provided)
-        try:
-            doc_dir = accessor.get_primary_document_directory()
-        except ConfigValidationError as exc:
-            return {
-                "error": True,
-                "error_type": "ConfigurationError",
-                "error_message": str(exc),
-                "retry_possible": False
-            }
-
-        source_path = source_path or doc_dir
-
-        # Make path absolute
-        if os.path.isabs(source_path):
-            source_path = os.path.abspath(source_path)
-        else:
-            if os.path.exists(source_path):
+        # Resolve source path
+        # If source_path is provided and is absolute/exists, use it directly
+        # Otherwise, try to use document directory, but fallback to current directory if not configured
+        if source_path:
+            # User provided a path - try to use it
+            if os.path.isabs(source_path):
+                source_path = os.path.abspath(source_path)
+            elif os.path.exists(source_path):
                 source_path = os.path.abspath(source_path)
             else:
-                source_path = os.path.abspath(os.path.join(doc_dir, source_path))
+                # Try relative to document directory if configured
+                try:
+                    doc_dir = accessor.get_primary_document_directory()
+                    source_path = os.path.abspath(os.path.join(doc_dir, source_path))
+                except ConfigValidationError:
+                    # Fallback to current directory
+                    source_path = os.path.abspath(source_path)
+        else:
+            # No source_path provided - try document directory, fallback to current directory
+            try:
+                doc_dir = accessor.get_primary_document_directory()
+                source_path = doc_dir
+            except ConfigValidationError:
+                # Fallback to current working directory
+                source_path = os.getcwd()
+                logger.info(f"[FILE AGENT] No document directory configured, using current directory: {source_path}")
 
         if not os.path.exists(source_path):
             return {
@@ -431,9 +439,9 @@ def create_zip_archive(
                 "retry_possible": False
             }
 
-        # Determine output location (same directory as source or document directory)
+        # Determine output location (same directory as source)
         if os.path.isdir(source_path):
-            output_dir = os.path.dirname(source_path)
+            output_dir = source_path
         else:
             output_dir = os.path.dirname(source_path)
 
@@ -472,8 +480,14 @@ def create_zip_archive(
                 # Directory - walk and add files
                 for root, dirs, files in os.walk(source_path):
                     for file in files:
+                        file_path = os.path.join(root, file)
+
+                        # CRITICAL: Skip the output zip file itself to prevent self-inclusion
+                        if os.path.abspath(file_path) == os.path.abspath(zip_path):
+                            logger.info(f"[FILE AGENT] Skipping output zip file: {file}")
+                            continue
+
                         if should_include(file):
-                            file_path = os.path.join(root, file)
                             # Archive name preserves directory structure
                             arcname = os.path.relpath(file_path, source_path)
                             zipf.write(file_path, arcname)
@@ -629,7 +643,7 @@ def explain_folder(folder_path: Optional[str] = None) -> Dict[str, Any]:
         openai_config = config.get("openai", {})
         llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.3,
+            temperature=get_temperature_for_model(config, default_temperature=0.3),
             api_key=openai_config.get("api_key")
         )
 
@@ -703,9 +717,112 @@ def explain_files() -> Dict[str, Any]:
     return explain_folder.invoke({"folder_path": None})
 
 
+@tool
+def list_related_documents(query: str, max_results: int = 10) -> Dict[str, Any]:
+    """
+    List multiple related documents matching a semantic query.
+
+    FILE AGENT - LEVEL 1: Document Discovery
+    Use this when the user wants to see multiple matching files (e.g., "show all guitar tab files").
+    This tool groups search results by document and returns structured metadata.
+
+    Args:
+        query: Natural language search query describing the documents to find
+        max_results: Maximum number of documents to return (default: 10, cap: 25)
+
+    Returns:
+        Dictionary with:
+        - type: "file_list"
+        - message: Summary message with count
+        - files: List of document entries, each with:
+          - name: Basename of file
+          - path: Full absolute path
+          - score: Similarity score (0-1)
+          - meta: Dictionary with file_type and optional total_pages
+        - summary_blurb: Optional contextual summary (empty initially, LLM can populate)
+        - total_count: Number of documents found
+    """
+    logger.info(f"[FILE LIST] Tool: list_related_documents(query='{query}', max_results={max_results})")
+
+    try:
+        from src.documents import DocumentIndexer, SemanticSearch
+        from src.utils import load_config
+        from pathlib import Path
+
+        config = load_config()
+        indexer = DocumentIndexer(config)
+        search_engine = SemanticSearch(indexer, config)
+
+        # Cap max_results at 25
+        max_results = min(max_results, 25)
+        if max_results < 1:
+            max_results = 10
+
+        # Use search_and_group to get grouped results
+        grouped_results = search_engine.search_and_group(query)
+
+        if not grouped_results:
+            logger.info(f"[FILE LIST] No documents found for query: {query}")
+            return {
+                "type": "file_list",
+                "message": f"No documents found matching '{query}'",
+                "files": [],
+                "total_count": 0,
+                "summary_blurb": ""
+            }
+
+        # Limit to max_results
+        limited_results = grouped_results[:max_results]
+        top_filenames = [r['file_name'] for r in limited_results[:5]]
+
+        logger.info(f"[FILE LIST] Query: '{query}', Hit count: {len(grouped_results)}, Returning top {len(limited_results)}")
+        logger.info(f"[FILE LIST] Top filenames: {', '.join(top_filenames)}")
+
+        # Transform results to the expected format
+        files = []
+        for result in limited_results:
+            file_path = result['file_path']
+            file_name = result['file_name']
+            similarity = result.get('max_similarity', 0.0)
+            file_type = result.get('file_type', Path(file_path).suffix[1:] if Path(file_path).suffix else '')
+            total_pages = result.get('total_pages', 0)
+
+            files.append({
+                "name": file_name,
+                "path": file_path,
+                "score": round(float(similarity), 4),
+                "meta": {
+                    "file_type": file_type,
+                    "total_pages": total_pages if total_pages > 0 else None
+                }
+            })
+
+        # Create summary message
+        count = len(files)
+        message = f"Found {count} document{'s' if count != 1 else ''} matching '{query}'"
+
+        return {
+            "type": "file_list",
+            "message": message,
+            "files": files,
+            "total_count": len(grouped_results),  # Total found, not just returned
+            "summary_blurb": ""  # Empty initially, LLM can populate later
+        }
+
+    except Exception as e:
+        logger.error(f"[FILE LIST] Error in list_related_documents: {e}")
+        return {
+            "error": True,
+            "error_type": "ListError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
 # File Agent Tool Registry
 FILE_AGENT_TOOLS = [
     search_documents,
+    list_related_documents,
     extract_section,
     take_screenshot,
     organize_files,
@@ -722,6 +839,7 @@ File Agent Hierarchy:
 
 LEVEL 1: Document Discovery & Explanation
 └─ search_documents → Find relevant documents using semantic search
+└─ list_related_documents → List multiple related documents matching a query (e.g., "show all guitar tabs")
 └─ explain_folder → List and explain files in a folder (1-2 line descriptions)
 └─ explain_files → List and explain all indexed files (1-2 line descriptions)
 
@@ -740,6 +858,7 @@ LEVEL 5: Compression
 Typical Workflow:
 1. explain_files() or explain_folder(path) → Get overview of available files
 2. search_documents(query) → Find specific document
+   OR list_related_documents(query) → List multiple matching documents
 3. extract_section(doc_path, section) → Extract content
 4. [Optional] take_screenshot(doc_path, pages) → Capture images
 5. [Optional] organize_files(category, folder) → Organize files

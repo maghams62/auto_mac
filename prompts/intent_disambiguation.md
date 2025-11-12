@@ -35,6 +35,16 @@ Rules:
 - If the request is impossible with the listed agents, set "intent" to "impossible"
   and explain why in the "goal" field.
 
+## Examples
+
+### Email Summarization Queries
+- "summarize my last 3 emails" → `{{"intent": "single_agent", "primary_agent": "email", "involved_agents": ["email"], "task_type": "email_summarization"}}`
+- "can you summarize the last 3 emails sent by John Doe" → `{{"intent": "single_agent", "primary_agent": "email", "involved_agents": ["email"], "task_type": "email_summarization_by_sender"}}`
+- "summarize emails from [person's name]" → `{{"intent": "single_agent", "primary_agent": "email", "involved_agents": ["email"], "task_type": "email_summarization_by_sender"}}`
+- "what are the key points in my recent emails" → `{{"intent": "single_agent", "primary_agent": "email", "involved_agents": ["email"], "task_type": "email_summarization"}}`
+
+Note: Email summarization queries should route to the email agent, which can read emails and summarize them.
+
 ## User Request
 Goal: {goal}
 

@@ -251,6 +251,7 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
                 return {
                     "found": True,
                     "symbol": symbol,
+                    "stock_symbol": symbol,  # Alias for LLM compatibility
                     "company_name": company_name,
                     "query": query,
                     "source": "local_cache",

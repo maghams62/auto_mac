@@ -1,0 +1,147 @@
+{
+  "session_id": "25c0ce61-363d-4728-9c3f-0496bb363200",
+  "status": "active",
+  "created_at": "2025-11-11T22:48:00.191707",
+  "last_active_at": "2025-11-11T22:48:39.370997",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T22:48:39.370997",
+      "user_request": "plan a trip to la to ny email the link",
+      "agent_response": {
+        "goal": "Plan a driving route from Los Angeles to New York and email the directions link",
+        "steps_executed": 3,
+        "results": {
+          "1": {
+            "origin": "Los Angeles, CA",
+            "destination": "New York, NY",
+            "transportation_mode": "driving",
+            "maps_url": "https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d",
+            "maps_service": "Apple Maps",
+            "maps_opened": false,
+            "message": "Here are driving directions from Los Angeles, CA to New York, NY: https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d",
+            "tool": "get_directions"
+          },
+          "2": {
+            "status": "sent",
+            "message": "Email sent successfully",
+            "tool": "compose_email"
+          },
+          "3": {
+            "type": "reply",
+            "message": "Planned your driving route from Los Angeles to New York and emailed you the directions link.",
+            "details": "",
+            "artifacts": [
+              "https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d"
+            ],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 3,
+        "message": "Here are driving directions from Los Angeles, CA to New York, NY: https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d. Email sent as requested.",
+        "artifacts": [
+          "https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d"
+        ],
+        "compose_email_step_id": 2
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "get_directions",
+          "parameters": {
+            "origin": "Los Angeles, CA",
+            "destination": "New York, NY",
+            "transportation_mode": "driving",
+            "open_maps": false
+          },
+          "dependencies": [],
+          "reasoning": "Retrieve a driving route and generate a maps URL for the trip",
+          "expected_output": "Route details including a maps URL"
+        },
+        {
+          "id": 2,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Directions: LA → NY Trip",
+            "body": "Here is the link for your trip from Los Angeles to New York:\n\n$step1.maps_url",
+            "recipient": null,
+            "send": true
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Email the generated directions link to the user",
+          "expected_output": "Confirmation that the email was sent"
+        },
+        {
+          "id": 3,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Planned your driving route from Los Angeles to New York and emailed you the directions link.",
+            "artifacts": [
+              "$step1.maps_url"
+            ],
+            "status": "success"
+          },
+          "dependencies": [
+            2
+          ],
+          "reasoning": "Confirm completion and surface the link in the UI"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "origin": "Los Angeles, CA",
+          "destination": "New York, NY",
+          "transportation_mode": "driving",
+          "maps_url": "https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d",
+          "maps_service": "Apple Maps",
+          "maps_opened": false,
+          "message": "Here are driving directions from Los Angeles, CA to New York, NY: https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d",
+          "tool": "get_directions"
+        },
+        "2": {
+          "status": "sent",
+          "message": "Email sent successfully",
+          "tool": "compose_email"
+        },
+        "3": {
+          "type": "reply",
+          "message": "Planned your driving route from Los Angeles to New York and emailed you the directions link.",
+          "details": "",
+          "artifacts": [
+            "https://maps.apple.com/?saddr=Los%20Angeles%2C%20CA&daddr=New%20York%2C%20NY&dirflg=d"
+          ],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Plan a driving route from Los Angeles to New York and email the directions link",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 3,
+    "agents_used": [],
+    "tools_used": [
+      "compose_email",
+      "reply_to_user",
+      "get_directions"
+    ]
+  }
+}

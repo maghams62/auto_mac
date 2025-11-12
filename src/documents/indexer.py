@@ -139,22 +139,64 @@ class DocumentIndexer:
 
         logger.info(f"Found {len(all_files)} documents to index")
 
+        # Get set of already indexed file paths and their modification times
+        indexed_files = {}
+        for doc in self.documents:
+            file_path = doc.get('file_path')
+            if file_path:
+                # Store modification time if available, or use None to force re-index
+                indexed_files[file_path] = doc.get('file_mtime')
+
+        logger.info(f"Already indexed: {len(indexed_files)} files")
+
         # Parse and index each document
         indexed_count = 0
+        skipped_count = 0
+        updated_count = 0
 
         for file_path in tqdm(all_files, desc="Indexing documents"):
             # Check for cancellation before processing each file
             if cancel_event and cancel_event.is_set():
                 logger.info(f"Indexing cancelled after processing {indexed_count} documents")
                 return indexed_count
+            
+            file_path_str = str(file_path)
+            
+            # Check if file is already indexed
+            if file_path_str in indexed_files:
+                # Check if file has been modified
+                try:
+                    file_mtime = os.path.getmtime(file_path_str)
+                    indexed_mtime = indexed_files[file_path_str]
+                    
+                    # If file hasn't changed, skip it
+                    if indexed_mtime and abs(file_mtime - indexed_mtime) < 1.0:  # 1 second tolerance
+                        skipped_count += 1
+                        continue
+                    else:
+                        # File has been modified - remove old chunks and re-index
+                        logger.info(f"File modified, re-indexing: {file_path.name}")
+                        self._remove_file_from_index(file_path_str)
+                        updated_count += 1
+                except OSError:
+                    # File might have been deleted, skip
+                    skipped_count += 1
+                    continue
                 
             try:
                 # Parse document
-                parsed_doc = self.parser.parse_document(str(file_path))
+                parsed_doc = self.parser.parse_document(file_path_str)
 
                 if not parsed_doc or not parsed_doc.get('content'):
                     logger.warning(f"Skipping empty document: {file_path}")
+                    skipped_count += 1
                     continue
+
+                # Get file modification time
+                try:
+                    file_mtime = os.path.getmtime(file_path_str)
+                except OSError:
+                    file_mtime = None
 
                 # Create chunks for long documents (chunk by page or by size)
                 chunks = self._create_chunks(parsed_doc)
@@ -168,6 +210,9 @@ class DocumentIndexer:
                     # Get embedding
                     embedding = self.get_embedding(chunk['content'])
 
+                    # Add file modification time to chunk metadata
+                    chunk['file_mtime'] = file_mtime
+
                     # Add to FAISS index
                     self.index.add(embedding.reshape(1, -1))
 
@@ -179,6 +224,8 @@ class DocumentIndexer:
             except Exception as e:
                 logger.error(f"Error indexing {file_path}: {e}")
                 continue
+        
+        logger.info(f"Indexing complete: {indexed_count} new/updated, {skipped_count} skipped (unchanged), {updated_count} updated")
 
         logger.info(f"Successfully indexed {indexed_count} documents")
 
@@ -285,6 +332,43 @@ class DocumentIndexer:
             self.documents = pickle.load(f)
 
         logger.info(f"Loaded {len(self.documents)} document chunks")
+
+    def _remove_file_from_index(self, file_path: str):
+        """Remove all chunks for a specific file from the index."""
+        # Find indices of chunks to remove
+        indices_to_remove = []
+        for i, doc in enumerate(self.documents):
+            if doc.get('file_path') == file_path:
+                indices_to_remove.append(i)
+        
+        if not indices_to_remove:
+            return
+        
+        # Remove from documents list (in reverse order to maintain indices)
+        for i in reversed(indices_to_remove):
+            self.documents.pop(i)
+        
+        # Rebuild FAISS index (FAISS doesn't support removal, so we rebuild)
+        logger.info(f"Rebuilding index after removing {len(indices_to_remove)} chunks for {Path(file_path).name}")
+        
+        # Create new index
+        new_index = faiss.IndexFlatIP(self.dimension)
+        new_documents = []
+        
+        # Re-add all remaining documents
+        for doc in self.documents:
+            try:
+                embedding = self.get_embedding(doc['content'])
+                new_index.add(embedding.reshape(1, -1))
+                new_documents.append(doc)
+            except Exception as e:
+                logger.warning(f"Error re-indexing chunk: {e}")
+                continue
+        
+        self.index = new_index
+        self.documents = new_documents
+        
+        logger.info(f"Index rebuilt: {len(self.documents)} chunks remaining")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexing statistics."""

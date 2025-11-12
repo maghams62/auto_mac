@@ -1,0 +1,228 @@
+[
+  {
+    "test_id": "E1-1",
+    "test_name": "Summarize Last N Emails - /email summarize my last 3 emails",
+    "timestamp": "2025-11-12T08:49:58.559140",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email",
+        "summary"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 97,
+      "has_substance": false,
+      "query": "/email summarize my last 3 emails",
+      "response_preview": "Here is the summary of your last 3 emails. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "E1-2",
+    "test_name": "Summarize Last N Emails - /email summarize the last 5 emails",
+    "timestamp": "2025-11-12T08:50:05.929384",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 78,
+      "has_substance": false,
+      "query": "/email summarize the last 5 emails",
+      "response_preview": "No emails to summarize. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "E2-1",
+    "test_name": "Summarize Emails by Time Window - /email summarize emails from the past 2 hours",
+    "timestamp": "2025-11-12T08:50:14.867870",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email",
+        "hour"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 107,
+      "has_substance": true,
+      "query": "/email summarize emails from the past 2 hours",
+      "response_preview": "Here is the summary of emails from the past 2 hours. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "E2-2",
+    "test_name": "Summarize Emails by Time Window - /email summarize emails from the last hour",
+    "timestamp": "2025-11-12T08:50:23.184473",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email",
+        "hour"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 103,
+      "has_substance": true,
+      "query": "/email summarize emails from the last hour",
+      "response_preview": "I have summarized the emails from the last hour. Email step was not executed. Please retry the request."
+    }
+  },
+  {
+    "test_id": "B1-1",
+    "test_name": "Summarize Bluesky Posts - /bluesky summarize \"AI agents\" 12h",
+    "timestamp": "2025-11-12T08:50:34.281558",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [
+        "bluesky"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 1805,
+      "has_substance": true,
+      "query": "/bluesky summarize \"AI agents\" 12h",
+      "response_preview": "### Overview\nRecent posts on Bluesky highlight the evolving role of AI in software development, emphasizing how AI agents are becoming increasingly autonomous in bug detection and resolution. Notable "
+    }
+  },
+  {
+    "test_id": "B1-2",
+    "test_name": "Summarize Bluesky Posts - /bluesky summarize what happened in the past hour",
+    "timestamp": "2025-11-12T08:50:35.506249",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [],
+      "keyword_coverage": 0.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 58,
+      "has_substance": false,
+      "query": "/bluesky summarize what happened in the past hour",
+      "response_preview": "No posts were found for the requested query and timeframe."
+    }
+  },
+  {
+    "test_id": "R1-1",
+    "test_name": "Summarize Reminders - summarize my reminders",
+    "timestamp": "2025-11-12T08:51:13.436658",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [],
+      "keyword_coverage": 0.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 39,
+      "has_substance": false,
+      "query": "summarize my reminders",
+      "response_preview": "Skipped due to failed dependencies: [1]"
+    }
+  },
+  {
+    "test_id": "R1-2",
+    "test_name": "Summarize Reminders - summarize my todos",
+    "timestamp": "2025-11-12T08:51:46.695913",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [],
+      "keyword_coverage": 0.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 39,
+      "has_substance": false,
+      "query": "summarize my todos",
+      "response_preview": "Skipped due to failed dependencies: [1]"
+    }
+  },
+  {
+    "test_id": "C1-1",
+    "test_name": "Summarize Calendar Events - summarize my calendar for the next week",
+    "timestamp": "2025-11-12T08:52:06.493124",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "calendar",
+        "event"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 74,
+      "has_substance": false,
+      "query": "summarize my calendar for the next week",
+      "response_preview": "Summarized your calendar events for the next week and emailed them to you."
+    }
+  },
+  {
+    "test_id": "C1-2",
+    "test_name": "Summarize Calendar Events - summarize my calendar events",
+    "timestamp": "2025-11-12T08:52:20.939784",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "event"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 42,
+      "has_substance": false,
+      "query": "summarize my calendar events",
+      "response_preview": "Here is a summary of your upcoming events."
+    }
+  },
+  {
+    "test_id": "N1-1",
+    "test_name": "Summarize News - summarize news about AI",
+    "timestamp": "2025-11-12T08:52:42.816718",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [
+        "news"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 809,
+      "has_substance": true,
+      "query": "summarize news about AI",
+      "response_preview": "- Various sources, including TechCrunch, Reuters, and dedicated AI news platforms, are providing extensive coverage of the latest developments in artificial intelligence, focusing on technology trends"
+    }
+  },
+  {
+    "test_id": "N1-2",
+    "test_name": "Summarize News - summarize recent tech news",
+    "timestamp": "2025-11-12T08:53:11.535235",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": false,
+      "found_keywords": [
+        "news"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "has_retry": false,
+      "response_length": 757,
+      "has_substance": true,
+      "query": "summarize recent tech news",
+      "response_preview": "- **Diverse Coverage**: Multiple sources, including Reuters (1) and AP News (3), provide extensive coverage of global technology news, ensuring a broad perspective on the latest developments.\n- **Focu"
+    }
+  }
+]

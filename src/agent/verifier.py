@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from src.utils import get_temperature_for_model
 
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class OutputVerifier:
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,  # Use deterministic output for verification
+            temperature=get_temperature_for_model(config, default_temperature=0.0),  # Use deterministic output for verification
             api_key=openai_config.get("api_key")
         )
 
@@ -256,7 +257,7 @@ class ReflectionEngine:
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.3,
+            temperature=get_temperature_for_model(config, default_temperature=0.3),
             api_key=openai_config.get("api_key")
         )
 

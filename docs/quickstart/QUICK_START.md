@@ -1,181 +1,93 @@
-# Quick Start Guide
+# Quick Start - Testing Your Changes
 
-Get the Mac Automation Assistant running in 3 minutes!
-
-## Step 1: Install Dependencies
+## The One Command You Need
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate it
-source venv/bin/activate
-
-# Install all dependencies
-pip install -r requirements.txt
+./start_ui.sh
 ```
 
-This will install:
-- OpenAI API client
-- FAISS for vector search
-- PDF/DOCX parsers
-- Rich for terminal UI
-- And more...
+This script does **everything** to give you a clean testing environment:
 
-## Step 2: Verify API Key
+## What Happens Automatically
 
-Your API key is already configured in `.env`:
-```bash
-cat .env
-# Should show: OPENAI_API_KEY=sk-proj-...
+```
+✓ Kills old servers (no stale code)
+✓ Clears Python cache (__pycache__, .pyc files)
+✓ Clears frontend cache (.next directory)
+✓ Frees ports 3000 & 8000
+✓ Checks for import errors
+✓ Starts fresh servers with your latest code
 ```
 
-## Step 3: Configure Document Folders (Optional)
+## After Running
 
-Edit `config.yaml` to choose which folders to index:
+- **Backend API:** http://localhost:8000
+- **Frontend UI:** http://localhost:3000
+- **API Docs:** http://localhost:8000/docs
 
-```yaml
-documents:
-  folders:
-    - "~/Documents"     # Your main documents
-    - "~/Downloads"     # Downloaded files
-    # Add more folders as needed
-```
-
-## Step 4: Run the Application
+## Your Workflow
 
 ```bash
-# Easy way (handles everything automatically)
-./run.sh
+# 1. Make your changes
+vim src/agent/file_agent.py
+# or
+vim prompts/task_decomposition.md
+# or
+vim frontend/components/ChatInterface.tsx
 
-# Or manually
-python main.py
+# 2. Run the script
+./start_ui.sh
+
+# 3. Test immediately
+# All your changes are now active!
 ```
 
-You should see:
-```
-Mac Automation Assistant
-========================
+## Stop Servers
 
-AI-powered document search and email automation for macOS.
+Press `Ctrl+C` in the terminal running start_ui.sh
 
-Commands:
-- Type your request naturally
-- /index - Reindex all documents
-- /test - Test system components
-- /help - Show help
-- /quit - Exit
-```
+## View Logs
 
-## Step 5: Index Your Documents
-
-Type this command in the app:
-```
-/index
-```
-
-Wait for indexing to complete (this may take a few minutes depending on how many documents you have).
-
-## Step 6: Try It Out!
-
-Now try a natural language request:
-
-```
-"Find my resume and send me just the first page"
-```
-
-or
-
-```
-"Get me the Tesla Autopilot document — just the summary"
-```
-
-The app will:
-1. 🔍 Search your documents semantically
-2. 📄 Extract the requested section
-3. ✉️ Compose a draft email in Mail.app
-
-## Test the System
-
-Run system tests:
-```
-/test
-```
-
-You should see:
-- ✓ Mail App
-- ✓ Index Loaded
-- ✓ OpenAI API
-
-## Troubleshooting
-
-### "Import dotenv could not be resolved"
-This is just an IDE warning before installing dependencies. Run:
 ```bash
-pip install -r requirements.txt
+# Backend logs
+tail -f api_server.log
+
+# Frontend logs
+tail -f frontend.log
 ```
 
-### "No documents indexed"
-Run `/index` command inside the app.
+## That's It!
 
-### "OpenAI API error"
-Check your API key in `.env` file.
-
-### "Mail.app not accessible"
-- macOS will prompt for permission
-- Allow automation access in System Preferences
-
-## Example Requests
-
-```
-"Send me the Q3 earnings report — page 5"
-
-"Find the contract with Acme Corp and email section 3"
-
-"Get the machine learning paper, just the introduction"
-
-"Find my presentation about Tesla and send the summary"
-```
-
-## Next Steps
-
-- Read [README.md](README.md) for complete documentation
-- Customize `config.yaml` for your needs
-- Add more document folders
-- Explore advanced features
+No manual steps. No cache issues. No stale code. Just test!
 
 ---
 
-## 🆕 NEW: Stock Report System
+## Common Commands
 
-Create comprehensive stock reports with charts for any company!
-
-### Quick Test:
 ```bash
-python test_stock_report_system.py
+# Start everything (clean state)
+./start_ui.sh
+
+# Check for import issues (runs automatically in start_ui.sh)
+python tests/import_checks/check_all_imports.py
+
+# Test critical imports (runs automatically in start_ui.sh)
+python tests/import_checks/test_critical_imports.py
+
+# View backend logs
+tail -f api_server.log
+
+# View frontend logs
+tail -f frontend.log
 ```
 
-### Usage Example:
-```python
-from src.agent.report_agent import create_stock_report
+## Files You'll Edit Most
 
-# One command creates a full report with chart!
-result = create_stock_report.invoke({"company": "Microsoft"})
-print(f"Report: {result['report_path']}")
+```
+src/agent/          # Agent logic
+prompts/            # LLM prompts
+frontend/           # React UI
+config.yaml         # Configuration
 ```
 
-**Features:**
-- ✅ Auto-resolves stock tickers (Microsoft → MSFT)
-- ✅ Detects private companies
-- ✅ Captures charts (Mac Stocks + web fallback)
-- ✅ Generates PDF reports with embedded images
-- ✅ AI-powered analysis
-
-**Learn More:**
-- Full docs: [docs/STOCK_REPORT_SYSTEM.md](docs/STOCK_REPORT_SYSTEM.md)
-- Implementation: [IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)
-- Examples: [examples/stock_report_example.py](examples/stock_report_example.py)
-
----
-
-Need help? Run `/help` in the app or check the full [README.md](README.md)!
+After editing any of these, just run `./start_ui.sh` to test!

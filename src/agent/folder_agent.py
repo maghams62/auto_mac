@@ -29,14 +29,14 @@ def folder_list(folder_path: Optional[str] = None) -> Dict[str, Any]:
     in the specified directory. Returns items sorted alphabetically.
 
     Args:
-        folder_path: Path to list (defaults to sandbox root: test_data)
+        folder_path: Path to list (defaults to primary document directory from config)
 
     Returns:
         Dictionary with items (list), total_count (int), folder_path (str)
         Each item includes: name, type (file/dir), size, modified, extension
 
     Security:
-        - All paths validated against sandbox (test_data by default)
+        - All paths validated against sandbox (configured document folders)
         - Symlinks resolved and validated
         - Parent directory traversal (..) rejected
     """
@@ -79,7 +79,7 @@ def folder_plan_alpha(folder_path: Optional[str] = None) -> Dict[str, Any]:
     NO files are modified. This is always a dry-run.
 
     Args:
-        folder_path: Path to analyze (defaults to sandbox root: test_data)
+        folder_path: Path to analyze (defaults to primary document directory from config)
 
     Returns:
         Dictionary with:
@@ -252,7 +252,7 @@ def folder_find_duplicates(
     - Can search recursively or just top-level
 
     Args:
-        folder_path: Path to analyze (defaults to sandbox root: test_data)
+        folder_path: Path to analyze (defaults to primary document directory from config)
         recursive: Search subdirectories (default: False, top-level only)
 
     Returns:
@@ -304,7 +304,7 @@ def folder_check_sandbox(path: str) -> Dict[str, Any]:
     Use this to verify scope before operations.
 
     This validates that a given path is within the configured
-    sandbox directory (test_data by default). All folder tools
+    sandbox directory (configured document folders). All folder tools
     perform this check internally, but you can call this explicitly
     to verify scope or show the user the sandbox boundaries.
 
@@ -385,7 +385,7 @@ Typical Workflow:
 8. [Optional] folder_organize_by_type(folder_path, dry_run=True/False) → Extension-based organization
 
 Security Invariants:
-- All operations sandboxed to configured folder (test_data by default)
+- All operations sandboxed to configured document folders
 - Symlinks resolved and validated
 - Parent directory traversal rejected
 - Write operations require explicit dry_run=False

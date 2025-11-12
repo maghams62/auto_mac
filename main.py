@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mac Automation Assistant - Main Application
+Cerebro OS - Main Application
 
 AI-powered document search and email automation for macOS.
 """
@@ -26,6 +26,7 @@ else:
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.utils import load_config, setup_logging, ensure_directories
+from src.utils.message_personality import get_task_completed_message
 from src.workflow import WorkflowOrchestrator
 from src.agent import AutomationAgent
 from src.agent.agent_registry import AgentRegistry
@@ -49,7 +50,7 @@ def main():
         # Setup logging
         setup_logging(config)
 
-        logger.info("Starting Mac Automation Assistant")
+        logger.info("Starting Cerebro OS")
 
         # Check for OpenAI API key
         if not config['openai']['api_key'] or config['openai']['api_key'].startswith('${'):
@@ -71,8 +72,8 @@ def main():
         # Initialize LangGraph agent with session support
         agent = AutomationAgent(config, session_manager=session_manager)
 
-        # Initialize slash command handler with session support
-        slash_handler = create_slash_command_handler(agent_registry, session_manager)
+        # Initialize slash command handler with session support and config
+        slash_handler = create_slash_command_handler(agent_registry, session_manager, config)
 
         # Initialize chat UI with session support
         ui = ChatUI(slash_command_handler=slash_handler, session_manager=session_manager)
@@ -299,7 +300,7 @@ def main():
                             }
                             status = reply_payload.get("status", result.get("status", "success"))
                             icon, style = status_map.get(status, ("✅", "green"))
-                            message_text = reply_payload.get("message") or "Task completed."
+                            message_text = reply_payload.get("message") or get_task_completed_message()
                             ui.show_message(f"{icon} {message_text}", style=style)
 
                             details_text = (reply_payload.get("details") or "").strip()
@@ -314,7 +315,7 @@ def main():
                                 artifact_lines = "\n".join(f"- {artifact}" for artifact in artifacts)
                                 ui.console.print(Panel(artifact_lines, border_style="cyan", title="📎 Artifacts"))
                         else:
-                            ui.show_message("✅ Task completed successfully!", style="green")
+                            ui.show_message(get_task_completed_message(), style="green")
 
                         ui.show_message(f"Goal: {result.get('goal', 'N/A')}", style="cyan")
                         ui.show_message(f"Steps executed: {result.get('steps_executed', 0)}", style="cyan")

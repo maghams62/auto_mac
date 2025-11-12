@@ -15,6 +15,8 @@ import logging
 import json
 import re
 
+from ..utils import get_temperature_for_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,7 +163,7 @@ def create_local_document_report(
         openai_config = config.get('openai', {})
         llm = ChatOpenAI(
             model=openai_config.get('model', 'gpt-4o'),
-            temperature=0.1,
+            temperature=get_temperature_for_model(config, default_temperature=0.1),
             api_key=openai_config.get('api_key')
         )
 

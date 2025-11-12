@@ -74,7 +74,83 @@ Complete specification of available tools for the automation agent.
 
 ---
 
-## 2. extract_section
+## 2. list_related_documents
+
+**Purpose:** List multiple related documents matching a semantic query
+
+**When to use:**
+- User asks to "show all", "list all", "find all [type] files"
+- User wants to see multiple matching documents
+- User requests a collection/browse view (e.g., "pull up all guitar tab documents")
+- Need to display a list of related files with metadata
+
+**When NOT to use:**
+- User wants to find a single specific document for extraction (use `search_documents` instead)
+- Need a single document path to continue workflow (use `search_documents` instead)
+- Task requires web search (use `google_search` instead)
+
+**Parameters:**
+```json
+{
+  "query": "string - REQUIRED - Natural language search query describing the documents to find",
+  "max_results": "int - OPTIONAL - Maximum number of documents to return (default: 10, cap: 25)"
+}
+```
+
+**Returns:**
+```json
+{
+  "type": "file_list",
+  "message": "Found N documents matching 'query'",
+  "files": [
+    {
+      "name": "string - Basename of file",
+      "path": "string - Full absolute path",
+      "score": "float - Similarity score (0-1)",
+      "meta": {
+        "file_type": "string - File extension/type",
+        "total_pages": "int | null - Page count if available"
+      }
+    }
+  ],
+  "total_count": "int - Total documents found (may be more than returned)",
+  "summary_blurb": "string - Optional contextual summary (empty initially)"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "error": true,
+  "error_type": "ListError",
+  "error_message": "Error message",
+  "retry_possible": false
+}
+```
+
+**Example:**
+```json
+{
+  "action": "list_related_documents",
+  "parameters": {
+    "query": "guitar tab documents",
+    "max_results": 10
+  },
+  "reasoning": "User wants to see all guitar tab files, not extract from a single one"
+}
+```
+
+**Common Mistakes:**
+- ❌ Using this when user wants a single document for extraction (use `search_documents` instead)
+- ❌ Using vague queries like "documents" (be specific!)
+- ❌ Calling `reply_to_user` after this tool - the file list IS the final result
+- ✅ Use descriptive queries: "guitar tabs", "Q3 reports", "meeting notes"
+- ✅ Recognize listing intent: "show all", "list all", "find all [type] files"
+- ✅ This tool returns a complete, UI-ready file list - no additional reply step needed
+
+---
+
+## 3. extract_section
 
 **Purpose:** Extract specific content from documents using LLM-based interpretation
 
@@ -556,11 +632,18 @@ Each tool returns an error structure if execution fails:
 **Parameters:**
 ```json
 {
-  "source_contents": "list[string] - List of text contents to synthesize",
+  "source_contents": "list[string] - List of text contents to synthesize (MUST be strings, NOT raw structured data)",
   "topic": "string - Main topic or focus for synthesis",
   "synthesis_style": "string - How to synthesize: 'comprehensive' | 'concise' | 'comparative' | 'chronological' (default: comprehensive)"
 }
 ```
+
+**CRITICAL - source_contents Parameter:**
+- `source_contents` MUST be a `List[str]` (list of strings), NOT raw structured data (lists/dicts)
+- When passing data from previous steps, convert structured data to JSON strings first
+- Example: If `$step1.events` returns `[{...}]`, convert to `json.dumps($step1.events)` or use string representation
+- Empty lists/dicts are automatically converted to `"No items found"` by the parameter resolver
+- The parameter resolver handles this conversion automatically, but planners should be aware
 
 **Synthesis Styles:**
 - `"comprehensive"` - Include all important details (for reports)
@@ -2350,6 +2433,750 @@ Each slide object contains:
 - Extracts tasks, deadlines, and commitments
 - Returns structured list of action items
 - Reads messages first, then extracts
+
+---
+
+## Weather Agent Tools
+
+### get_weather_forecast
+
+Retrieve weather forecast for a location and timeframe. Returns structured data for LLM-based decision making.
+
+**Parameters:**
+- `location` (string, optional): Location name (e.g., "San Francisco, CA", "New York"). If not provided, uses default location from config
+- `timeframe` (string): Forecast timeframe:
+  - `"now"` or `"current"`: Current conditions only
+  - `"today"`: Today's forecast (default)
+  - `"tomorrow"`: Tomorrow's forecast
+  - `"week"` or `"7day"`: 7-day forecast
+  - `"3day"`: 3-day forecast
+
+**Returns:**
+```json
+{
+  "success": true,
+  "location": "San Francisco, CA",
+  "timeframe": "today",
+  "current_temp": 68,
+  "current_conditions": "Partly Cloudy",
+  "high_temp": 72,
+  "low_temp": 58,
+  "precipitation_chance": 30,
+  "precipitation_type": "rain",
+  "humidity": 65,
+  "wind_speed": 10,
+  "forecast_days": [
+    {
+      "day": "Monday",
+      "date": "2024-12-23",
+      "high": 72,
+      "low": 58,
+      "conditions": "Partly Cloudy",
+      "precipitation_chance": 30
+    }
+  ]
+}
+```
+
+**Error Returns:**
+```json
+{
+  "success": false,
+  "error": true,
+  "error_message": "string",
+  "retry_possible": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "get_weather_forecast",
+  "parameters": {
+    "location": "New York, NY",
+    "timeframe": "today"
+  }
+}
+```
+
+**Use this when:**
+- User asks about weather conditions
+- Need weather data for conditional decisions (e.g., "if it rains...")
+- Building weather-aware workflows
+
+**CRITICAL - Conditional Logic Pattern:**
+This tool returns RAW DATA. Use Writing Agent to INTERPRET the data:
+
+```json
+[
+  {
+    "action": "get_weather_forecast",
+    "parameters": {"location": "NYC", "timeframe": "today"}
+  },
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["$step0.precipitation_chance", "$step0.precipitation_type"],
+      "topic": "Will it rain heavily enough to need umbrella?",
+      "synthesis_style": "brief"
+    }
+  },
+  {
+    "action": "create_reminder",
+    "parameters": {
+      "title": "Bring umbrella",
+      "due_time": "today at 7am",
+      "notes": "Rain expected: $step0.precipitation_chance% chance"
+    }
+  }
+]
+```
+
+**Notes:**
+- NO hardcoded thresholds (e.g., "rain if > 50%")
+- LLM interprets precipitation_chance via synthesize_content
+- Enables context-aware decisions (considers user location, season, etc.)
+
+---
+
+## Notes Agent Tools
+
+### create_note
+
+Create a new note in Apple Notes. Use for persistent storage of information.
+
+**Parameters:**
+- `title` (string, required): Note title
+- `body` (string, required): Note content/body text (can be multi-line)
+- `folder` (string, optional): Target folder name (default: "Notes"). Falls back to default if folder doesn't exist
+
+**Returns:**
+```json
+{
+  "success": true,
+  "note_title": "Weather Reminder",
+  "note_id": "x-coredata://...",
+  "folder": "Personal",
+  "created_at": "2024-12-20T10:30:00",
+  "message": "Created note 'Weather Reminder' in folder 'Personal'"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "success": false,
+  "error": true,
+  "error_type": "NoteCreationError",
+  "error_message": "string",
+  "retry_possible": false
+}
+```
+
+**Example:**
+```json
+{
+  "action": "create_note",
+  "parameters": {
+    "title": "Meeting Action Items",
+    "body": "1. Review Q4 report\n2. Schedule follow-up\n3. Update team",
+    "folder": "Work"
+  }
+}
+```
+
+**Use this when:**
+- Need to persistently store information
+- Saving reports, summaries, or analysis results
+- Conditional note creation based on external data (weather, etc.)
+
+**Integration with Writing Agent:**
+```json
+[
+  {
+    "action": "create_detailed_report",
+    "parameters": {
+      "content": "...",
+      "title": "Q4 Analysis"
+    }
+  },
+  {
+    "action": "create_note",
+    "parameters": {
+      "title": "Q4 Analysis Report - 2024-12-20",
+      "body": "$step0.report_content",
+      "folder": "Work"
+    }
+  }
+]
+```
+
+---
+
+### append_note
+
+Append content to an existing note (or create if doesn't exist).
+
+**Parameters:**
+- `note_title` (string, required): Title of note to append to
+- `content` (string, required): Content to append (added with newline separator)
+- `folder` (string, optional): Folder containing the note (default: "Notes")
+
+**Returns:**
+```json
+{
+  "success": true,
+  "note_title": "Daily Journal",
+  "appended_content_length": 87,
+  "folder": "Personal",
+  "message": "Appended content to note 'Daily Journal'"
+}
+```
+
+**Example:**
+```json
+{
+  "action": "append_note",
+  "parameters": {
+    "note_title": "Weather Journal",
+    "content": "Dec 20: 68°F, Partly Cloudy, 30% rain chance",
+    "folder": "Personal"
+  }
+}
+```
+
+**Use this when:**
+- Accumulating daily logs or journal entries
+- Building up information over multiple interactions
+- Appending analysis results to running notes
+
+---
+
+### get_note
+
+Retrieve a note's content by title.
+
+**Parameters:**
+- `note_title` (string, required): Title of note to retrieve
+- `folder` (string, optional): Folder containing the note (default: "Notes")
+
+**Returns:**
+```json
+{
+  "success": true,
+  "note_title": "Meeting Notes 2024",
+  "note_body": "Full note content here...",
+  "folder": "Work",
+  "message": "Retrieved note 'Meeting Notes 2024'"
+}
+```
+
+**Example:**
+```json
+[
+  {
+    "action": "get_note",
+    "parameters": {
+      "note_title": "Meeting Notes 2024",
+      "folder": "Work"
+    }
+  },
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["$step0.note_body"],
+      "topic": "Action items from meeting",
+      "synthesis_style": "brief"
+    }
+  }
+]
+```
+
+---
+
+## Reminders Agent Tools
+
+### list_reminders
+
+List reminders from macOS Reminders.app.
+
+**When to use:**
+- User asks to "list reminders", "show todos", "what are my reminders"
+- Need to retrieve reminders for summarization or review
+- Combining with calendar events for comprehensive todo/reminder summary
+
+**Parameters:**
+- `list_name` (string, optional): List name to filter by (null = all lists)
+- `include_completed` (boolean, optional): Whether to include completed reminders (default: false)
+
+**Returns:**
+```json
+{
+  "reminders": [
+    {
+      "title": "Bring umbrella",
+      "due_date": "2024-12-20T07:00:00",
+      "notes": "Rain expected today",
+      "list_name": "Reminders",
+      "completed": false
+    }
+  ],
+  "count": 1,
+  "list_name": null
+}
+```
+
+**Example:**
+```json
+{
+  "action": "list_reminders",
+  "parameters": {
+    "include_completed": false
+  }
+}
+```
+
+**Example Workflow - Summarizing Reminders and Todos:**
+```json
+[
+  {
+    "id": 1,
+    "action": "list_reminders",
+    "parameters": {
+      "include_completed": false
+    },
+    "dependencies": []
+  },
+  {
+    "id": 2,
+    "action": "list_calendar_events",
+    "parameters": {
+      "days_ahead": 7
+    },
+    "dependencies": []
+  },
+  {
+    "id": 3,
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": [
+        "Reminders: $step1.reminders",
+        "Calendar Events: $step2.events"
+      ],
+      "topic": "Summary of upcoming reminders and todos",
+      "synthesis_style": "concise"
+    },
+    "dependencies": [1, 2]
+  },
+  {
+    "id": 4,
+    "action": "reply_to_user",
+    "parameters": {
+      "message": "$step3.synthesized_content"
+    },
+    "dependencies": [3]
+  }
+]
+```
+
+**CRITICAL - Handling Empty Results:**
+- If `list_reminders` returns empty list, convert to descriptive string before passing to `synthesize_content`
+- Example: Empty reminders → `"No reminders found"`
+- The parameter resolver automatically handles this, but planner should be aware
+
+---
+
+### create_reminder
+
+Create a time-based reminder in Apple Reminders. LLM infers optimal timing from natural language.
+
+**Parameters:**
+- `title` (string, required): Reminder title/description
+- `due_time` (string, optional): Due date/time in natural language or ISO format:
+  - `"tomorrow at 9am"` → Tomorrow at 9:00 AM
+  - `"today at 5pm"` → Today at 5:00 PM
+  - `"in 2 hours"` → 2 hours from now
+  - `"2024-12-25 10:00"` → Specific datetime
+  - `null` → No due date (just a task)
+- `list_name` (string, optional): Target list name (default: "Reminders"). Auto-creates if doesn't exist
+- `notes` (string, optional): Additional details/notes for reminder
+
+**Returns:**
+```json
+{
+  "success": true,
+  "reminder_title": "Bring umbrella",
+  "reminder_id": "x-apple-reminder://...",
+  "list_name": "Reminders",
+  "due_date": "2024-12-20T07:00:00",
+  "created_at": "2024-12-20T06:30:00",
+  "message": "Created reminder 'Bring umbrella' in list 'Reminders' due 2024-12-20 07:00"
+}
+```
+
+**Error Returns:**
+```json
+{
+  "success": false,
+  "error": true,
+  "error_type": "ReminderCreationError",
+  "error_message": "string",
+  "retry_possible": false
+}
+```
+
+**Example:**
+```json
+{
+  "action": "create_reminder",
+  "parameters": {
+    "title": "Bring umbrella",
+    "due_time": "today at 7am",
+    "list_name": "Reminders",
+    "notes": "Rain expected (75% chance)"
+  }
+}
+```
+
+**Use this when:**
+- Creating time-sensitive action triggers
+- Weather-conditional reminders (rain → umbrella)
+- Task management with due dates
+
+**CRITICAL - LLM-Inferred Timing:**
+Use Writing Agent to infer optimal reminder time from context:
+
+```json
+[
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["User says: remind me to charge laptop before tomorrow's presentation"],
+      "topic": "When should user be reminded to charge laptop?",
+      "synthesis_style": "brief"
+    }
+  },
+  {
+    "action": "create_reminder",
+    "parameters": {
+      "title": "Charge laptop for presentation",
+      "due_time": "today at 8pm",
+      "notes": "For tomorrow's presentation"
+    }
+  }
+]
+```
+
+**Notes:**
+- LLM decides WHEN to remind based on natural language context
+- Example: "before commute" → LLM infers "7am"
+- Example: "before meeting" → LLM checks context for meeting time
+
+---
+
+### complete_reminder
+
+Mark a reminder as complete.
+
+**Parameters:**
+- `reminder_title` (string, required): Title of reminder to complete
+- `list_name` (string, optional): List containing the reminder (default: "Reminders")
+
+**Returns:**
+```json
+{
+  "success": true,
+  "reminder_title": "Bring umbrella",
+  "list_name": "Reminders",
+  "message": "Completed reminder 'Bring umbrella'"
+}
+```
+
+**Example:**
+```json
+{
+  "action": "complete_reminder",
+  "parameters": {
+    "reminder_title": "Bring umbrella",
+    "list_name": "Reminders"
+  }
+}
+```
+
+---
+
+## Calendar Agent Tools
+
+### list_calendar_events
+
+List upcoming calendar events from macOS Calendar.app.
+
+**When to use:**
+- User asks to "list events", "show upcoming", "what's on my calendar"
+- Need to see events for the next N days
+
+**Parameters:**
+- `days_ahead` (int, optional): Number of days to look ahead (default: 7, max: 30)
+
+**Returns:**
+```json
+{
+  "events": [
+    {
+      "title": "Q4 Review Meeting",
+      "start_time": "2024-12-20T14:00:00",
+      "end_time": "2024-12-20T15:00:00",
+      "location": "Conference Room A",
+      "notes": "Discuss revenue and marketing strategy",
+      "attendees": ["John Doe", "Jane Smith"],
+      "calendar_name": "Work",
+      "event_id": "12345"
+    }
+  ],
+  "count": 1,
+  "days_ahead": 7
+}
+```
+
+**Example:**
+```json
+{
+  "action": "list_calendar_events",
+  "parameters": {
+    "days_ahead": 7
+  }
+}
+```
+
+---
+
+### get_calendar_event_details
+
+Get detailed information about a specific calendar event.
+
+**When to use:**
+- User asks for "details about [event]", "info for [meeting]"
+- Need specific event metadata before preparing a brief
+
+**Parameters:**
+- `event_title` (string, required): Title/summary of event (partial match supported)
+- `start_time_window` (string, optional): ISO format datetime to narrow search (e.g., "2024-12-20T14:00:00")
+
+**Returns:**
+```json
+{
+  "event": {
+    "title": "Q4 Review Meeting",
+    "start_time": "2024-12-20T14:00:00",
+    "end_time": "2024-12-20T15:00:00",
+    "location": "Conference Room A",
+    "notes": "Discuss revenue and marketing strategy",
+    "attendees": ["John Doe", "Jane Smith"],
+    "calendar_name": "Work",
+    "event_id": "12345"
+  },
+  "found": true
+}
+```
+
+**Example:**
+```json
+{
+  "action": "get_calendar_event_details",
+  "parameters": {
+    "event_title": "Q4 Review",
+    "start_time_window": "2024-12-20T14:00:00"
+  }
+}
+```
+
+---
+
+### prepare_meeting_brief
+
+Generate a meeting brief by searching indexed documents for relevant information.
+
+**When to use:**
+- User says "prep for [meeting]", "brief for [meeting]", "prepare for [meeting]"
+- User wants to prepare for an upcoming calendar event
+
+**How it works:**
+1. Fetches event details from Calendar.app
+2. Uses LLM to generate 3-5 semantic search queries from event metadata (title, notes, attendees, location)
+3. Searches indexed documents using DocumentIndexer/SemanticSearch
+4. Synthesizes a brief with relevant documents, talking points, and recommended pre-reading
+5. Optionally saves brief to Notes Agent
+
+**Parameters:**
+- `event_title` (string, required): Title/summary of event to prepare for
+- `start_time_window` (string, optional): ISO format datetime to narrow event search
+- `save_to_note` (bool, optional): If True, save brief to Apple Notes (default: False)
+
+**Returns:**
+```json
+{
+  "brief": "Meeting Brief: Q4 Review Meeting\n\nKey Talking Points:\n- Revenue performance...",
+  "event": {
+    "title": "Q4 Review Meeting",
+    "start_time": "2024-12-20T14:00:00",
+    ...
+  },
+  "relevant_docs": [
+    {
+      "file_path": "/path/to/q4_report.pdf",
+      "file_name": "Q4_Report.pdf",
+      "similarity": 0.85
+    }
+  ],
+  "talking_points": ["Revenue performance", "Marketing strategy", ...],
+  "note_saved": false,
+  "search_queries": ["Q4 revenue report", "marketing strategy 2024", ...]
+}
+```
+
+**Example:**
+```json
+{
+  "action": "prepare_meeting_brief",
+  "parameters": {
+    "event_title": "Q4 Review Meeting",
+    "save_to_note": true
+  }
+}
+```
+
+**Note:** This tool automatically handles query generation and document search - no need to manually search documents first.
+
+---
+
+## Weather/Notes/Reminders Conditional Workflows
+
+### Pattern 1: Weather → Conditional Reminder
+
+**User:** "If it's going to rain today, remind me to bring umbrella"
+
+**Plan:**
+```json
+[
+  {
+    "action": "get_weather_forecast",
+    "parameters": {"location": "NYC", "timeframe": "today"}
+  },
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["$step0.precipitation_chance", "$step0.precipitation_type"],
+      "topic": "Will it rain heavily enough to need umbrella?",
+      "synthesis_style": "brief"
+    }
+  },
+  {
+    "action": "create_reminder",
+    "parameters": {
+      "title": "Bring umbrella",
+      "due_time": "today at 7am",
+      "notes": "Rain expected: $step0.precipitation_chance% chance"
+    }
+  },
+  {
+    "action": "reply_to_user",
+    "parameters": {
+      "message": "It's going to rain today ($step0.precipitation_chance% chance). I've set a reminder for 7am to bring your umbrella."
+    }
+  }
+]
+```
+
+### Pattern 2: Weather → Conditional Note
+
+**User:** "If it's sunny tomorrow, note to bring sunglasses"
+
+**Plan:**
+```json
+[
+  {
+    "action": "get_weather_forecast",
+    "parameters": {"location": "LA", "timeframe": "tomorrow"}
+  },
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["$step0.current_conditions"],
+      "topic": "Is it sunny?",
+      "synthesis_style": "brief"
+    }
+  },
+  {
+    "action": "create_note",
+    "parameters": {
+      "title": "Tomorrow's Weather Reminder",
+      "body": "Tomorrow will be sunny. Remember to bring sunglasses.",
+      "folder": "Personal"
+    }
+  },
+  {
+    "action": "reply_to_user",
+    "parameters": {
+      "message": "Tomorrow will be sunny! I've created a note to remind you to bring sunglasses."
+    }
+  }
+]
+```
+
+### Pattern 3: Multi-Conditional Branching
+
+**User:** "Check weather. If rain > 60%, remind me umbrella. Otherwise, note to bring sunglasses."
+
+**IMPORTANT:** LLM must interpret the conditional logic. The planner creates the plan AFTER the LLM has made the decision based on synthesize_content output.
+
+**Step 1 - Get Weather:**
+```json
+[
+  {
+    "action": "get_weather_forecast",
+    "parameters": {"location": "SF", "timeframe": "today"}
+  },
+  {
+    "action": "synthesize_content",
+    "parameters": {
+      "source_contents": ["$step0.precipitation_chance"],
+      "topic": "Is rain probability above 60%?",
+      "synthesis_style": "brief"
+    }
+  }
+]
+```
+
+**Step 2 - Based on LLM Response, Execute EITHER:**
+
+**If LLM says "yes" (rain > 60%):**
+```json
+[
+  {
+    "action": "create_reminder",
+    "parameters": {
+      "title": "Bring umbrella",
+      "due_time": "today at 7am"
+    }
+  }
+]
+```
+
+**If LLM says "no" (rain <= 60%):**
+```json
+[
+  {
+    "action": "create_note",
+    "parameters": {
+      "title": "Weather note",
+      "body": "Sunny today - bring sunglasses",
+      "folder": "Personal"
+    }
+  }
+]
+```
+
+**CRITICAL:** The conditional branching logic lives in the LLM's reasoning based on synthesize_content output. The planner does NOT hardcode "if precipitation_chance > 60" - it relies on the LLM to interpret what "rain > 60%" means in context.
 
 ---
 

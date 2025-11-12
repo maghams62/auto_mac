@@ -16,6 +16,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 import logging
 import json
 
+from ..utils import get_temperature_for_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -216,7 +218,7 @@ def check_quality(
         openai_config = config.get("openai", {})
         llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,
+            temperature=get_temperature_for_model(config, default_temperature=0.0),
             api_key=openai_config.get("api_key")
         )
 

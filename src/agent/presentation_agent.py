@@ -140,18 +140,25 @@ def create_keynote_with_images(
         # If content is provided, parse it and integrate with images
         if content:
             # Parse the formatted content into slides
-            content_slides = content.split('\n\n\n')
+            # Support two formats:
+            # 1. "SLIDE N: Title" format from stock agent
+            # 2. Simple paragraph splits with \n\n\n
 
-            # Add content slides (text with bullets)
-            for i, content_slide in enumerate(content_slides):
-                if content_slide.strip():
-                    lines = content_slide.strip().split('\n')
-                    slide_title = lines[0] if lines else f"Slide {i+1}"
-                    slide_bullets = [line.lstrip('• ').strip() for line in lines[1:] if line.strip()]
+            import re
 
-                    # Convert bullets to content string for Keynote
-                    if slide_bullets:
-                        slide_content = '\n'.join([f'• {bullet}' for bullet in slide_bullets])
+            # Check if content uses "SLIDE N:" markers
+            if re.search(r'SLIDE \d+:', content):
+                # Split by SLIDE markers
+                slide_pattern = r'SLIDE \d+:\s*([^\n]+)\n((?:•[^\n]+\n?)*)'
+                matches = re.findall(slide_pattern, content)
+
+                for slide_title, bullet_text in matches:
+                    slide_title = slide_title.strip()
+                    # Extract bullets
+                    bullets = [line.lstrip('• ').strip() for line in bullet_text.strip().split('\n') if line.strip()]
+
+                    if bullets:
+                        slide_content = '\n'.join([f'• {bullet}' for bullet in bullets])
                     else:
                         slide_content = ''
 
@@ -159,6 +166,30 @@ def create_keynote_with_images(
                         "title": slide_title,
                         "content": slide_content
                     })
+
+                logger.info(f"[PRESENTATION AGENT] Parsed {len(slides)} slides using SLIDE markers")
+            else:
+                # Fallback: split by triple newlines
+                content_slides = content.split('\n\n\n')
+
+                for i, content_slide in enumerate(content_slides):
+                    if content_slide.strip():
+                        lines = content_slide.strip().split('\n')
+                        slide_title = lines[0] if lines else f"Slide {i+1}"
+                        slide_bullets = [line.lstrip('• ').strip() for line in lines[1:] if line.strip()]
+
+                        # Convert bullets to content string for Keynote
+                        if slide_bullets:
+                            slide_content = '\n'.join([f'• {bullet}' for bullet in slide_bullets])
+                        else:
+                            slide_content = ''
+
+                        slides.append({
+                            "title": slide_title,
+                            "content": slide_content
+                        })
+
+                logger.info(f"[PRESENTATION AGENT] Parsed {len(slides)} slides using paragraph splits")
 
             # Add image slides separately (Keynote doesn't support text + image on same slide easily)
             import os

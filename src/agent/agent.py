@@ -5,6 +5,7 @@ LangGraph agent with task decomposition and state management.
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from threading import Event
 from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import json
@@ -15,6 +16,7 @@ from . import ALL_AGENT_TOOLS
 from .feasibility_checker import FeasibilityChecker
 from .verifier import OutputVerifier
 from ..memory import SessionManager
+from ..utils.message_personality import get_generic_success_message
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +25,18 @@ class AgentState(TypedDict):
     """State for the automation agent."""
     # Input
     user_request: str
+    original_user_request: Optional[str]  # Preserved original request for delivery intent detection
 
     # Planning
     goal: str
     steps: List[Dict[str, Any]]
     current_step: int
+    planning_context: Optional[Dict[str, Any]]  # Context for planning (e.g., intent_hints from slash commands)
 
     # Execution
     step_results: Dict[int, Any]  # step_id -> result
     verification_results: Dict[int, Any]  # step_id -> verification result
-    messages: List[Any]  # Conversation history
+    messages: Annotated[List[Any], add_messages]  # Conversation history with add_messages reducer
 
     # Session context (NEW)
     session_id: Optional[str]
@@ -47,6 +51,7 @@ class AgentState(TypedDict):
     cancel_event: Optional[Event]
     cancelled: bool
     cancellation_reason: Optional[str]
+    on_plan_created: Optional[callable]  # Callback for plan events (per-request, avoids cross-talk)
 
 
 class AutomationAgent:
@@ -57,9 +62,12 @@ class AutomationAgent:
     def __init__(
         self,
         config: Dict[str, Any],
-        session_manager: Optional[SessionManager] = None
+        session_manager: Optional[SessionManager] = None,
+        on_plan_created: Optional[callable] = None
     ):
         self.config = config
+        # Note: on_plan_created is deprecated - pass through run() method instead to avoid cross-talk
+        self.on_plan_created = on_plan_created  # Callback for sending plan to UI (deprecated)
         
         # Initialize config accessor for safe, validated access
         from ..config_validator import ConfigAccessor
@@ -119,12 +127,14 @@ class AutomationAgent:
 
         prompts = {}
         # Load core prompts directly
-        for prompt_file in ["system.md", "task_decomposition.md"]:
+        for prompt_file in ["system.md", "task_decomposition.md", "delivery_intent.md"]:
             path = prompts_dir / prompt_file
             if path.exists():
                 prompts[prompt_file.replace(".md", "")] = path.read_text()
             else:
-                logger.warning(f"Prompt file not found: {path}")
+                # delivery_intent.md is optional (has fallback), others are critical
+                if prompt_file != "delivery_intent.md":
+                    logger.warning(f"Prompt file not found: {path}")
 
         # Load few-shot examples via PromptRepository (modular, agent-scoped)
         # For the automation agent (main planner), load "automation" agent examples
@@ -210,12 +220,65 @@ class AutomationAgent:
         few_shot_examples = self.prompts.get("few_shot_examples", "")
         user_request_lower = full_user_request.lower()
 
-        delivery_keywords = [" email", "email ", " send", "send ", " mail", "mail ", " attach", "attach "]
-        needs_email_delivery = any(keyword in user_request_lower for keyword in delivery_keywords)
+        # Delivery intent detection - load from config instead of hardcoding
+        # EXCLUDE slash command prefixes and noun usage (e.g., "/email summarize" or "my emails" should not trigger delivery intent)
+        delivery_config = self.config.get("delivery", {})
+        delivery_verbs = delivery_config.get("intent_verbs", ["email", "send", "mail", "attach"])
+        
+        # Check if this is a slash command (starts with /)
+        is_slash_command = user_request_lower.strip().startswith('/')
+        
+        # For slash commands, check if delivery verb appears AFTER the command prefix
+        # e.g., "/email summarize" -> no delivery intent
+        # e.g., "/email send summary" -> delivery intent
+        if is_slash_command:
+            # Extract the part after the slash command prefix
+            parts = user_request_lower.strip().split(None, 1)
+            if len(parts) > 1:
+                # Check delivery verbs in the task part, not the command part
+                task_part = parts[1]
+                # Check for verb usage patterns (email it, email the, email me, send it, etc.)
+                # NOT noun usage (emails, my emails, summarize emails, etc.)
+                needs_email_delivery = False
+                for verb in delivery_verbs:
+                    # Look for verb patterns: "verb it", "verb the", "verb me", "verb to", "verb this", "verb that"
+                    verb_patterns = [
+                        f"{verb} it", f"{verb} the", f"{verb} me", f"{verb} to", 
+                        f"{verb} this", f"{verb} that", f"{verb} them", f"{verb} us"
+                    ]
+                    if any(pattern in task_part for pattern in verb_patterns):
+                        needs_email_delivery = True
+                        break
+            else:
+                # Just "/email" or similar - no delivery intent
+                needs_email_delivery = False
+        else:
+            # Regular request - check for verb usage patterns, not noun usage
+            # Look for patterns like "email it", "send it", "mail the", etc.
+            # NOT "my emails", "summarize emails", "last emails", etc.
+            needs_email_delivery = False
+            for verb in delivery_verbs:
+                # Verb patterns that indicate delivery intent
+                verb_patterns = [
+                    f"{verb} it", f"{verb} the", f"{verb} me", f"{verb} to", 
+                    f"{verb} this", f"{verb} that", f"{verb} them", f"{verb} us",
+                    f"{verb} results", f"{verb} summary", f"{verb} report"
+                ]
+                if any(pattern in user_request_lower for pattern in verb_patterns):
+                    needs_email_delivery = True
+                    break
 
+        # Load delivery guidance from prompt file instead of hardcoded string
         delivery_guidance = ""
         if needs_email_delivery:
-            delivery_guidance = """
+            delivery_guidance = self.prompts.get("delivery_intent", "")
+            if delivery_guidance:
+                # Wrap in header to make it stand out
+                delivery_guidance = f"\n{'='*60}\nDELIVERY INTENT DETECTED\n{'='*60}\n{delivery_guidance}\n{'='*60}\n"
+            else:
+                # Fallback if prompt file not loaded (backwards compatibility)
+                logger.warning("[PLANNING] delivery_intent.md not found, using fallback guidance")
+                delivery_guidance = """
 DELIVERY REQUIREMENT (AUTO-DETECTED):
 - The user explicitly asked to email or send the results.
 - Your plan MUST include a `compose_email` step (before the final `reply_to_user` step).
@@ -332,8 +395,23 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             json_str = response_text[json_start:json_end]
             plan = json.loads(json_str)
 
-            logger.info(f"Plan created: {plan['goal']}")
-            logger.info(f"Steps: {len(plan['steps'])}")
+            plan_goal = plan.get("goal") or f"Handle user request: {full_user_request}"
+            plan["goal"] = plan_goal
+
+            plan_steps = plan.get("steps")
+            if not isinstance(plan_steps, list):
+                logger.error("[PLAN VALIDATION] Plan missing 'steps' array or has invalid format.")
+                logger.error(f"[PLAN VALIDATION] Response text (first 500 chars): {response_text[:500]}")
+                logger.error(f"[PLAN VALIDATION] Parsed plan: {plan}")
+                state["status"] = "error"
+                state["final_result"] = {
+                    "error": True,
+                    "message": "Plan validation failed: planner did not return a steps list."
+                }
+                return state
+
+            logger.info(f"Plan created: {plan_goal}")
+            logger.info(f"Steps: {len(plan_steps)}")
 
             # Check if LLM determined task is impossible
             if plan.get('complexity') == 'impossible':
@@ -428,7 +506,23 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             state["current_step"] = 0
             state["step_results"] = {}
             state["status"] = "executing"
-            state["messages"] = messages + [response]
+            # Don't update messages directly - let add_messages reducer handle it
+            # state["messages"] = messages + [response]
+
+            # Send plan to UI for disambiguation display (fire-and-forget)
+            # Use callback from state (passed through run() method) if provided, otherwise fall back to instance callback (deprecated)
+            callback = state.get("on_plan_created") or self.on_plan_created
+            if callback and plan.get("steps"):
+                try:
+                    # Create a copy of plan data to avoid any threading issues
+                    import copy
+                    plan_copy = {
+                        "goal": str(plan["goal"]),
+                        "steps": copy.deepcopy(plan["steps"])
+                    }
+                    callback(plan_copy)
+                except Exception as e:
+                    logger.error(f"Failed to send plan to UI: {e}", exc_info=True)
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse plan JSON: {e}")
@@ -459,29 +553,89 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         logger.info(f"=== EXECUTING STEP {step['id']}: {step['action']} ===")
         logger.info(f"Reasoning: {step['reasoning']}")
 
-        # Check if dependencies succeeded
+        # Check if dependencies succeeded, with recovery attempt
         dependencies = step.get("dependencies", [])
         if dependencies:
             failed_deps = []
+            recoverable_deps = []
+            
             for dep_id in dependencies:
                 if dep_id in state["step_results"]:
-                    if state["step_results"][dep_id].get("error", False):
+                    dep_result = state["step_results"][dep_id]
+                    if dep_result.get("error", False):
                         failed_deps.append(dep_id)
+                        
+                        # Check if the dependency error is recoverable
+                        # Look for error_analysis or retry_possible flag
+                        error_analysis = dep_result.get("error_analysis")
+                        retry_possible = dep_result.get("retry_possible", False)
+                        
+                        # If error analysis suggests recovery is possible, mark as recoverable
+                        if error_analysis and error_analysis.get("is_recoverable", False):
+                            recoverable_deps.append(dep_id)
+                        elif retry_possible and not dep_result.get("skipped", False):
+                            # If retry is possible and step wasn't skipped, might be recoverable
+                            recoverable_deps.append(dep_id)
                 else:
                     failed_deps.append(dep_id)
 
             if failed_deps:
-                logger.warning(f"Step {step['id']} skipped due to failed dependencies: {failed_deps}")
-                state["step_results"][step["id"]] = {
-                    "error": True,
-                    "skipped": True,
-                    "message": f"Skipped due to failed dependencies: {failed_deps}"
-                }
+                # If we have recoverable dependencies, attempt recovery
+                if recoverable_deps:
+                    logger.info(f"[DEPENDENCY RECOVERY] Step {step['id']} has recoverable dependencies: {recoverable_deps}")
+                    
+                    # Try to recover by using error analysis suggestions
+                    recovery_attempted = False
+                    for dep_id in recoverable_deps:
+                        dep_result = state["step_results"][dep_id]
+                        error_analysis = dep_result.get("error_analysis")
+                        
+                        if error_analysis:
+                            alternative_approach = error_analysis.get("alternative_approach", "")
+                            extracted_alternatives = error_analysis.get("extracted_alternatives", [])
+                            
+                            # If there are extracted alternatives (e.g., for Spotify), we might be able to proceed
+                            # For now, log the recovery possibility but still skip if dependencies failed
+                            # The actual recovery happens at the tool level (e.g., play_song tries alternatives)
+                            logger.info(
+                                f"[DEPENDENCY RECOVERY] Dependency {dep_id} has alternatives: {extracted_alternatives}. "
+                                f"Alternative approach: {alternative_approach}"
+                            )
+                            
+                            # If the current step can work with alternatives (e.g., reply_to_user can still inform user),
+                            # we might proceed, but for now we'll be conservative and skip
+                            # Future enhancement: check if step can proceed with partial/alternative results
+                    
+                    # For now, if dependencies failed, we skip (even if recoverable)
+                    # The recovery happens at the tool level before the dependency check
+                    logger.warning(f"Step {step['id']} skipped due to failed dependencies: {failed_deps}")
+                    state["step_results"][step["id"]] = {
+                        "error": True,
+                        "skipped": True,
+                        "message": f"Skipped due to failed dependencies: {failed_deps}",
+                        "recoverable_dependencies": recoverable_deps,
+                        "recovery_info": {
+                            "alternatives_available": any(
+                                state["step_results"].get(dep_id, {}).get("error_analysis", {}).get("extracted_alternatives", [])
+                                for dep_id in recoverable_deps
+                            )
+                        }
+                    }
+                else:
+                    # No recovery possible, skip normally
+                    logger.warning(f"Step {step['id']} skipped due to failed dependencies: {failed_deps}")
+                    state["step_results"][step["id"]] = {
+                        "error": True,
+                        "skipped": True,
+                        "message": f"Skipped due to failed dependencies: {failed_deps}"
+                    }
+                
                 state["current_step"] = current_idx + 1
                 return state
 
         # Resolve parameters (handle context variables like $step1.doc_path)
-        resolved_params = self._resolve_parameters(step["parameters"], state["step_results"])
+        action = step.get("action", "")
+        resolved_params = self._resolve_parameters(step["parameters"], state["step_results"], action)
         logger.info(f"Resolved parameters: {resolved_params}")
 
         # Get tool
@@ -535,17 +689,80 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             }
             self._record_tool_error(state, tool_name, "Tool not found in registry")
         else:
-            # Execute tool
+            # Execute tool with error recovery
             try:
                 result = tool.invoke(resolved_params)
                 logger.info(f"Step {step['id']} result: {result}")
                 result.setdefault("tool", tool_name)
-                state["step_results"][step["id"]] = result
-
+                
+                # Check if error occurred and attempt recovery
                 if result.get("error"):
-                    self._record_tool_error(state, tool_name, result.get("error_message", "Unknown error"))
+                    error_type = result.get("error_type", "UnknownError")
+                    error_message = result.get("error_message", "Unknown error")
+                    
+                    # Use ErrorAnalyzer to analyze the error and suggest recovery
+                    try:
+                        from .error_analyzer import ErrorAnalyzer
+                        error_analyzer = ErrorAnalyzer(self.config)
+                        
+                        # Build context for error analysis
+                        context = {
+                            "user_request": state.get("user_request", ""),
+                            "step_id": step["id"],
+                            "step_reasoning": step.get("reasoning", ""),
+                            "previous_errors": recent_error_history
+                        }
+                        
+                        analysis = error_analyzer.analyze_error(
+                            tool_name=tool_name,
+                            parameters=resolved_params,
+                            error_type=error_type,
+                            error_message=error_message,
+                            attempt_number=attempt,
+                            context=context
+                        )
+                        
+                        logger.info(f"[ERROR RECOVERY] Analysis for step {step['id']}: {analysis.get('reasoning', '')}")
+                        
+                        # If retry is recommended and we haven't exceeded max attempts, retry with modified parameters
+                        max_retries = 2  # Allow one retry with modified parameters
+                        if analysis.get("retry_recommended") and attempt < max_retries:
+                            suggested_params = analysis.get("suggested_parameters", {})
+                            if suggested_params:
+                                logger.info(f"[ERROR RECOVERY] Retrying step {step['id']} with modified parameters: {suggested_params}")
+                                # Merge suggested parameters with original parameters
+                                modified_params = {**resolved_params, **suggested_params}
+                                
+                                # Retry with modified parameters
+                                retry_result = tool.invoke(modified_params)
+                                retry_result.setdefault("tool", tool_name)
+                                
+                                if not retry_result.get("error"):
+                                    logger.info(f"[ERROR RECOVERY] Retry succeeded for step {step['id']}")
+                                    result = retry_result
+                                    # Clear error since retry succeeded
+                                    self._clear_tool_errors(state, tool_name)
+                                else:
+                                    logger.warning(f"[ERROR RECOVERY] Retry failed for step {step['id']}")
+                                    # Store analysis in result for potential use by dependent steps
+                                    result["error_analysis"] = analysis
+                                    self._record_tool_error(state, tool_name, error_message)
+                            else:
+                                # No parameter modifications suggested, store analysis
+                                result["error_analysis"] = analysis
+                                self._record_tool_error(state, tool_name, error_message)
+                        else:
+                            # Don't retry or retry not recommended, store analysis
+                            result["error_analysis"] = analysis
+                            self._record_tool_error(state, tool_name, error_message)
+                    except Exception as analyzer_error:
+                        logger.error(f"[ERROR RECOVERY] Error analyzer failed: {analyzer_error}")
+                        # Fallback: just record the error
+                        self._record_tool_error(state, tool_name, error_message)
                 else:
                     self._clear_tool_errors(state, tool_name)
+
+                state["step_results"][step["id"]] = result
 
                 # Verify output for critical steps (screenshots, attachments, etc.)
                 if self._should_verify_step(step):
@@ -815,6 +1032,22 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             params = step.get("parameters", {})
             step_id = step.get("id")
 
+            # VALIDATION 0: improve search_documents queries for file summaries
+            if action == "search_documents":
+                query_value = params.get("query")
+                if isinstance(query_value, str):
+                    cleaned_query = re.sub(r'\b(files?|documents?|docs)\b', '', query_value, flags=re.IGNORECASE)
+                    cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
+                    if cleaned_query and cleaned_query != query_value:
+                        params["query"] = cleaned_query
+                        step_fixed = True
+                        corrections_made.append(
+                            f"Step {step_id}: Cleaned search_documents query from '{query_value}' to '{cleaned_query}'"
+                        )
+                        logger.info(
+                            f"[PLAN VALIDATION] ✅ Auto-corrected search_documents query -> '{cleaned_query}'"
+                        )
+
             # VALIDATION 1: reply_to_user with invalid placeholders
             if action == "reply_to_user":
                 # Check details field for invalid placeholder patterns
@@ -968,7 +1201,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
     def _resolve_parameters(
         self,
         params: Dict[str, Any],
-        step_results: Dict[int, Any]
+        step_results: Dict[int, Any],
+        action: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Resolve context variables in parameters.
@@ -982,7 +1216,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         from ..utils.template_resolver import resolve_parameters as resolve_params
 
-        return resolve_params(params, step_results)
+        return resolve_params(params, step_results, action)
 
     def _resolve_single_value(self, value: Any, step_results: Dict[int, Any]) -> Any:
         """
@@ -1132,7 +1366,9 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         self,
         user_request: str,
         session_id: Optional[str] = None,
-        cancel_event: Optional[Event] = None
+        cancel_event: Optional[Event] = None,
+        context: Optional[Dict[str, Any]] = None,
+        on_plan_created: Optional[callable] = None
     ) -> Dict[str, Any]:
         """
         Execute the agent workflow.
@@ -1141,22 +1377,35 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             user_request: Natural language request
             session_id: Optional session ID for context tracking
             cancel_event: Optional threading.Event used to signal cancellation
+            context: Optional context dictionary (e.g., intent_hints from slash commands)
 
         Returns:
             Final result dictionary
         """
+        if context:
+            logger.info(f"[EMAIL WORKFLOW] Starting agent with context: {context}")
         logger.info(f"Starting agent for request: {user_request}")
 
         # Check if this is a slash command and handle it directly
         if user_request.strip().startswith('/'):
             from ..ui.slash_commands import SlashCommandHandler
             from ..agent.agent_registry import AgentRegistry
-            
+
             registry = AgentRegistry(self.config, session_manager=self.session_manager)
-            handler = SlashCommandHandler(registry, self.config)
+            handler = SlashCommandHandler(registry, session_manager=self.session_manager, config=self.config)
             is_command, result = handler.handle(user_request, session_id=session_id)
             
             if is_command:
+                # Check if this is a retry_with_orchestrator result
+                if isinstance(result, dict) and result.get("type") == "retry_with_orchestrator":
+                    # Return the retry result as-is so api_server can handle it
+                    return {
+                        "type": "retry_with_orchestrator",
+                        "original_message": result.get("original_message", user_request),
+                        "content": result.get("content", "Retrying via main assistant..."),
+                        "error": result.get("error")
+                    }
+                
                 # Format result to match agent.run() return format
                 if isinstance(result, dict):
                     if result.get("type") == "result":
@@ -1167,12 +1416,19 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                             tool_result.get("summary") or
                             tool_result.get("content") or
                             tool_result.get("response") or
-                            "Command executed"
+                            get_generic_success_message()
                         )
                         # Determine status: only mark as error if there's an explicit error field
                         # Otherwise, default to success if we have a message/summary/content
                         is_error = tool_result.get("error") is True
-                        has_content = bool(message and message != "Command executed")
+                        # Check if we have actual content (not just a fallback generic message)
+                        # We check if message exists and has reasonable length (generic messages are typically short)
+                        has_content = bool(
+                            message and 
+                            len(message.strip()) > 0 and
+                            # If message came from tool_result, it's real content
+                            (tool_result.get("message") or tool_result.get("summary") or tool_result.get("content") or tool_result.get("response"))
+                        )
                         status = "error" if is_error else ("success" if has_content else "completed")
 
                         return {
@@ -1229,7 +1485,9 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 "count": 0,
                 "session_count": session_vision_count
             },
-            "recent_errors": {}
+            "recent_errors": {},
+            "planning_context": context or {},  # Add planning context (e.g., intent_hints from slash commands)
+            "on_plan_created": on_plan_created  # Store callback in state for plan_task to access
         }
 
         # Run graph

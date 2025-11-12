@@ -18,6 +18,7 @@ from datetime import datetime
 
 from src.config import get_config_context
 from src.config_validator import ConfigValidationError
+from ..utils import get_temperature_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,68 @@ def compose_email(
         else:
             logger.warning("[EMAIL AGENT] Email body is empty but attachments are present - proceeding")
 
+    # Validate and normalize attachments BEFORE composing email
+    validated_attachments = []
+    invalid_attachments = []
+    
     if attachments:
-        logger.info(f"[EMAIL AGENT] Email has {len(attachments)} attachment(s): {attachments}")
+        import os
+        from pathlib import Path
+        
+        logger.info(f"[EMAIL AGENT] Validating {len(attachments)} attachment(s)...")
+        
+        for att_path in attachments:
+            if not att_path or not isinstance(att_path, str):
+                logger.warning(f"[EMAIL AGENT] Invalid attachment path (not a string): {att_path}")
+                invalid_attachments.append(str(att_path))
+                continue
+            
+            # Convert to absolute path
+            try:
+                abs_path = os.path.abspath(os.path.expanduser(att_path))
+            except Exception as e:
+                logger.warning(f"[EMAIL AGENT] Failed to convert path to absolute: {att_path}, error: {e}")
+                invalid_attachments.append(att_path)
+                continue
+            
+            # Verify file exists and is a file (not a directory)
+            if not os.path.exists(abs_path):
+                logger.error(f"[EMAIL AGENT] ⚠️  ATTACHMENT FILE NOT FOUND: {abs_path}")
+                invalid_attachments.append(abs_path)
+                continue
+            
+            if not os.path.isfile(abs_path):
+                logger.warning(f"[EMAIL AGENT] Attachment path is not a file (directory?): {abs_path}")
+                invalid_attachments.append(abs_path)
+                continue
+            
+            # Verify file is readable
+            if not os.access(abs_path, os.R_OK):
+                logger.warning(f"[EMAIL AGENT] Attachment file is not readable: {abs_path}")
+                invalid_attachments.append(abs_path)
+                continue
+            
+            validated_attachments.append(abs_path)
+            logger.info(f"[EMAIL AGENT] ✅ Validated attachment: {abs_path}")
+        
+        # If user requested attachments but none are valid, return error
+        if len(attachments) > 0 and len(validated_attachments) == 0:
+            error_msg = f"All {len(attachments)} attachment(s) failed validation. Invalid paths: {invalid_attachments}"
+            logger.error(f"[EMAIL AGENT] ⚠️  {error_msg}")
+            return {
+                "error": True,
+                "error_type": "AttachmentError",
+                "error_message": error_msg,
+                "invalid_attachments": invalid_attachments,
+                "retry_possible": True
+            }
+        
+        # Log warning if some attachments were invalid but we have valid ones
+        if invalid_attachments:
+            logger.warning(f"[EMAIL AGENT] ⚠️  {len(invalid_attachments)} attachment(s) failed validation: {invalid_attachments}")
+            logger.info(f"[EMAIL AGENT] Proceeding with {len(validated_attachments)} valid attachment(s)")
+        
+        logger.info(f"[EMAIL AGENT] Email will have {len(validated_attachments)} attachment(s): {validated_attachments}")
 
     try:
         from src.automation import MailComposer
@@ -105,7 +166,7 @@ def compose_email(
             subject=subject,
             body=body,
             recipient=recipient,
-            attachment_paths=attachments,
+            attachment_paths=validated_attachments if validated_attachments else None,
             send_immediately=send
         )
 
@@ -141,14 +202,24 @@ def read_latest_emails(
     Read the latest emails from Mail.app.
 
     EMAIL AGENT - LEVEL 2: Email Reading
-    Use this to retrieve recent emails.
+    Use this to retrieve recent emails. Often used before summarize_emails().
+    
+    Typical use cases:
+    - "summarize my last 3 emails" → read_latest_emails(count=3) → summarize_emails()
+    - "what are my recent emails" → read_latest_emails(count=10)
 
     Args:
         count: Number of emails to retrieve (default: 10, max: 50)
         mailbox: Mailbox name (default: INBOX)
 
     Returns:
-        Dictionary with list of emails containing sender, subject, date, content
+        Dictionary with:
+        - emails: List of email dictionaries (sender, subject, date, content, content_preview)
+        - count: Number of emails retrieved
+        - mailbox: Mailbox name used
+        - account: Account email used
+        
+    Note: The result can be passed directly to summarize_emails() for summarization.
 
     Security:
         Only reads from the email account specified in config.yaml (email.account_email)
@@ -211,14 +282,24 @@ def read_emails_by_sender(
     Read emails from a specific sender.
 
     EMAIL AGENT - LEVEL 2: Email Reading
-    Use this to find emails from a particular person or email address.
+    Use this to find emails from a particular person or email address. Often used before summarize_emails().
+    
+    Typical use cases:
+    - "summarize the last 3 emails sent by John Doe" → read_emails_by_sender(sender="John Doe", count=3) → summarize_emails()
+    - "can you summarize emails from [person]" → read_emails_by_sender(sender="[person]", count=10) → summarize_emails()
 
     Args:
-        sender: Email address or name of sender (can be partial match)
+        sender: Email address or name of sender (can be partial match, e.g., "John Doe" or "john@example.com")
         count: Maximum number of emails to retrieve (default: 10, max: 50)
 
     Returns:
-        Dictionary with list of emails from the specified sender
+        Dictionary with:
+        - emails: List of email dictionaries from the specified sender
+        - count: Number of emails retrieved
+        - sender: Sender identifier used
+        - account: Account email used
+        
+    Note: The result can be passed directly to summarize_emails() for summarization.
 
     Security:
         Only reads from the email account specified in config.yaml (email.account_email)
@@ -428,13 +509,25 @@ def summarize_emails(
 
     EMAIL AGENT - LEVEL 3: Email Summarization
     Use this to create a concise summary of emails, highlighting key information.
+    
+    This tool should be used AFTER reading emails with one of the read_* tools:
+    - read_latest_emails() → summarize_emails() - for summarizing recent emails
+    - read_emails_by_sender() → summarize_emails() - for summarizing emails from a specific person
+    - read_emails_by_time() → summarize_emails() - for summarizing emails from a time range
+    
+    The emails_data parameter should be the result dictionary from a read_* tool call.
 
     Args:
-        emails_data: Dictionary containing 'emails' list from read_* tools
-        focus: Optional focus area (e.g., "action items", "deadlines", "important updates")
+        emails_data: Dictionary containing 'emails' list from read_* tools (required).
+                     Must be the output from read_latest_emails, read_emails_by_sender, or read_emails_by_time.
+        focus: Optional focus area (e.g., "action items", "deadlines", "important updates", "key decisions")
 
     Returns:
-        Dictionary with summary text and structured data
+        Dictionary with:
+        - summary: Text summary of the emails
+        - email_count: Number of emails summarized
+        - focus: The focus area used (if any)
+        - emails_summarized: List of email metadata (sender, subject, date)
     """
     logger.info(f"[EMAIL AGENT] Tool: summarize_emails(focus='{focus}')")
 
@@ -446,7 +539,8 @@ def summarize_emails(
         if not emails:
             return {
                 "summary": "No emails to summarize.",
-                "count": 0
+                "count": 0,
+                "message": "The emails_data dictionary did not contain any emails. Make sure to call a read_* tool first (read_latest_emails, read_emails_by_sender, or read_emails_by_time) and pass its result to summarize_emails."
             }
 
         # Build prompt for summarization
@@ -475,6 +569,13 @@ Emails:
 
 Provide a well-structured summary that's easy to scan."""
 
+        # Load config for temperature settings
+        try:
+            config, _, _ = _load_email_runtime()
+        except ConfigValidationError as exc:
+            logger.warning(f"[EMAIL AGENT] Config error, using defaults: {exc}")
+            config = {}
+
         # Use OpenAI to generate summary
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -484,7 +585,7 @@ Provide a well-structured summary that's easy to scan."""
                 {"role": "system", "content": "You are a helpful assistant that summarizes emails clearly and concisely."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
+            temperature=get_temperature_for_model(config, default_temperature=0.3),
             max_tokens=1500
         )
 
@@ -542,22 +643,33 @@ LEVEL 2: Email Reading
 LEVEL 3: Email Analysis
 └─ summarize_emails → AI-powered summarization of email content
 
+Domain: Email operations including reading, summarizing, composing, and replying to emails via macOS Mail.app
+
 Typical Workflows:
 
-1. Check recent emails:
-   read_latest_emails(count=10) → summarize_emails()
+1. Summarize recent emails:
+   read_latest_emails(count=3) → summarize_emails()
+   Example: "summarize my last 3 emails"
 
-2. Find emails from someone:
-   read_emails_by_sender(sender="john@example.com") → summarize_emails()
+2. Summarize emails from specific sender:
+   read_emails_by_sender(sender="john@example.com", count=3) → summarize_emails()
+   Example: "summarize the last 3 emails sent by John Doe"
+   Example: "can you summarize emails from [person's name]"
 
-3. Review last hour's emails:
+3. Summarize emails by time range:
    read_emails_by_time(hours=1) → summarize_emails(focus="action items")
+   Example: "summarize emails from the last hour"
 
 4. Read and reply to an email:
    read_latest_emails(count=5) → reply_to_email(original_sender="...", original_subject="...", reply_body="...", send=False)
 
 5. Compose new email:
    compose_email(subject="...", body="...", recipient="...", send=True)
+
+Summarization Patterns:
+- "summarize my last N emails" → read_latest_emails(count=N) → summarize_emails()
+- "summarize emails from [person]" → read_emails_by_sender(sender="[person]", count=10) → summarize_emails()
+- "summarize the last N emails sent by [person]" → read_emails_by_sender(sender="[person]", count=N) → summarize_emails()
 """
 
 

@@ -17,6 +17,7 @@ from ..agent.agent_registry import AgentRegistry
 from .agent_capabilities import build_agent_capabilities
 from .intent_planner import IntentPlanner
 from .agent_router import AgentRouter
+from ..utils import get_temperature_for_model
 
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class Planner:
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.2,  # Lower temperature for structured planning
+            temperature=get_temperature_for_model(config, default_temperature=0.2),  # Lower temperature for structured planning
             api_key=openai_config.get("api_key")
         )
         self.agent_registry = AgentRegistry(config)
@@ -168,7 +169,7 @@ CRITICAL RULES:
 - When in doubt, prefer fewer steps with more capable tools
 
 OUTPUT FORMAT:
-Respond with JSON containing:
+Respond with ONLY valid JSON (no comments, no markdown code blocks) containing:
 {
   "reasoning": "Brief explanation of why this plan achieves the goal",
   "steps": [
@@ -177,13 +178,15 @@ Respond with JSON containing:
       "action": "tool_name",
       "parameters": {
         "param1": "value1",
-        "param2": "$step0.output_field"  // Reference previous step outputs
+        "param2": "$step0.output_field"
       },
       "reasoning": "Why this step is needed",
-      "dependencies": [0]  // Which steps must complete before this
+      "dependencies": [0]
     }
   ]
-}"""
+}
+
+CRITICAL: Return pure JSON only. Do NOT include comments like "// comment". Do NOT wrap in markdown code blocks."""
 
     def _build_planning_prompt(
         self,
@@ -257,10 +260,31 @@ Respond with JSON containing:
             "- Handle variations: 'LA' → 'Los Angeles, CA', 'SD' → 'San Diego, CA', '2 gas stops' → num_fuel_stops=2",
             "- Interpret meal requests: 'lunch and dinner' → num_food_stops=2, 'breakfast and lunch' → num_food_stops=2",
             "- Parse time formats: '5 AM' → '5:00 AM', '7:30 PM' → '7:30 PM'",
-            "- For selective ZIP requests: use include_pattern (e.g., 'A*') and include/exclude_extensions to target the correct files",
+            "- For Bluesky/social media time windows: extract lookback_hours from phrases like 'past one hour' → lookback_hours=1, 'last 2 hours' → lookback_hours=2, 'over the past hour' → lookback_hours=1",
+            "- For Bluesky queries: when user asks 'what happened' or 'summarize activity', use LLM reasoning to determine appropriate search query (e.g., 'trending', 'news', or broad terms) - do NOT hardcode",
+            "- For email time windows: extract hours/minutes from phrases like 'past 5 hours' → hours=5, 'last 2 hours' → hours=2, 'past 30 minutes' → minutes=30, 'over the past hour' → hours=1",
+            "- For email summarization: when user requests time-based email summary, use read_emails_by_time followed by summarize_emails - always pass full output from read_emails_by_time to summarize_emails via emails_data parameter",
+            "- For email focus: extract optional focus keywords like 'action items', 'deadlines', 'important' from user query and pass to summarize_emails focus parameter",
+            "- For reminders summarization: use list_reminders → synthesize_content → reply_to_user workflow. Convert reminders data to JSON string before passing to synthesize_content. Extract time windows (e.g., 'next 3 days') using LLM reasoning - do NOT hardcode defaults.",
+            "- For calendar summarization: use list_calendar_events → synthesize_content → reply_to_user workflow. Extract days_ahead from query (e.g., 'next week' → 7 days, 'this month' → 30 days) using LLM reasoning. Convert events data to JSON string before passing to synthesize_content.",
+            "- For news summarization: use google_search (DuckDuckGo) → synthesize_content → reply_to_user workflow. For 'recent news' queries, use LLM reasoning to determine appropriate search query (e.g., 'recent tech news today') - do NOT hardcode generic queries like 'news' or 'trending'.",
+            "- For selective ZIP requests: Use LLM reasoning to determine include_pattern from user query",
+            "  * Example: 'Ed Sheeran files' → Reason: filenames contain 'Ed' and 'Sheeran' → include_pattern='*Ed*Sheeran*'",
+            "  * Example: 'files starting with A' → Reason: filenames start with 'A' → include_pattern='A*'",
+            "  * Example: 'only PDFs' → Reason: PDFs have .pdf extension → include_extensions=['pdf']",
+            "  * NO hardcoded patterns - always reason about what the user means!",
             "- For file operations (zip, organize, search): ALWAYS specify source_path using the user_document_folders from FILE SYSTEM CONTEXT",
             "- Example: if user says 'zip files starting with A', set source_path to the first folder from user_document_folders",
             "- NO hardcoded values - extract everything from the user's query using reasoning",
+            "",
+            "CRITICAL: synthesize_content Parameter Handling:",
+            "- synthesize_content.source_contents MUST be a List[str] (list of strings), NOT raw structured data",
+            "- When passing data from previous steps to synthesize_content, convert structured data (lists/dicts) to JSON strings",
+            "- Example: If step1 returns {events: [...]}, use json.dumps($step1.events) or convert to string representation",
+            "- If a data retrieval step returns empty results (empty list/dict), use LLM reasoning to decide:",
+            "  * Skip synthesis if truly empty and provide informative empty-state message directly",
+            "  * OR convert empty result to descriptive string like 'No items found' for synthesis",
+            "- For 'reminders' or 'todos' queries, use BOTH list_reminders AND list_calendar_events, then synthesize both results",
             "",
             "Remember:",
             "- Use LLM reasoning for all decisions and parameter extraction",
@@ -268,6 +292,7 @@ Respond with JSON containing:
             "- Check if tools are COMPLETE/STANDALONE before breaking into sub-steps",
             "- Keep plans as simple as possible",
             "- Specify dependencies clearly",
+            "- Handle empty results intelligently - don't pass empty lists directly to synthesize_content",
             "",
             "Respond with the plan in JSON format."
         ])

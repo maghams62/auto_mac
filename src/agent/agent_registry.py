@@ -37,6 +37,7 @@ except ImportError:
     SCREEN_AGENT_HIERARCHY = ""
 from .report_agent import ReportAgent, REPORT_AGENT_TOOLS, REPORT_AGENT_HIERARCHY
 from .google_finance_agent import GoogleFinanceAgent, GOOGLE_FINANCE_AGENT_TOOLS, GOOGLE_FINANCE_AGENT_HIERARCHY
+from .enriched_stock_agent import EnrichedStockAgent, ENRICHED_STOCK_AGENT_TOOLS
 from .maps_agent import MapsAgent, MAPS_AGENT_TOOLS, MAPS_AGENT_HIERARCHY
 from .imessage_agent import iMessageAgent, IMESSAGE_AGENT_TOOLS, IMESSAGE_AGENT_HIERARCHY
 from .discord_agent import DiscordAgent, DISCORD_AGENT_TOOLS, DISCORD_AGENT_HIERARCHY
@@ -51,6 +52,10 @@ from .whatsapp_agent import WhatsAppAgent, WHATSAPP_AGENT_TOOLS, WHATSAPP_AGENT_
 from .reply_tool import ReplyAgent, REPLY_AGENT_TOOLS, REPLY_AGENT_HIERARCHY
 from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIERARCHY
 from .celebration_agent import CelebrationAgent, CELEBRATION_AGENT_TOOLS, CELEBRATION_AGENT_HIERARCHY
+from .weather_agent import WEATHER_AGENT_TOOLS, WEATHER_AGENT_HIERARCHY
+from .notes_agent import NOTES_AGENT_TOOLS, NOTES_AGENT_HIERARCHY
+from .reminders_agent import REMINDERS_AGENT_TOOLS, REMINDERS_AGENT_HIERARCHY
+from .calendar_agent import CalendarAgent, CALENDAR_AGENT_TOOLS, CALENDAR_AGENT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +87,11 @@ ALL_AGENT_TOOLS = (
     WHATSAPP_AGENT_TOOLS +
     REPLY_AGENT_TOOLS +
     SPOTIFY_AGENT_TOOLS +
-    CELEBRATION_AGENT_TOOLS
+    CELEBRATION_AGENT_TOOLS +
+    WEATHER_AGENT_TOOLS +
+    NOTES_AGENT_TOOLS +
+    REMINDERS_AGENT_TOOLS +
+    CALENDAR_AGENT_TOOLS
 )
 # Legacy compatibility
 ALL_TOOLS = FILE_AGENT_TOOLS + PRESENTATION_AGENT_TOOLS + EMAIL_AGENT_TOOLS
@@ -159,17 +168,42 @@ for its domain:
    └─ Tools: reply_to_user
    └─ Purpose: Centralizes UI-facing messaging so agents deliver polished summaries instead of raw JSON payloads
 
-15. SPOTIFY AGENT (3 tools)
+15. SPOTIFY AGENT (4 tools)
    └─ Domain: Music playback control
-   └─ Tools: play_music, pause_music, get_spotify_status
+   └─ Tools: play_music, pause_music, get_spotify_status, play_song
    └─ Integration: Uses AppleScript to control Spotify desktop app on macOS
+   └─ Features: LLM-powered semantic song name disambiguation for fuzzy/imprecise song names
 
 16. CELEBRATION AGENT (1 tool)
    └─ Domain: Celebratory effects and fun interactions
    └─ Tools: trigger_confetti
    └─ Integration: Uses AppleScript to trigger macOS celebration effects
 
-Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 60+ tools (and growing).
+17. WEATHER AGENT (1 tool)
+   └─ Domain: Weather forecast retrieval and conditional logic
+   └─ Tools: get_weather_forecast
+   └─ Integration: Uses macOS Weather.app via AppleScript/System Events
+   └─ Pattern: Returns structured data → LLM interprets → Conditional actions (reminders/notes)
+
+18. NOTES AGENT (3 tools)
+   └─ Domain: Apple Notes creation and management
+   └─ Tools: create_note, append_note, get_note
+   └─ Integration: Uses macOS Notes.app via AppleScript
+   └─ Pattern: Persistent storage for LLM-generated content, reports, and summaries
+
+19. REMINDERS AGENT (2 tools)
+   └─ Domain: Time-based reminders and task management
+   └─ Tools: create_reminder, complete_reminder
+   └─ Integration: Uses macOS Reminders.app via AppleScript
+   └─ Pattern: LLM-inferred timing from natural language, conditional reminder creation
+
+20. CALENDAR AGENT (3 tools)
+   └─ Domain: Calendar event reading and meeting preparation
+   └─ Tools: list_calendar_events, get_calendar_event_details, prepare_meeting_brief
+   └─ Integration: Uses Calendar.app via AppleScript, DocumentIndexer for semantic search
+   └─ Pattern: Reads events → LLM generates search queries → Searches documents → Synthesizes briefs
+
+Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 65+ tools (and growing).
 
 Each agent:
 - Has a clear domain of responsibility
@@ -218,6 +252,7 @@ class AgentRegistry:
             "critic": CriticAgent,
             "report": ReportAgent,
             "google_finance": GoogleFinanceAgent,
+            "enriched_stock": EnrichedStockAgent,
             "maps": MapsAgent,
             "imessage": iMessageAgent,
             "discord": DiscordAgent,
@@ -232,6 +267,7 @@ class AgentRegistry:
             "reply": ReplyAgent,
             "spotify": SpotifyAgent,
             "celebration": CelebrationAgent,
+            "calendar": CalendarAgent,
         }
 
         # Registry of instantiated agents (populated during eager initialization)
@@ -264,6 +300,7 @@ class AgentRegistry:
             "reply": REPLY_AGENT_TOOLS,
             "spotify": SPOTIFY_AGENT_TOOLS,
             "celebration": CELEBRATION_AGENT_TOOLS,
+            "calendar": CALENDAR_AGENT_TOOLS,
         }
 
         for agent_name, tools in tool_lists.items():

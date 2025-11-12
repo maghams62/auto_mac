@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from ..utils import load_config
+from ..utils import load_config, get_temperature_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ def _summarize_results(query: str, results: List[Dict[str, str]]) -> str:
         openai_cfg = config.get("openai", {})
         llm = ChatOpenAI(
             model=openai_cfg.get("model", "gpt-4o"),
-            temperature=0.2,
+            temperature=get_temperature_for_model(config, default_temperature=0.2),
             max_tokens=600,
             api_key=openai_cfg.get("api_key"),
         )

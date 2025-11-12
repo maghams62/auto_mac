@@ -2,8 +2,9 @@
 Tool catalog generation from existing tools.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
+import re
 from ..agent import ALL_AGENT_TOOLS
 from .state import ToolSpec
 
@@ -44,6 +45,212 @@ def _build_parameter_metadata(tool) -> List[Dict[str, Any]]:
         })
 
     return metadata
+
+
+def _extract_io_from_tool(tool) -> Dict[str, List[str]]:
+    """
+    Extract input/output information from a LangChain tool.
+    
+    Args:
+        tool: LangChain tool instance
+        
+    Returns:
+        Dictionary with "in" and "out" lists
+    """
+    inputs = []
+    outputs = []
+    
+    # Extract from args_schema
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema:
+        try:
+            schema_dict = args_schema.schema()
+            properties = schema_dict.get("properties", {}) or {}
+            for name, prop in properties.items():
+                param_type = prop.get("type", "any")
+                inputs.append(f"{name}: {param_type}")
+        except Exception:
+            pass
+    
+    # Default outputs based on common patterns
+    # Most tools return dicts with common fields
+    outputs = ["result", "message", "status"]
+    
+    return {"in": inputs, "out": outputs}
+
+
+def _infer_tool_kind(tool_name: str, description: str) -> str:
+    """
+    Infer tool kind from tool name and description using reasoning.
+    
+    Args:
+        tool_name: Name of the tool
+        description: Tool description
+        
+    Returns:
+        Tool kind ("tool", "browser_tool", "maps_tool", "worker", etc.)
+    """
+    name_lower = tool_name.lower()
+    desc_lower = description.lower()
+    
+    # Browser tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["browser", "web", "url", "navigate", "screenshot", "page"]):
+        return "browser_tool"
+    
+    # Maps tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["map", "trip", "route", "direction", "navigation"]):
+        return "maps_tool"
+    
+    # Worker tools
+    if "worker" in name_lower or "llamaindex" in name_lower:
+        return "worker"
+    
+    # Stock/finance tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["stock", "finance", "ticker", "price", "market"]):
+        return "tool"  # Stock tools are regular tools
+    
+    # Default
+    return "tool"
+
+
+def _extract_strengths_and_limits_from_docstring(docstring: str) -> tuple:
+    """
+    Extract strengths and limits from tool docstring using reasoning.
+    
+    Analyzes the docstring to infer:
+    - Strengths: What the tool does well, capabilities mentioned
+    - Limits: Constraints, requirements, limitations mentioned
+    
+    Args:
+        docstring: Tool docstring
+        
+    Returns:
+        Tuple of (strengths list, limits list)
+    """
+    if not docstring:
+        return [], []
+    
+    strengths = []
+    limits = []
+    
+    # Look for "Use this when" patterns (strengths)
+    use_pattern = re.compile(r"Use this when[:\s]+(.*?)(?=\n\n|Args?:|Returns?:|Example?:|$)", re.IGNORECASE | re.DOTALL)
+    use_matches = use_pattern.findall(docstring)
+    for match in use_matches:
+        # Split by bullet points, dashes, or newlines
+        use_cases = re.split(r"\n\s*[-•]\s+", match)
+        for case in use_cases:
+            # Also split by commas if no bullets
+            if "\n" not in case and "," in case:
+                use_cases.extend([c.strip() for c in case.split(",")])
+                continue
+            case = case.strip()
+            # Remove leading dashes/bullets
+            case = re.sub(r"^[-•]\s+", "", case)
+            if case and len(case) > 10:  # Meaningful length
+                strengths.append(case)
+    
+    # Look for "Args:" section to understand capabilities
+    args_section = re.search(r"Args?:[\s\S]*?(?=Returns?:|$)", docstring, re.IGNORECASE)
+    if args_section:
+        # Parameters indicate capabilities
+        param_lines = args_section.group(0).split('\n')
+        for line in param_lines:
+            if ':' in line and not line.strip().startswith('Args'):
+                param_desc = line.split(':', 1)[1].strip() if ':' in line else line.strip()
+                if param_desc and len(param_desc) > 10:
+                    strengths.append(f"Supports {param_desc.lower()}")
+    
+    # Look for explicit limitations
+    limit_keywords = ["requires", "only", "limited", "must", "cannot", "doesn't", "may not"]
+    sentences = re.split(r"[.!?]\s+", docstring)
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        if any(keyword in sentence_lower for keyword in limit_keywords):
+            # Check if it's a limitation
+            if any(indicator in sentence_lower 
+                   for indicator in ["only", "limited to", "requires", "must be", "cannot"]):
+                limits.append(sentence.strip())
+    
+    # Extract from "Returns:" section
+    returns_section = re.search(r"Returns?:[\s\S]*?$", docstring, re.IGNORECASE)
+    if returns_section:
+        returns_text = returns_section.group(0)
+        # Returns indicate capabilities
+        if "dictionary" in returns_text.lower() or "dict" in returns_text.lower():
+            strengths.append("Returns structured data")
+    
+    # Default strengths if none found
+    if not strengths:
+        # Infer from description
+        if "get" in docstring.lower() or "fetch" in docstring.lower():
+            strengths.append("Retrieves data")
+        if "create" in docstring.lower() or "generate" in docstring.lower():
+            strengths.append("Creates content")
+        if "search" in docstring.lower():
+            strengths.append("Searches for information")
+    
+    # Default limits if none found
+    if not limits:
+        # Common limitations based on tool type
+        if "macos" in docstring.lower() or "mac" in docstring.lower():
+            limits.append("macOS only")
+        if "api" in docstring.lower() or "key" in docstring.lower():
+            limits.append("May require API keys or credentials")
+    
+    return strengths[:5], limits[:5]  # Limit to 5 each
+
+
+def _generate_toolspec_from_tool(tool) -> ToolSpec:
+    """
+    Dynamically generate a ToolSpec from a LangChain tool using reasoning.
+    
+    Extracts metadata from the tool's schema and docstring to create a ToolSpec
+    without hardcoding. Uses programmatic reasoning to infer:
+    - Description from docstring
+    - Inputs/outputs from schema
+    - Strengths and limits from docstring analysis
+    - Tool kind from name and description
+    
+    Args:
+        tool: LangChain tool instance
+        
+    Returns:
+        ToolSpec object
+    """
+    tool_name = tool.name
+    description = tool.description or ""
+    
+    # Extract I/O from schema
+    io = _extract_io_from_tool(tool)
+    
+    # Infer tool kind
+    kind = _infer_tool_kind(tool_name, description)
+    
+    # Extract strengths and limits from docstring
+    strengths, limits = _extract_strengths_and_limits_from_docstring(description)
+    
+    # If no strengths/limits found, use minimal defaults
+    if not strengths:
+        strengths = ["Provides functionality for the requested operation"]
+    if not limits:
+        limits = ["See tool documentation for specific constraints"]
+    
+    # Build parameters metadata
+    parameters = _build_parameter_metadata(tool)
+    
+    return ToolSpec(
+        name=tool_name,
+        kind=kind,
+        io=io,
+        strengths=strengths,
+        limits=limits,
+        description=description or f"Tool: {tool_name}",
+        parameters=parameters
+    )
 
 
 def generate_tool_catalog() -> List[ToolSpec]:
@@ -511,26 +718,45 @@ def generate_tool_catalog() -> List[ToolSpec]:
         )
     }
 
-    # Add all mapped tools from all agents
+    # Track which tools we've added
+    added_tool_names = set()
+    
+    # First, add all mapped tools (these have curated metadata)
     for tool in ALL_AGENT_TOOLS:
         tool_name = tool.name
         if tool_name in tool_mappings:
             spec = tool_mappings[tool_name]
             spec.parameters = _build_parameter_metadata(tool)
             catalog.append(spec)
-            logger.debug(f"Added tool to catalog: {tool_name}")
-        else:
-            logger.debug(f"Tool '{tool_name}' not in catalog mapping; skipping")
+            added_tool_names.add(tool_name)
+            logger.debug(f"Added mapped tool to catalog: {tool_name}")
+    
+    # Then, dynamically generate ToolSpecs for unmapped tools
+    for tool in ALL_AGENT_TOOLS:
+        tool_name = tool.name
+        if tool_name not in added_tool_names:
+            try:
+                spec = _generate_toolspec_from_tool(tool)
+                catalog.append(spec)
+                added_tool_names.add(tool_name)
+                logger.info(f"✅ Dynamically generated ToolSpec for: {tool_name}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to generate ToolSpec for {tool_name}: {e}")
+                # Continue with other tools even if one fails
+    
+    # Always ensure LlamaIndex worker is included
+    if "llamaindex_worker" not in added_tool_names:
+        llamaindex_tool = next((tool for tool in ALL_AGENT_TOOLS if tool.name == "llamaindex_worker"), None)
+        if llamaindex_tool:
+            if "llamaindex_worker" in tool_mappings:
+                spec = tool_mappings["llamaindex_worker"]
+                spec.parameters = _build_parameter_metadata(llamaindex_tool)
+            else:
+                spec = _generate_toolspec_from_tool(llamaindex_tool)
+            catalog.append(spec)
+            added_tool_names.add("llamaindex_worker")
 
-    # Always add the LlamaIndex worker
-    if "llamaindex_worker" not in [t.name for t in catalog]:
-        spec = tool_mappings["llamaindex_worker"]
-        spec.parameters = _build_parameter_metadata(
-            next((tool for tool in ALL_AGENT_TOOLS if tool.name == "llamaindex_worker"), None)
-        )
-        catalog.append(spec)
-
-    logger.info(f"Generated tool catalog with {len(catalog)} tools")
+    logger.info(f"Generated tool catalog with {len(catalog)} tools ({len(added_tool_names)} unique)")
     return catalog
 
 

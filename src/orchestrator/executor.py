@@ -261,8 +261,8 @@ class PlanExecutor:
                 "retry_possible": False
             }
 
-        # Resolve parameter references
-        resolved_params = self._resolve_parameters(parameters, state)
+        # Resolve parameter references (pass action name for special handling)
+        resolved_params = self._resolve_parameters(parameters, state, action)
         logger.info(f"[EXECUTOR] {action} parameters -> raw={parameters}, resolved={resolved_params}")
 
         # Get the tool
@@ -374,7 +374,8 @@ class PlanExecutor:
     def _resolve_parameters(
         self,
         parameters: Dict[str, Any],
-        state: Dict[str, Any]
+        state: Dict[str, Any],
+        action: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Resolve parameter references like $step1.output and template strings like "Found {$step1.count} items".
@@ -384,13 +385,14 @@ class PlanExecutor:
         Args:
             parameters: Parameters with potential references
             state: Current execution state
+            action: Optional action name (for special handling)
 
         Returns:
             Parameters with references resolved
         """
         from ..utils.template_resolver import resolve_parameters as resolve_params
 
-        return resolve_params(parameters, state["step_results"])
+        return resolve_params(parameters, state["step_results"], action)
 
     def _validate_parameters(
         self,

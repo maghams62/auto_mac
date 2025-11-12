@@ -105,7 +105,7 @@ def search_google_finance_stock(company: str) -> Dict[str, Any]:
         page = browser.page
 
         # Check for CAPTCHA
-        page_content = page.content()
+        page_content = browser.get_page_content()
         if "captcha" in page_content.lower() or "unusual traffic" in page_content.lower():
             browser.close()
             return {
@@ -119,10 +119,12 @@ def search_google_finance_stock(company: str) -> Dict[str, Any]:
         # STRATEGY 2: Look for search results on Google Finance search page
         try:
             # Google Finance search results appear as clickable items
-            search_results = page.locator('div[class*="SxEHyc"], a[href*="/finance/quote"]').all()
+            # Get count first (synchronous)
+            result_count = page.locator('div[class*="SxEHyc"], a[href*="/finance/quote"]').count()
 
-            for result in search_results[:3]:  # Check first 3 results
+            for i in range(min(3, result_count)):  # Check first 3 results
                 try:
+                    result = page.locator('div[class*="SxEHyc"], a[href*="/finance/quote"]').nth(i)
                     href = result.get_attribute('href')
                     if href and '/finance/quote/' in href:
                         # Extract ticker from URL
@@ -223,7 +225,7 @@ def extract_google_finance_data(url: str) -> Dict[str, Any]:
         page = browser.page
 
         # Check for CAPTCHA
-        page_content = page.content()
+        page_content = browser.get_page_content()
         if "captcha" in page_content.lower() or "unusual traffic" in page_content.lower():
             browser.close()
             return {
@@ -343,7 +345,7 @@ def extract_google_finance_data(url: str) -> Dict[str, Any]:
             logger.warning(f"[GOOGLE FINANCE AGENT] Could not extract stats: {e}")
 
         # Get full page content as fallback
-        full_content = page.content()
+        full_content = browser.get_page_content()
 
         browser.close()
 
@@ -492,13 +494,10 @@ def create_stock_report_from_google_finance(company: str, output_format: str = "
         if data_result.get("error"):
             return data_result
 
-        # Step 3: Capture chart
-        chart_result = capture_google_finance_chart.invoke({
-            "url": url,
-            "output_name": f"{ticker.lower()}_report"
-        })
-
-        chart_path = chart_result.get("screenshot_path") if not chart_result.get("error") else None
+        # Step 3: Skip chart capture to avoid desktop screenshot issues
+        # Users prefer text-based data over screenshots
+        chart_path = None
+        logger.info("[GOOGLE FINANCE AGENT] Skipping chart capture - using text-based data only")
 
         # Step 4: Compile report or presentation
         if output_format.lower() in ["presentation", "keynote", "slides"]:

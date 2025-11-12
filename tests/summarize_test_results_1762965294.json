@@ -1,0 +1,226 @@
+[
+  {
+    "test_id": "E1-1",
+    "test_name": "Summarize Last N Emails - /email summarize my last 3 emails",
+    "timestamp": "2025-11-12T08:32:28.164866",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": true,
+      "response_length": 124,
+      "has_substance": true,
+      "query": "/email summarize my last 3 emails",
+      "response_preview": "{'type': 'retry_with_orchestrator', 'original_message': '/email summarize my last 3 emails', 'content': None, 'error': None}"
+    }
+  },
+  {
+    "test_id": "E1-2",
+    "test_name": "Summarize Last N Emails - /email summarize the last 5 emails",
+    "timestamp": "2025-11-12T08:32:28.170365",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": true,
+      "response_length": 125,
+      "has_substance": true,
+      "query": "/email summarize the last 5 emails",
+      "response_preview": "{'type': 'retry_with_orchestrator', 'original_message': '/email summarize the last 5 emails', 'content': None, 'error': None}"
+    }
+  },
+  {
+    "test_id": "E2-1",
+    "test_name": "Summarize Emails by Time Window - /email summarize emails from the past 2 hours",
+    "timestamp": "2025-11-12T08:32:28.175845",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email",
+        "hour"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 136,
+      "has_substance": true,
+      "query": "/email summarize emails from the past 2 hours",
+      "response_preview": "{'type': 'retry_with_orchestrator', 'original_message': '/email summarize emails from the past 2 hours', 'content': None, 'error': None}"
+    }
+  },
+  {
+    "test_id": "E2-2",
+    "test_name": "Summarize Emails by Time Window - /email summarize emails from the last hour",
+    "timestamp": "2025-11-12T08:32:28.180731",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "email",
+        "hour"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 133,
+      "has_substance": true,
+      "query": "/email summarize emails from the last hour",
+      "response_preview": "{'type': 'retry_with_orchestrator', 'original_message': '/email summarize emails from the last hour', 'content': None, 'error': None}"
+    }
+  },
+  {
+    "test_id": "B1-1",
+    "test_name": "Summarize Bluesky Posts - /bluesky summarize \"AI agents\" 12h",
+    "timestamp": "2025-11-12T08:32:40.683950",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "bluesky",
+        "summary"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": false,
+      "response_length": 12965,
+      "has_substance": true,
+      "query": "/bluesky summarize \"AI agents\" 12h",
+      "response_preview": "{'status': 'success', 'message': '### Overview\\nRecent discussions on Bluesky highlight the evolving role of AI agents in software development and their potential to automate bug-fixing and coding tas"
+    }
+  },
+  {
+    "test_id": "B1-2",
+    "test_name": "Summarize Bluesky Posts - /bluesky summarize what happened in the past hour",
+    "timestamp": "2025-11-12T08:32:41.902527",
+    "passed": true,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "summary"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": false,
+      "response_length": 448,
+      "has_substance": true,
+      "query": "/bluesky summarize what happened in the past hour",
+      "response_preview": "{'status': 'success', 'message': 'No posts were found for the requested query and timeframe.', 'final_result': {'summary': 'No posts were found for the requested query and timeframe.', 'items': [], 'q"
+    }
+  },
+  {
+    "test_id": "R1-1",
+    "test_name": "Summarize Reminders - summarize my reminders",
+    "timestamp": "2025-11-12T08:33:05.419132",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "reminder"
+      ],
+      "keyword_coverage": 0.5,
+      "has_error": true,
+      "response_length": 1202,
+      "has_substance": true,
+      "query": "summarize my reminders",
+      "response_preview": "{'goal': \"Summarize user's reminders\", 'steps_executed': 3, 'results': {1: {'reminders': [], 'count': 0, 'list_name': None, 'error': True, 'error_message': 'Timeout after 10s', 'tool': 'list_reminders"
+    }
+  },
+  {
+    "test_id": "R1-2",
+    "test_name": "Summarize Reminders - summarize my todos",
+    "timestamp": "2025-11-12T08:33:34.123272",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "reminder",
+        "todo"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 1244,
+      "has_substance": true,
+      "query": "summarize my todos",
+      "response_preview": "{'goal': \"Summarize the user's todos and email the summary\", 'steps_executed': 4, 'results': {1: {'reminders': [], 'count': 0, 'list_name': None, 'error': True, 'error_message': 'Timeout after 10s', '"
+    }
+  },
+  {
+    "test_id": "C1-1",
+    "test_name": "Summarize Calendar Events - summarize my calendar for the next week",
+    "timestamp": "2025-11-12T08:33:48.565602",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "calendar",
+        "event"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 1892,
+      "has_substance": true,
+      "query": "summarize my calendar for the next week",
+      "response_preview": "{'goal': 'Summarize calendar events for the upcoming week', 'steps_executed': 3, 'results': {1: {'events': [], 'count': 0, 'days_ahead': 7, 'tool': 'list_calendar_events'}, 2: {'synthesized_content': "
+    }
+  },
+  {
+    "test_id": "C1-2",
+    "test_name": "Summarize Calendar Events - summarize my calendar events",
+    "timestamp": "2025-11-12T08:34:05.999296",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "calendar",
+        "event"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 1783,
+      "has_substance": true,
+      "query": "summarize my calendar events",
+      "response_preview": "{'goal': 'Summarize upcoming calendar events', 'steps_executed': 4, 'results': {1: {'events': [], 'count': 0, 'days_ahead': 7, 'tool': 'list_calendar_events'}, 2: {'synthesized_content': 'Currently, t"
+    }
+  },
+  {
+    "test_id": "N1-1",
+    "test_name": "Summarize News - summarize news about AI",
+    "timestamp": "2025-11-12T08:34:29.719908",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "news",
+        "summary"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 7488,
+      "has_substance": true,
+      "query": "summarize news about AI",
+      "response_preview": "{'goal': 'Summarize recent news articles about AI', 'steps_executed': 3, 'results': {1: {'results': [{'title': 'Google News - Artificial intelligence - Latest', 'link': 'https://news.google.com/topics"
+    }
+  },
+  {
+    "test_id": "N1-2",
+    "test_name": "Summarize News - summarize recent tech news",
+    "timestamp": "2025-11-12T08:34:54.766814",
+    "passed": false,
+    "details": {
+      "has_summary_keyword": true,
+      "found_keywords": [
+        "news",
+        "summary"
+      ],
+      "keyword_coverage": 1.0,
+      "has_error": true,
+      "response_length": 7714,
+      "has_substance": true,
+      "query": "summarize recent tech news",
+      "response_preview": "{'goal': 'Summarize recent tech news and provide a concise overview', 'steps_executed': 3, 'results': {1: {'results': [{'title': \"Tech News | Today's Latest Technology News | Reuters\", 'link': 'https:"
+    }
+  }
+]

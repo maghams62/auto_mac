@@ -24,7 +24,12 @@ from urllib.parse import quote
 from datetime import datetime
 from openai import OpenAI
 import os
-import googlemaps
+try:
+    import googlemaps
+    GOOGLEMAPS_AVAILABLE = True
+except ImportError:
+    GOOGLEMAPS_AVAILABLE = False
+    googlemaps = None
 from datetime import datetime as dt
 
 logger = logging.getLogger(__name__)
@@ -384,8 +389,12 @@ def _get_gmaps_client():
             logger.warning("[MAPS AGENT] Google Maps API key not configured. Add GOOGLE_MAPS_API_KEY to .env file.")
             return None
 
-        _gmaps_client = googlemaps.Client(key=api_key)
-        logger.info("[MAPS AGENT] Google Maps client initialized")
+        if GOOGLEMAPS_AVAILABLE:
+            _gmaps_client = googlemaps.Client(key=api_key)
+            logger.info("[MAPS AGENT] Google Maps client initialized")
+        else:
+            logger.warning("[MAPS AGENT] googlemaps module not available. Install with: pip install googlemaps")
+            return None
 
     return _gmaps_client
 
@@ -579,19 +588,20 @@ def get_google_transit_directions(
 
         return result
 
-    except googlemaps.exceptions.ApiError as e:
-        logger.error(f"[MAPS AGENT] Google Maps API error: {e}")
-        return {
-            "error": True,
-            "error_type": "GoogleMapsApiError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
     except Exception as e:
-        logger.error(f"[MAPS AGENT] Error in get_google_transit_directions: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
+        if GOOGLEMAPS_AVAILABLE and hasattr(googlemaps, 'exceptions') and isinstance(e, googlemaps.exceptions.ApiError):
+            logger.error(f"[MAPS AGENT] Google Maps API error: {e}")
+            return {
+                "error": True,
+                "error_type": "GoogleMapsApiError",
+                "error_message": str(e),
+                "retry_possible": False
+            }
+        else:
+            logger.error(f"[MAPS AGENT] Error in get_google_transit_directions: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
             "error": True,
             "error_type": "TransitDirectionsError",
             "error_message": str(e),

@@ -25,7 +25,11 @@
       "core/07_comprehensive_tool_selection_decision_tree.md"
     ],
     "file": [
-      "file/01_example_21_file_agent_zip_non_music_files_and_email_new.md"
+      "file/01_example_21_file_agent_zip_non_music_files_and_email_new.md",
+      "file/02_example_22_file_agent_rag_summary_email_new.md"
+    ],
+    "disambiguation": [
+      "disambiguation/01_example_files_summarize_vs_zip_new.md"
     ],
     "general": [
       "general/01_example_1_simple_task_2_steps.md",
@@ -35,7 +39,8 @@
       "general/05_example_4_medium_complex_task_5_steps.md",
       "general/06_example_4_complex_task_7_steps.md",
       "general/07_example_5_parallel_execution_complex.md",
-      "general/08_example_search_and_email.md"
+      "general/08_example_search_and_email.md",
+      "general/09_example_delivery_email_draft_vs_send.md"
     ],
     "web": [
       "web/01_example_29_web_local_research_with_bluesky_signals_new.md"
@@ -43,14 +48,16 @@
     "stocks": [
       "stocks/01_example_10_stock_agent_stock_analysis_slide_deck_new.md",
       "stocks/02_example_11_stock_agent_compare_multiple_stocks_new.md",
-      "stocks/03_example_11a_stock_comparison_slide_deck_correct_pattern.md"
+      "stocks/03_example_11a_stock_comparison_slide_deck_correct_pattern.md",
+      "stocks/04_example_12_stock_agent_stock_analysis_pages_report_new.md"
     ],
     "cross_domain": [
       "cross_domain/01_example_28_cross_domain_report_slides_email_new.md",
       "cross_domain/02_example_bluesky_posts_to_slideshow_email.md"
     ],
     "safety": [
-      "safety/01_example_30_safety_guardrail_unsupported_media_edit_new.md"
+      "safety/01_example_30_safety_guardrail_unsupported_media_edit_new.md",
+      "safety/02_example_31_safety_refuse_outside_sandbox_new.md"
     ],
     "screen": [
       "screen/01_example_12_screen_agent_stock_analysis_with_screenshot_new.md"
@@ -62,13 +69,21 @@
       "email/04_example_25_email_agent_read_summarize_with_focus_new.md",
       "email/05_example_26_email_agent_multi_step_email_workflow_new.md",
       "email/06_example_27_email_agent_reply_to_email_new.md",
-      "email/07_email_agent_tool_selection_guide.md"
+      "email/07_email_agent_tool_selection_guide.md",
+      "email/08_example_summarize_last_n_emails.md",
+      "email/09_example_summarize_emails_by_sender.md",
+      "email/10_example_summarize_emails_by_time.md"
     ],
     "writing": [
       "writing/01_example_6_writing_agent_create_slide_deck_on_topic_new.md",
       "writing/02_example_7_writing_agent_multi_source_research_report_new.md",
       "writing/03_example_8_writing_agent_web_research_to_presentation_new.md",
       "writing/04_example_9_writing_agent_meeting_notes_new.md"
+    ],
+    "weather": [
+      "weather/01_example_weather_conditional_reminder.md",
+      "weather/02_example_weather_conditional_note.md",
+      "weather/03_example_multi_conditional_branching.md"
     ]
   },
   "agents": {
@@ -76,17 +91,20 @@
       "core",
       "general",
       "safety",
-      "cross_domain"
+      "cross_domain",
+      "disambiguation"
     ],
     "file": [
       "core",
       "general",
-      "file"
+      "file",
+      "disambiguation"
     ],
     "folder": [
       "core",
       "general",
-      "file"
+      "file",
+      "disambiguation"
     ],
     "google": [
       "core",
@@ -124,12 +142,14 @@
       "core",
       "general",
       "writing",
-      "cross_domain"
+      "cross_domain",
+      "disambiguation"
     ],
     "google_finance": [
       "core",
       "general",
-      "stocks"
+      "stocks",
+      "disambiguation"
     ],
     "maps": [
       "core",
@@ -201,6 +221,21 @@
     "screen": [
       "core",
       "screen"
+    ],
+    "weather": [
+      "core",
+      "general",
+      "weather"
+    ],
+    "notes": [
+      "core",
+      "general",
+      "weather"
+    ],
+    "reminders": [
+      "core",
+      "general",
+      "weather"
     ]
   }
 }

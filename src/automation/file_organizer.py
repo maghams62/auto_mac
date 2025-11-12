@@ -19,6 +19,7 @@ import json
 import re
 
 from ..config_validator import ConfigAccessor, ConfigValidationError
+from ..utils import get_temperature_for_model
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class FileOrganizer:
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,  # Deterministic for file operations
+            temperature=get_temperature_for_model(config, default_temperature=0.0),  # Deterministic for file operations
             api_key=openai_config.get("api_key")
         )
 

@@ -33,6 +33,7 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 **Agent:** File Agent
 **Capabilities:**
 - Search for documents
+- List multiple related documents (new!)
 - Organize files by category
 - Create ZIP archives
 - Take document screenshots
@@ -44,6 +45,36 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 /files Create a ZIP of all images in Downloads
 /files Find documents about machine learning
 /files Take a screenshot of page 5 in report.pdf
+/files show all guitar tab documents
+/files list all PDF files
+/files pull up all meeting notes
+```
+
+**File Listing (New Feature):**
+The `/files` command now supports listing multiple related documents. Use keywords like "show all", "list all", "pull up all", or "find all" followed by a description to get a structured list of matching files.
+
+**Response Format:**
+When listing files, you'll receive a `file_list` response with:
+- A summary message (e.g., "Found 4 guitar tab documents")
+- A `files` array containing:
+  - `name`: Filename
+  - `path`: Full file path
+  - `score`: Similarity score (0-1)
+  - `meta`: File type and optional page count
+- Actions: "Reveal in Finder" and "Copy path" for each file
+
+**Example Response:**
+```
+Found 4 guitar tab documents
+
+📄 The Night We Met.pdf
+   Similarity: 89% • PDF • 5 pages
+   [Reveal] [Copy]
+
+📄 Hotel California.pdf
+   Similarity: 85% • PDF • 3 pages
+   [Reveal] [Copy]
+...
 ```
 
 ---
@@ -264,6 +295,37 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 /bluesky summarize "mac automation" 12h
 /bluesky post "Testing the Bluesky integration ✨"
 ```
+
+---
+
+### 📅 Calendar
+
+```
+/calendar <task>
+/cal <task>
+```
+
+**Agent:** Calendar Agent
+**Capabilities:**
+- List upcoming calendar events
+- Get details for specific events
+- Generate meeting briefs by searching indexed documents
+
+**Examples:**
+```
+/calendar List my upcoming events
+/calendar prep for Q4 Review meeting
+/calendar brief docs for Team Standup
+/calendar details for "Project Kickoff"
+```
+
+**Meeting Briefs:**
+The `/calendar prep` command automatically:
+1. Fetches event details from Calendar.app
+2. Uses LLM to generate semantic search queries from event metadata
+3. Searches your indexed documents for relevant information
+4. Creates a brief with talking points and recommended pre-reading
+5. Optionally saves the brief to Apple Notes
 
 ---
 

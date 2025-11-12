@@ -21,6 +21,7 @@ import logging
 from src.config import get_config_context
 from src.config_validator import ConfigValidationError
 from ..automation.whatsapp_controller import WhatsAppController
+from ..utils import get_temperature_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _summarize_messages_with_llm(
     openai_config = config.get("openai", {})
     llm = ChatOpenAI(
         model=openai_config.get("model", "gpt-4o"),
-        temperature=0.3,
+        temperature=get_temperature_for_model(config, default_temperature=0.3),
         max_tokens=500,
         api_key=openai_config.get("api_key")
     )
@@ -99,7 +100,7 @@ def _extract_action_items_with_llm(
     openai_config = config.get("openai", {})
     llm = ChatOpenAI(
         model=openai_config.get("model", "gpt-4o"),
-        temperature=0.2,
+        temperature=get_temperature_for_model(config, default_temperature=0.2),
         max_tokens=300,
         api_key=openai_config.get("api_key")
     )
