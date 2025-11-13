@@ -65,3 +65,17 @@ _archive/
 
 # Logs
 *.log
+data/app.log
+
+# Session data and cache
+data/sessions/
+data/cache/
+data/bluesky_state.json
+data/spotify_tokens.json
+
+# Test results
+data/test_results/results/
+mail_diagnostic_results.json
+
+# IDE
+.cursor/
