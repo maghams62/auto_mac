@@ -1,0 +1,144 @@
+# Canonical Tool Chains and Failure Patterns
+# This catalog tracks successful tool execution patterns and failure cases
+# Used to enhance planner prompts and avoid repeating mistakes
+
+canonical_chains:
+  # File search and extraction workflows
+  document_search_extract:
+    description: "Search for documents and extract relevant sections"
+    steps:
+      - tool: search_documents
+        purpose: "Find relevant documents based on semantic search"
+        inputs: ["query", "top_k"]
+        outputs: ["results", "best_result"]
+      - tool: extract_section
+        purpose: "Extract specific content from found documents"
+        inputs: ["doc_path", "content_preview"]
+        outputs: ["extracted_content", "summary"]
+        depends_on: ["search_documents"]
+      - tool: reply_to_user
+        purpose: "Format and send final response to user"
+        inputs: ["extracted_content", "summary"]
+        outputs: ["message", "status"]
+        depends_on: ["extract_section"]
+
+  # Image search workflows
+  image_search_display:
+    description: "Search for images and display results"
+    steps:
+      - tool: search_images
+        purpose: "Find images using semantic image search"
+        inputs: ["query", "top_k"]
+        outputs: ["results", "best_result"]
+      - tool: reply_to_user
+        purpose: "Display image results with thumbnails"
+        inputs: ["results"]
+        outputs: ["message", "files"]
+        depends_on: ["search_images"]
+
+  # Email workflows
+  email_processing:
+    description: "Process and respond to email requests"
+    steps:
+      - tool: read_emails
+        purpose: "Fetch and analyze emails"
+        inputs: ["query", "limit"]
+        outputs: ["emails", "summaries"]
+      - tool: compose_email
+        purpose: "Draft email response if needed"
+        inputs: ["content", "recipients"]
+        outputs: ["email_draft"]
+        depends_on: ["read_emails"]
+      - tool: send_email
+        purpose: "Send composed email"
+        inputs: ["email_draft"]
+        outputs: ["send_status"]
+        depends_on: ["compose_email"]
+      - tool: reply_to_user
+        purpose: "Confirm email processing completion"
+        inputs: ["send_status"]
+        outputs: ["message"]
+        depends_on: ["send_email"]
+
+  # Social media workflows
+  bluesky_posting:
+    description: "Create and post content to Bluesky"
+    steps:
+      - tool: compose_post
+        purpose: "Draft social media content"
+        inputs: ["content", "topic"]
+        outputs: ["post_draft"]
+      - tool: post_bluesky_update
+        purpose: "Publish to Bluesky social network"
+        inputs: ["post_draft"]
+        outputs: ["post_url", "success"]
+      - tool: reply_to_user
+        purpose: "Confirm successful posting"
+        inputs: ["post_url", "success"]
+        outputs: ["message"]
+        depends_on: ["post_bluesky_update"]
+
+# Known Failure Patterns and Avoidance Tips
+failure_patterns:
+  missing_doc_path:
+    description: "extract_section tool fails due to missing doc_path"
+    root_cause: "search_documents didn't populate best_result.doc_path"
+    symptoms:
+      - "extract_section error: doc_path not found"
+      - "KeyError: 'doc_path'"
+    prevention_tips:
+      - "Always verify search_documents returns valid best_result with doc_path"
+      - "Add fallback: if no best_result, use first result from results array"
+      - "Validate file paths exist before passing to extract_section"
+    example_fix: |
+      # In search_documents tool:
+      best_result = results[0] if results else None
+      if best_result and 'doc_path' not in best_result:
+          # Find result with valid doc_path
+          for result in results:
+              if result.get('doc_path'):
+                  best_result = result
+                  break
+
+  missing_reply_to_user:
+    description: "Agent completes execution but never sends reply_to_user"
+    root_cause: "Tool chain breaks before reaching reply step"
+    symptoms:
+      - "[FINALIZE] ❌ No reply found in step_results"
+      - "UI shows 'processing' indefinitely"
+    prevention_tips:
+      - "Ensure reply_to_user is always the final step in plans"
+      - "Add dependency enforcement: reply_to_user depends on all other steps"
+      - "Use guaranteed fallback in finalize() when reply missing"
+    example_fix: |
+      # In planner, ensure reply is always included:
+      if not any(step.get('action') == 'reply_to_user' for step in plan_steps):
+          plan_steps.append({
+              'id': len(plan_steps),
+              'action': 'reply_to_user',
+              'parameters': {},
+              'dependencies': [i for i in range(len(plan_steps))]
+          })
+
+  agent_import_failures:
+    description: "Missing agent class causes ImportError during execution"
+    root_cause: "Agent registry references non-existent classes"
+    symptoms:
+      - "cannot import name 'XxxAgent'"
+      - "Agent instantiation fails silently"
+    prevention_tips:
+      - "Validate agent registry on startup"
+      - "Add health checks for all agent classes"
+      - "Use lazy loading with error handling"
+    example_fix: |
+      # In agent_registry.py startup:
+      for agent_name, agent_class in self._agent_classes.items():
+          try:
+              # Test import
+              getattr(__import__(agent_class.__module__), agent_class.__name__)
+          except (ImportError, AttributeError) as e:
+              logger.error(f"Agent {agent_name} import failed: {e}")
+              raise
+
+# Dynamic failure examples (populated by pattern watcher)
+dynamic_failures: []

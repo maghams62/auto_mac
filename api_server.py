@@ -38,12 +38,26 @@ from src.memory import SessionManager
 from src.utils import load_config, save_config
 from src.workflow import WorkflowOrchestrator
 
+# Initialize telemetry
+from telemetry import init_telemetry
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(title="Cerebro OS API")
+
+# Initialize telemetry (must happen before FastAPI instrumentation)
+init_telemetry()
+
+# Add OpenTelemetry FastAPI instrumentation
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("[TELEMETRY] FastAPI instrumentation enabled")
+except ImportError:
+    logger.warning("[TELEMETRY] OpenTelemetry FastAPI instrumentation not available")
 
 # Configure CORS for frontend (allow configurable origins with sensible defaults)
 default_allowed_origins = [
@@ -111,13 +125,38 @@ class ConnectionManager:
         self.websocket_to_session: Dict[WebSocket, str] = {}
         # Async lock for thread-safe access to connection dictionaries
         self._lock = asyncio.Lock()
+        # Message queue for failed sends (session_id -> list of messages)
+        self._failed_messages: Dict[str, List[Dict[str, Any]]] = {}
+        # Maximum retry attempts
+        self._max_retries = 3
+        # Retry delays in seconds (exponential backoff)
+        self._retry_delays = [0.1, 0.5, 2.0]
 
     async def connect(self, websocket: WebSocket, session_id: str):
-        await websocket.accept()
-        async with self._lock:
-            self.active_connections[session_id] = websocket
-            self.websocket_to_session[websocket] = session_id
-            logger.info(f"Client connected with session {session_id}. Total connections: {len(self.active_connections)}")
+        try:
+            await websocket.accept()
+            async with self._lock:
+                self.active_connections[session_id] = websocket
+                self.websocket_to_session[websocket] = session_id
+                logger.info(f"Client connected with session {session_id}. Total connections: {len(self.active_connections)}")
+                # Try to send any queued messages for this session
+                if session_id in self._failed_messages:
+                    queued = self._failed_messages.pop(session_id, [])
+                    if queued:
+                        logger.info(f"[CONNECTION MANAGER] 🔄 Sending {len(queued)} queued messages for session {session_id} on reconnect")
+                        for i, msg in enumerate(queued):
+                            msg_type = msg.get('type', 'unknown')
+                            has_files = 'files' in msg
+                            logger.info(f"[CONNECTION MANAGER] Flushing queued message {i+1}/{len(queued)}: type={msg_type}, has_files={has_files}")
+                            success = await self.send_message(msg, websocket)
+                            if not success:
+                                logger.warning(f"[CONNECTION MANAGER] Failed to send queued message {i+1}, re-queuing")
+                                if session_id not in self._failed_messages:
+                                    self._failed_messages[session_id] = []
+                                self._failed_messages[session_id].append(msg)
+        except Exception as e:
+            logger.error(f"Error accepting WebSocket connection for session {session_id}: {e}", exc_info=True)
+            raise
 
     async def disconnect(self, websocket: WebSocket):
         async with self._lock:
@@ -125,13 +164,83 @@ class ConnectionManager:
             if session_id:
                 self.active_connections.pop(session_id, None)
                 self.websocket_to_session.pop(websocket, None)
+                # Clear failed messages for this session
+                self._failed_messages.pop(session_id, None)
                 logger.info(f"Client disconnected (session: {session_id}). Total connections: {len(self.active_connections)}")
 
-    async def send_message(self, message: dict, websocket: WebSocket):
+    def _is_websocket_healthy(self, websocket: WebSocket) -> bool:
+        """Check if WebSocket is in a valid state for sending."""
+        try:
+            # FastAPI WebSocket doesn't expose readyState directly, but we can check client_state
+            # If the connection is closed, accessing it will raise an exception
+            return websocket.client_state.name == "CONNECTED"
+        except Exception:
+            return False
+
+    async def send_message(self, message: dict, websocket: WebSocket, retry_count: int = 0) -> bool:
+        """
+        Send a message with retry logic and guaranteed delivery.
+        
+        Args:
+            message: Message dict to send
+            websocket: WebSocket connection
+            retry_count: Current retry attempt (internal use)
+            
+        Returns:
+            True if message was sent successfully, False otherwise
+        """
+        # Check WebSocket health before attempting to send
+        if not self._is_websocket_healthy(websocket):
+            # Get session_id for queueing
+            async with self._lock:
+                session_id = self.websocket_to_session.get(websocket)
+            
+            if session_id:
+                # Queue message for later delivery
+                if session_id not in self._failed_messages:
+                    self._failed_messages[session_id] = []
+                self._failed_messages[session_id].append(message)
+                logger.warning(f"[CONNECTION MANAGER] WebSocket unhealthy for session {session_id}, queued message for later delivery (queue size: {len(self._failed_messages[session_id])})")
+                logger.debug(f"[CONNECTION MANAGER] Queued message type: {message.get('type', 'unknown')}, has_files: {'files' in message}")
+            else:
+                logger.error("[CONNECTION MANAGER] WebSocket unhealthy and no session_id found, message lost")
+            return False
+        
         try:
             await websocket.send_json(message)
+            logger.debug(f"[CONNECTION MANAGER] Message sent successfully (retry: {retry_count})")
+            return True
         except Exception as e:
-            logger.error(f"Error sending message: {e}")
+            logger.warning(f"[CONNECTION MANAGER] Error sending message (attempt {retry_count + 1}/{self._max_retries}): {e}")
+            
+            # Retry with exponential backoff
+            if retry_count < self._max_retries - 1:
+                delay = self._retry_delays[min(retry_count, len(self._retry_delays) - 1)]
+                await asyncio.sleep(delay)
+                
+                # Check if WebSocket is still healthy before retry
+                if self._is_websocket_healthy(websocket):
+                    return await self.send_message(message, websocket, retry_count + 1)
+                else:
+                    logger.warning(f"[CONNECTION MANAGER] WebSocket became unhealthy during retry, queueing message")
+                    # Queue for later delivery
+                    async with self._lock:
+                        session_id = self.websocket_to_session.get(websocket)
+                        if session_id:
+                            if session_id not in self._failed_messages:
+                                self._failed_messages[session_id] = []
+                            self._failed_messages[session_id].append(message)
+                    return False
+            else:
+                # Max retries exceeded, queue message
+                logger.error(f"[CONNECTION MANAGER] Max retries exceeded for message, queueing for later delivery")
+                async with self._lock:
+                    session_id = self.websocket_to_session.get(websocket)
+                    if session_id:
+                        if session_id not in self._failed_messages:
+                            self._failed_messages[session_id] = []
+                        self._failed_messages[session_id].append(message)
+                return False
 
     async def broadcast(self, message: dict):
         async with self._lock:
@@ -140,7 +249,7 @@ class ConnectionManager:
         
         for connection in connections:
             try:
-                await connection.send_json(message)
+                await self.send_message(message, connection)
             except Exception as e:
                 logger.error(f"Error broadcasting message: {e}")
 
@@ -158,6 +267,13 @@ bluesky_notifications = BlueskyNotificationService(
 _session_tasks_lock = asyncio.Lock()
 session_tasks: Dict[str, asyncio.Task] = {}
 session_cancel_events: Dict[str, Event] = {}
+
+# Per-session execution queues to ensure sequential processing
+# Each session has a queue that processes one request at a time
+# and waits for the response to be fully delivered before accepting the next
+_session_queues: Dict[str, asyncio.Queue] = {}
+_session_queue_locks: Dict[str, asyncio.Lock] = {}
+_session_response_acks: Dict[str, asyncio.Event] = {}  # Tracks when response is delivered
 
 # Pydantic models for API
 class ChatMessage(BaseModel):
@@ -323,7 +439,14 @@ async def process_agent_request(
         except Exception as e:
             logger.error(f"Failed to send step failed event: {e}")
 
+    # CRITICAL: Log start of agent execution to track flow
+    import time
+    execution_start_time = time.time()
+    logger.info(f"[API SERVER] Starting agent execution for session {session_id}: {user_message[:100]}...")
+    
     # Pass callbacks through run() method instead of setting on agent instance to avoid cross-talk
+    # No timeout wrapper - agent.run() now self-limits via ResultCapture mechanism
+    # Agentic tasks can run for extended periods, so we rely on manual cancellation if needed
     try:
         result = await asyncio.to_thread(
             agent.run,
@@ -336,7 +459,44 @@ async def process_agent_request(
             send_step_succeeded,
             send_step_failed
         )
+        
+        execution_duration = time.time() - execution_start_time
+        logger.info(f"[API SERVER] Agent execution completed in {execution_duration:.2f}s for session {session_id}")
+        
         result_dict = result if isinstance(result, dict) else {"message": str(result)}
+        logger.info(f"[API SERVER] Agent execution completed for session {session_id}, result keys: {list(result_dict.keys())}")
+        
+        # CRITICAL: Log step_results structure for debugging file extraction and Bluesky posts
+        if "step_results" in result_dict:
+            step_results = result_dict["step_results"]
+            logger.info(f"[API SERVER] step_results type: {type(step_results)}, keys: {list(step_results.keys()) if isinstance(step_results, dict) else 'not a dict'}")
+            for step_id, step_result in (step_results.items() if isinstance(step_results, dict) else []):
+                if isinstance(step_result, dict):
+                    step_type = step_result.get("type", "no_type")
+                    tool_name = step_result.get("tool", "no_tool")
+                    logger.info(f"[API SERVER] Step {step_id}: type='{step_type}', tool='{tool_name}', has_files={'files' in step_result}, has_results={'results' in step_result}")
+                    
+                    # Check for Bluesky post results
+                    if tool_name == "post_bluesky_update" or "bluesky" in tool_name.lower():
+                        logger.info(f"[API SERVER] 🔵 BLUESKY POST detected in step {step_id}")
+                        logger.info(f"[API SERVER] Bluesky result keys: {list(step_result.keys())}")
+                        logger.info(f"[API SERVER] Bluesky success: {step_result.get('success')}, error: {step_result.get('error')}")
+                        logger.info(f"[API SERVER] Bluesky message: {step_result.get('message', 'N/A')[:100]}")
+                        logger.info(f"[API SERVER] Bluesky URL: {step_result.get('url', 'N/A')}")
+                    
+                    # Check for file_list
+                    if step_type == "file_list":
+                        files_count = len(step_result.get("files", [])) if isinstance(step_result.get("files"), list) else 0
+                        logger.info(f"[API SERVER] ⚠️ FILE_LIST FOUND in step {step_id} with {files_count} files!")
+                    
+                    # Check for reply_to_user
+                    if step_type == "reply" or tool_name == "reply_to_user":
+                        logger.info(f"[API SERVER] 📝 REPLY_TO_USER found in step {step_id}")
+                        logger.info(f"[API SERVER] Reply message: {step_result.get('message', 'N/A')[:100]}")
+                        logger.info(f"[API SERVER] Reply details: {step_result.get('details', 'N/A')[:100] if step_result.get('details') else 'N/A'}")
+        elif "results" in result_dict:
+            results = result_dict["results"]
+            logger.info(f"[API SERVER] results type: {type(results)}, keys: {list(results.keys()) if isinstance(results, dict) else 'not a dict'}")
         
         # Check if this is a retry_with_orchestrator result from slash command
         if isinstance(result_dict, dict) and result_dict.get("type") == "retry_with_orchestrator":
@@ -359,7 +519,10 @@ async def process_agent_request(
             # Retry via orchestrator (agent.run will handle it as natural language)
             # Pass context to orchestrator for email summarization hints
             # Also pass callback to avoid cross-talk
+            retry_start_time = time.time()
             result = await asyncio.to_thread(agent.run, original_message, session_id, cancel_event, context, send_plan_to_ui)
+            retry_duration = time.time() - retry_start_time
+            logger.info(f"[API SERVER] Retry execution completed in {retry_duration:.2f}s for session {session_id}")
             result_dict = result if isinstance(result, dict) else {"message": str(result)}
         
         result_status = result_dict.get("status", "completed")
@@ -419,64 +582,369 @@ async def process_agent_request(
                 logger.info(f"[API SERVER] Using reply_to_user message: {formatted_message[:100]}...")
             else:
                 # Fallback: Try to extract meaningful message from result structure
+                # First check for Bluesky post results
+                bluesky_post_result = None
                 if step_results_source:
-                    # Get the first result's message if available
-                    first_result = list(step_results_source.values())[0]
-                    if isinstance(first_result, dict) and "message" in first_result:
-                        formatted_message = format_result_message(first_result)
-                        logger.info(f"[API SERVER] Using fallback message from first step result")
-                    elif isinstance(first_result, dict) and "maps_url" in first_result:
-                        formatted_message = format_result_message(first_result)
-                        logger.info(f"[API SERVER] Using maps_url from first step result")
+                    for step_id, step_result in step_results_source.items():
+                        if isinstance(step_result, dict):
+                            tool_name = step_result.get("tool", "")
+                            # Check if this is a Bluesky post result
+                            if tool_name == "post_bluesky_update" or (step_result.get("success") and step_result.get("url") and "bsky.app" in str(step_result.get("url", ""))):
+                                bluesky_post_result = step_result
+                                logger.info(f"[API SERVER] Found Bluesky post result in step {step_id}")
+                                break
+                
+                if bluesky_post_result:
+                    # Format Bluesky post result
+                    if bluesky_post_result.get("success"):
+                        url = bluesky_post_result.get("url", "")
+                        message_text = bluesky_post_result.get("message", "")
+                        if url:
+                            formatted_message = f"{message_text}\n\nPost URL: {url}" if message_text else f"Posted to Bluesky: {url}"
+                        else:
+                            formatted_message = message_text or "Posted to Bluesky successfully"
+                        logger.info(f"[API SERVER] Using Bluesky post result message: {formatted_message[:100]}...")
+                    elif bluesky_post_result.get("error"):
+                        error_msg = bluesky_post_result.get("error_message", "Unknown error")
+                        formatted_message = f"Failed to post to Bluesky: {error_msg}"
+                        logger.info(f"[API SERVER] Using Bluesky post error message: {formatted_message[:100]}...")
+                
+                # If no Bluesky result, try other fallbacks
+                if not formatted_message or formatted_message == json.dumps(result_dict, indent=2):
+                    if step_results_source:
+                        # Get the first result's message if available
+                        first_result = list(step_results_source.values())[0]
+                        if isinstance(first_result, dict) and "message" in first_result:
+                            formatted_message = format_result_message(first_result)
+                            logger.info(f"[API SERVER] Using fallback message from first step result")
+                        elif isinstance(first_result, dict) and "maps_url" in first_result:
+                            formatted_message = format_result_message(first_result)
+                            logger.info(f"[API SERVER] Using maps_url from first step result")
+        
+        # CRITICAL: Ensure formatted_message is never empty before sending response
+        # This guarantees a response is always sent, preventing stuck "processing" state
+        if not formatted_message or formatted_message.strip() == "" or formatted_message == json.dumps(result_dict, indent=2):
+            # Generate a fallback message from available data
+            goal = result_dict.get("goal", "Task")
+            status = result_dict.get("status", "completed")
+            step_results_source = result_dict.get("step_results") or result_dict.get("results") or {}
+            
+            # Try to extract any meaningful message from step results
+            extracted_messages = []
+            for step_id, step_result in step_results_source.items():
+                if isinstance(step_result, dict):
+                    msg = (
+                        step_result.get("message") or
+                        step_result.get("summary") or
+                        step_result.get("content") or
+                        step_result.get("response")
+                    )
+                    if msg and msg.strip():
+                        extracted_messages.append(msg)
+            
+            if extracted_messages:
+                formatted_message = "\n".join(extracted_messages[:3])  # Limit to first 3 messages
+                logger.info(f"[API SERVER] Generated fallback message from {len(extracted_messages)} step results")
+            elif result_dict.get("message"):
+                formatted_message = result_dict.get("message")
+                logger.info("[API SERVER] Using top-level message from result_dict")
+            else:
+                # Ultimate fallback: create a generic message based on status
+                if status == "error":
+                    formatted_message = f"❌ {goal} encountered an error. Please check the details."
+                elif status == "cancelled":
+                    formatted_message = f"⏸️ {goal} was cancelled."
+                else:
+                    steps_count = len(step_results_source)
+                    if steps_count > 0:
+                        completed = sum(1 for r in step_results_source.values() 
+                                      if isinstance(r, dict) and not r.get("error"))
+                        formatted_message = f"✅ {goal} completed ({completed}/{steps_count} steps)."
+                    else:
+                        formatted_message = f"✅ {goal} completed."
+                logger.warning(f"[API SERVER] Generated ultimate fallback message: {formatted_message[:100]}...")
 
         # Extract files/documents array from result if present (for file_list and document_list type responses)
         # Also check for files array from explain pipeline results
+        # CRITICAL: Extract file_list from ALL steps, not just the first match, to ensure files are displayed
+        # even when reply_to_user fails
         files_array = None
         documents_array = None
         
-        # Check for files array in explain pipeline results (from explain command)
-        if "final_result" in result_dict:
-            final_result = result_dict["final_result"]
-            if isinstance(final_result, dict) and "files" in final_result:
-                files_array = final_result["files"]
-                logger.info(f"[API SERVER] Found files array in final_result: {len(files_array)} files")
+        # Helper function to validate and sanitize files array
+        def validate_files_array(files: Any) -> Optional[List[Dict[str, Any]]]:
+            """Validate and sanitize files array, return None if invalid."""
+            if files is None:
+                return None
+            if not isinstance(files, list):
+                logger.warning(f"[API SERVER] Files array is not a list: {type(files)}")
+                return None
+            if len(files) == 0:
+                return None
+            
+            # Validate each file entry
+            validated_files = []
+            for i, file_entry in enumerate(files):
+                try:
+                    if not isinstance(file_entry, dict):
+                        logger.warning(f"[API SERVER] File entry {i} is not a dict, skipping")
+                        continue
+                    
+                    # Ensure required fields exist
+                    if "path" not in file_entry and "name" not in file_entry:
+                        logger.warning(f"[API SERVER] File entry {i} missing path/name, skipping")
+                        continue
+                    
+                    # Sanitize file entry
+                    sanitized = {
+                        "name": file_entry.get("name") or Path(file_entry.get("path", "")).name or "Unknown",
+                        "path": file_entry.get("path", ""),
+                        "score": file_entry.get("score", 0.0),
+                    }
+                    
+                    # Copy optional fields
+                    for key in ["result_type", "thumbnail_url", "preview_url", "meta"]:
+                        if key in file_entry:
+                            sanitized[key] = file_entry[key]
+                    
+                    validated_files.append(sanitized)
+                except Exception as e:
+                    logger.warning(f"[API SERVER] Error validating file entry {i}: {e}, skipping")
+                    continue
+            
+            if len(validated_files) == 0:
+                logger.warning(f"[API SERVER] No valid files after validation")
+                return None
+            
+            return validated_files
         
-        # Check step_results/results for file_list/document_list types
-        if files_array is None:
-            if "step_results" in result_dict and result_dict["step_results"]:
-                for step_result in result_dict["step_results"].values():
-                    if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
-                        files_array = step_result["files"]
-                        break
-                    elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
-                        documents_array = step_result["documents"]
-                        break
-                    # Also check for files array directly in explain pipeline results
-                    elif isinstance(step_result, dict) and "files" in step_result and step_result.get("rag_pipeline"):
-                        files_array = step_result["files"]
-                        logger.info(f"[API SERVER] Found files array in explain pipeline result: {len(files_array)} files")
-                        break
-            elif "results" in result_dict and result_dict["results"]:
-                for step_result in result_dict["results"].values():
-                    if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
-                        files_array = step_result["files"]
-                        break
-                    elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
-                        documents_array = step_result["documents"]
-                        break
-                    # Also check for files array directly in explain pipeline results
-                    elif isinstance(step_result, dict) and "files" in step_result and step_result.get("rag_pipeline"):
-                        files_array = step_result["files"]
-                        logger.info(f"[API SERVER] Found files array in explain pipeline result: {len(files_array)} files")
-                        break
-            elif result_dict.get("type") == "file_list" and "files" in result_dict:
-                files_array = result_dict["files"]
-            elif result_dict.get("type") == "document_list" and "documents" in result_dict:
-                documents_array = result_dict["documents"]
-            # Check top-level files array from explain pipeline
-            elif "files" in result_dict and result_dict.get("rag_pipeline"):
-                files_array = result_dict["files"]
-                logger.info(f"[API SERVER] Found files array at top level from explain pipeline: {len(files_array)} files")
+        # Wrap entire file extraction in error boundary
+        try:
+            logger.info(f"[API SERVER] Starting file_list extraction from result_dict keys: {list(result_dict.keys())}")
+            
+            # Check for files array in explain pipeline results (from explain command)
+            try:
+                if "final_result" in result_dict:
+                    final_result = result_dict["final_result"]
+                    if isinstance(final_result, dict) and "files" in final_result:
+                        validated = validate_files_array(final_result["files"])
+                        if validated:
+                            files_array = validated
+                            logger.info(f"[API SERVER] Found files array in final_result: {len(files_array)} files")
+            except Exception as e:
+                logger.warning(f"[API SERVER] Error extracting files from final_result: {e}", exc_info=True)
+        
+            # CRITICAL: Check ALL step_results for file_list, don't break on first match
+            # This ensures we find file_list even if it's in an earlier step and reply_to_user fails
+            # Check both "step_results" and "results" (legacy key)
+            step_results_source = result_dict.get("step_results") or result_dict.get("results") or {}
+            
+            logger.info(f"[API SERVER] step_results_source type: {type(step_results_source)}, is_dict: {isinstance(step_results_source, dict)}, length: {len(step_results_source) if isinstance(step_results_source, dict) else 'N/A'}")
+            
+            # Also check if step_results is nested in final_result
+            if not step_results_source and "final_result" in result_dict:
+                final_result = result_dict["final_result"]
+                if isinstance(final_result, dict):
+                    step_results_source = final_result.get("step_results") or final_result.get("results") or {}
+                    if step_results_source:
+                        logger.info(f"[API SERVER] Found step_results in final_result")
+            
+            if step_results_source:
+                try:
+                    logger.info(f"[API SERVER] Checking {len(step_results_source)} step results for file_list/document_list")
+                    logger.info(f"[API SERVER] Step results keys (step_ids): {list(step_results_source.keys())}")
+                    
+                    # Log structure of each step_result for debugging
+                    for step_id, step_result in step_results_source.items():
+                        try:
+                            if isinstance(step_result, dict):
+                                step_type = step_result.get("type", "no_type_field")
+                                step_keys = list(step_result.keys())
+                                logger.info(f"[API SERVER] Step {step_id}: type='{step_type}', keys={step_keys}")
+                                if step_type == "file_list":
+                                    files_in_step = step_result.get("files", [])
+                                    logger.info(f"[API SERVER] Step {step_id} is file_list with {len(files_in_step) if isinstance(files_in_step, list) else 'non-list'} files")
+                            else:
+                                logger.info(f"[API SERVER] Step {step_id}: not a dict, type={type(step_result)}")
+                        except Exception as e:
+                            logger.warning(f"[API SERVER] Error logging step {step_id}: {e}")
+                    
+                    # First pass: Look for file_list in ALL steps (prioritize file_list over document_list)
+                    for step_id, step_result in step_results_source.items():
+                        try:
+                            if not isinstance(step_result, dict):
+                                logger.debug(f"[API SERVER] Skipping step {step_id} - not a dict")
+                                continue
+                            
+                            # Check for file_list type (highest priority)
+                            if step_result.get("type") == "file_list" and "files" in step_result:
+                                found_files = step_result["files"]
+                                logger.info(f"[API SERVER] 🔍 Found file_list in step {step_id}, files type: {type(found_files)}, length: {len(found_files) if isinstance(found_files, list) else 'N/A'}")
+                                validated = validate_files_array(found_files)
+                                if validated:
+                                    files_array = validated
+                                    logger.info(f"[API SERVER] ✅ Found file_list in step_results[{step_id}]: {len(files_array)} files")
+                                    logger.info(f"[API SERVER] First file in array: {list(files_array[0].keys()) if files_array else 'empty'}")
+                                    # Don't break - continue checking to see if there are multiple file_list results
+                                else:
+                                    logger.warning(f"[API SERVER] Step {step_id} has file_list type but validation failed")
+                                    logger.warning(f"[API SERVER] Files array details: type={type(found_files)}, is_list={isinstance(found_files, list)}, length={len(found_files) if isinstance(found_files, list) else 'N/A'}")
+                                    if isinstance(found_files, list) and len(found_files) > 0:
+                                        logger.warning(f"[API SERVER] First file entry: {found_files[0] if found_files else 'empty'}")
+                            
+                            # Check for document_list type (only if files_array not found yet)
+                            elif files_array is None and step_result.get("type") == "document_list" and "documents" in step_result:
+                                found_docs = step_result["documents"]
+                                if isinstance(found_docs, list) and len(found_docs) > 0:
+                                    documents_array = found_docs
+                                    logger.info(f"[API SERVER] ✅ Found document_list in step_results[{step_id}]: {len(documents_array)} documents")
+                            
+                            # Also check for files array directly in explain pipeline results
+                            elif step_result.get("rag_pipeline") and "files" in step_result:
+                                found_files = step_result["files"]
+                                validated = validate_files_array(found_files)
+                                if validated:
+                                    files_array = validated
+                                    logger.info(f"[API SERVER] ✅ Found files array in explain pipeline result (step {step_id}): {len(files_array)} files")
+                        except Exception as e:
+                            logger.warning(f"[API SERVER] Error processing step {step_id} for file extraction: {e}", exc_info=True)
+                            continue
+                except Exception as e:
+                    logger.error(f"[API SERVER] Error in step_results file extraction: {e}", exc_info=True)
+            
+            # Fallback: Check top-level result_dict
+            try:
+                if files_array is None:
+                    if result_dict.get("type") == "file_list" and "files" in result_dict:
+                        validated = validate_files_array(result_dict["files"])
+                        if validated:
+                            files_array = validated
+                            logger.info(f"[API SERVER] ✅ Found file_list at top level: {len(files_array)} files")
+                    elif result_dict.get("type") == "document_list" and "documents" in result_dict:
+                        documents_array = result_dict["documents"]
+                        logger.info(f"[API SERVER] ✅ Found document_list at top level: {len(documents_array)} documents")
+                    # Check top-level files array from explain pipeline
+                    elif "files" in result_dict and result_dict.get("rag_pipeline"):
+                        validated = validate_files_array(result_dict["files"])
+                        if validated:
+                            files_array = validated
+                            logger.info(f"[API SERVER] ✅ Found files array at top level from explain pipeline: {len(files_array)} files")
+            except Exception as e:
+                logger.warning(f"[API SERVER] Error in top-level file extraction: {e}", exc_info=True)
+            
+            if files_array is None and documents_array is None:
+                logger.warning(f"[API SERVER] ⚠️ No file_list or document_list found in result_dict. Step results keys: {list(step_results_source.keys()) if step_results_source else 'none'}")
+            
+            # CRITICAL: Extract image results from search_documents tool output
+            # search_documents returns a "results" array with result_type: "image" that needs to be converted to files array format
+            if files_array is None:
+                try:
+                    step_results_source = result_dict.get("step_results") or result_dict.get("results") or {}
+                    
+                    for step_id, step_result in step_results_source.items():
+                        try:
+                            if not isinstance(step_result, dict):
+                                continue
+                            
+                            # Check if this is a search_documents result (has "results" array)
+                            if "results" in step_result and isinstance(step_result["results"], list):
+                                search_results = step_result["results"]
+                                logger.info(f"[API SERVER] Found search_documents results in step {step_id}: {len(search_results)} results")
+                                
+                                # Filter for images and convert to FileList format
+                                image_files = []
+                                for result in search_results:
+                                    try:
+                                        if isinstance(result, dict) and result.get("result_type") == "image":
+                                            doc_path = result.get("doc_path", "")
+                                            doc_title = result.get("doc_title", "")
+                                            metadata = result.get("metadata", {})
+                                            
+                                            # Get file name - prefer doc_title, fallback to filename from path
+                                            if doc_title:
+                                                file_name = doc_title
+                                            elif doc_path:
+                                                try:
+                                                    file_name = Path(doc_path).name
+                                                except Exception:
+                                                    file_name = "Unknown"
+                                            else:
+                                                file_name = "Unknown"
+                                            
+                                            # Get file type from metadata or path extension
+                                            file_type = metadata.get("file_type", "")
+                                            if not file_type and doc_path:
+                                                try:
+                                                    suffix = Path(doc_path).suffix
+                                                    file_type = suffix[1:] if suffix else "image"
+                                                except Exception:
+                                                    file_type = "image"
+                                            if not file_type:
+                                                file_type = "image"
+                                            
+                                            # Convert search_documents format to FileList format
+                                            converted_file = {
+                                                "name": file_name,
+                                                "path": doc_path,
+                                                "score": result.get("relevance_score", 0.0),
+                                                "result_type": "image",
+                                                "thumbnail_url": result.get("thumbnail_url"),
+                                                "preview_url": result.get("preview_url"),
+                                                "meta": {
+                                                    "file_type": file_type,
+                                                    "width": metadata.get("width"),
+                                                    "height": metadata.get("height")
+                                                }
+                                            }
+                                            image_files.append(converted_file)
+                                    except Exception as e:
+                                        logger.warning(f"[API SERVER] Error converting image result: {e}, skipping")
+                                        continue
+                                
+                                if image_files:
+                                    validated = validate_files_array(image_files)
+                                    if validated:
+                                        files_array = validated
+                                        logger.info(f"[API SERVER] Extracted {len(image_files)} image results from search_documents and converted to files array format")
+                                        break
+                        except Exception as e:
+                            logger.warning(f"[API SERVER] Error processing search_documents step {step_id}: {e}", exc_info=True)
+                            continue
+                except Exception as e:
+                    logger.warning(f"[API SERVER] Error in search_documents image extraction: {e}", exc_info=True)
+        
+            # CRITICAL: Last resort - try to extract files from reply details (JSON string)
+            # Sometimes the LLM puts file_list data in reply details as JSON
+            if files_array is None:
+                try:
+                    step_results_source = result_dict.get("step_results") or result_dict.get("results") or {}
+                    for step_id, step_result in step_results_source.items():
+                        if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                            details = step_result.get("details", "")
+                            if details and isinstance(details, str):
+                                try:
+                                    # Try to parse details as JSON
+                                    parsed_details = json.loads(details)
+                                    if isinstance(parsed_details, list) and len(parsed_details) > 0:
+                                        # Check if it looks like a files array
+                                        first_item = parsed_details[0]
+                                        if isinstance(first_item, dict) and ("name" in first_item or "path" in first_item):
+                                            validated = validate_files_array(parsed_details)
+                                            if validated:
+                                                files_array = validated
+                                                logger.info(f"[API SERVER] ✅ Extracted {len(files_array)} files from reply details JSON in step {step_id}")
+                                                break
+                                except (json.JSONDecodeError, Exception) as e:
+                                    logger.debug(f"[API SERVER] Could not parse reply details as JSON in step {step_id}: {e}")
+                                    continue
+                except Exception as e:
+                    logger.warning(f"[API SERVER] Error extracting files from reply details: {e}", exc_info=True)
+        
+        except Exception as e:
+            logger.error(f"[API SERVER] CRITICAL: Error in file extraction logic: {e}", exc_info=True)
+            # Continue with response even if file extraction failed
+            files_array = None
+            documents_array = None
 
         # Extract completion_event from reply results if present
         completion_event = None
@@ -506,17 +974,121 @@ async def process_agent_request(
         # Add files array if present
         if files_array is not None:
             response_payload["files"] = files_array
+            logger.info(f"[API SERVER] ✅ Added {len(files_array)} files to response payload")
+            if files_array:
+                logger.info(f"[API SERVER] First file in payload: {list(files_array[0].keys()) if files_array else 'empty'}")
+        else:
+            logger.info(f"[API SERVER] No files_array to add to response payload")
 
         # Add documents array if present
         if documents_array is not None:
             response_payload["documents"] = documents_array
+            logger.info(f"[API SERVER] ✅ Added {len(documents_array)} documents to response payload")
+        else:
+            logger.info(f"[API SERVER] No documents_array to add to response payload")
 
         # Add completion_event if present (for rich UI feedback)
         if completion_event is not None:
             response_payload["completion_event"] = completion_event
             logger.info(f"[API SERVER] Including completion_event: {completion_event.get('action_type')}")
 
-        await manager.send_message(response_payload, websocket)
+        # CRITICAL: Validate response payload before sending
+        def validate_response_payload(payload: dict) -> tuple:
+            """Validate response payload structure and return (is_valid, error_message)."""
+            if not isinstance(payload, dict):
+                return False, "Payload is not a dictionary"
+            
+            # Required fields
+            if "type" not in payload:
+                return False, "Missing required field: type"
+            if "message" not in payload:
+                return False, "Missing required field: message"
+            if "timestamp" not in payload:
+                return False, "Missing required field: timestamp"
+            
+            # Validate message is not empty
+            if not payload.get("message") or not str(payload["message"]).strip():
+                return False, "Message field is empty"
+            
+            # Validate files array if present
+            if "files" in payload:
+                files = payload["files"]
+                if not isinstance(files, list):
+                    return False, "Files field must be a list"
+                # Validate each file entry
+                for i, file_entry in enumerate(files):
+                    if not isinstance(file_entry, dict):
+                        return False, f"File entry {i} is not a dictionary"
+                    if "path" not in file_entry and "name" not in file_entry:
+                        return False, f"File entry {i} missing required fields (path or name)"
+            
+            # Validate documents array if present
+            if "documents" in payload:
+                docs = payload["documents"]
+                if not isinstance(docs, list):
+                    return False, "Documents field must be a list"
+            
+            return True, ""
+        
+        # Validate payload
+        is_valid, validation_error = validate_response_payload(response_payload)
+        if not is_valid:
+            logger.error(f"[API SERVER] ❌ Response payload validation failed: {validation_error}")
+            logger.error(f"[API SERVER] Payload structure: {json.dumps(response_payload, indent=2, default=str)}")
+            # Create a minimal valid payload as fallback
+            response_payload = {
+                "type": "response",
+                "message": formatted_message or "Task completed, but response formatting encountered an error.",
+                "status": result_status,
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat(),
+                "validation_error": validation_error
+            }
+            logger.warning(f"[API SERVER] Using fallback payload after validation failure")
+        
+        # CRITICAL: Log complete response payload structure before sending
+        logger.info(f"[API SERVER] ========== RESPONSE PAYLOAD STRUCTURE ==========")
+        logger.info(f"[API SERVER] Response payload keys: {list(response_payload.keys())}")
+        logger.info(f"[API SERVER] Response type: {response_payload.get('type')}")
+        logger.info(f"[API SERVER] Response status: {response_payload.get('status')}")
+        logger.info(f"[API SERVER] Has files: {'files' in response_payload}")
+        if "files" in response_payload:
+            files_in_payload = response_payload["files"]
+            logger.info(f"[API SERVER] Files in payload: count={len(files_in_payload) if isinstance(files_in_payload, list) else 'non-list'}, type={type(files_in_payload)}")
+            if isinstance(files_in_payload, list) and len(files_in_payload) > 0:
+                logger.info(f"[API SERVER] First file: name={files_in_payload[0].get('name', 'N/A')}, path={files_in_payload[0].get('path', 'N/A')[:50]}")
+        logger.info(f"[API SERVER] Has documents: {'documents' in response_payload}")
+        logger.info(f"[API SERVER] Message length: {len(formatted_message)}")
+        logger.info(f"[API SERVER] Message preview: {formatted_message[:200] if formatted_message else 'EMPTY'}")
+        logger.info(f"[API SERVER] =================================================")
+        
+        # CRITICAL: Log before sending response to track response flow
+        logger.info(f"[API SERVER] Sending response to user (session: {session_id}, status: {result_status}, message length: {len(formatted_message)})")
+        
+        # Send response with guaranteed delivery
+        send_success = await manager.send_message(response_payload, websocket)
+        if send_success:
+            logger.info(f"[API SERVER] ✅ Response sent successfully to session {session_id}")
+        else:
+            logger.error(f"[API SERVER] ❌ Failed to send response to session {session_id} (message queued for retry)")
+            # Try to send a minimal error notification as immediate fallback
+            try:
+                minimal_payload = {
+                    "type": "status",
+                    "message": "Response is being prepared, please wait...",
+                    "status": "processing",
+                    "session_id": session_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                await manager.send_message(minimal_payload, websocket)
+            except Exception as fallback_error:
+                logger.error(f"[API SERVER] ❌ Failed to send fallback status message: {fallback_error}", exc_info=True)
+        
+        # Signal that response has been delivered - allows next request to be processed
+        async with _session_tasks_lock:
+            if session_id in _session_response_acks:
+                _session_response_acks[session_id].set()
+                logger.info(f"[API SERVER] Response delivery acknowledged for session {session_id}")
 
         if result_status == "cancelled":
             await manager.send_message({
@@ -525,36 +1097,77 @@ async def process_agent_request(
                 "message": result_dict.get("message", "Execution cancelled."),
                 "timestamp": datetime.now().isoformat()
             }, websocket)
+            
+            # Signal response delivered for cancellation
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].set()
+                    logger.info(f"[API SERVER] Cancellation response acknowledged for session {session_id}")
 
     except asyncio.CancelledError:
-        logger.info(f"Agent task cancelled for session {session_id}")
-        # Send plan_finalize event for cancellation
-        await manager.send_message({
-            "type": "plan_finalize",
-            "status": "cancelled",
-            "timestamp": datetime.now().isoformat(),
-            "summary": {"reason": "user_cancelled"}
-        }, websocket)
-        await manager.send_message({
-            "type": "status",
-            "status": "cancelled",
-            "message": "Execution cancelled.",
-            "timestamp": datetime.now().isoformat()
-        }, websocket)
+        logger.info(f"[API SERVER] Agent task cancelled for session {session_id}")
+        # CRITICAL: Always send cancellation response before cleanup
+        try:
+            # Send plan_finalize event for cancellation
+            await manager.send_message({
+                "type": "plan_finalize",
+                "status": "cancelled",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {"reason": "user_cancelled"}
+            }, websocket)
+            await manager.send_message({
+                "type": "status",
+                "status": "cancelled",
+                "message": "Execution cancelled.",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }, websocket)
+            logger.info(f"[API SERVER] ✅ Cancellation response sent to session {session_id}")
+            
+            # Signal response delivered for cancellation
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].set()
+                    logger.info(f"[API SERVER] Cancellation response acknowledged for session {session_id}")
+        except Exception as send_error:
+            logger.error(f"[API SERVER] ❌ Failed to send cancellation response to session {session_id}: {send_error}", exc_info=True)
+            # Still signal ack to prevent deadlock
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].set()
     except Exception as e:
-        logger.error(f"Error executing task: {e}")
-        # Send plan_finalize event for errors
-        await manager.send_message({
-            "type": "plan_finalize",
-            "status": "error",
-            "timestamp": datetime.now().isoformat(),
-            "summary": {"error": str(e)}
-        }, websocket)
-        await manager.send_message({
-            "type": "error",
-            "message": f"Error: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }, websocket)
+        logger.error(f"[API SERVER] Error executing task for session {session_id}: {e}", exc_info=True)
+        # CRITICAL: Always send error response before cleanup to prevent stuck state
+        try:
+            # Send plan_finalize event for errors
+            await manager.send_message({
+                "type": "plan_finalize",
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "summary": {"error": str(e)}
+            }, websocket)
+            
+            # Send error response message
+            await manager.send_message({
+                "type": "error",
+                "message": f"Error: {str(e)}",
+                "status": "error",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }, websocket)
+            logger.info(f"[API SERVER] ✅ Error response sent to session {session_id}")
+            
+            # Signal response delivered for error
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].set()
+                    logger.info(f"[API SERVER] Error response acknowledged for session {session_id}")
+        except Exception as send_error:
+            logger.error(f"[API SERVER] ❌ Failed to send error response to session {session_id}: {send_error}", exc_info=True)
+            # Still signal ack to prevent deadlock
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].set()
     finally:
         async with _session_tasks_lock:
             session_tasks.pop(session_id, None)
@@ -1138,6 +1751,11 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
         logger.info(f"WebSocket connection established for session {session_id}")
     except Exception as e:
         logger.error(f"Error accepting WebSocket connection: {e}", exc_info=True)
+        # Try to send error message before closing
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except:
+            pass
         return
 
     # Get session memory
@@ -1396,29 +2014,70 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                 logger.info(f"Session cleared successfully for session {session_id}")
                 continue
 
-            # Atomic check-and-create task pattern
+            # Ensure sequential processing: wait for previous request to complete and response to be delivered
             async with _session_tasks_lock:
+                # Initialize queue and locks for this session if needed
+                if session_id not in _session_queues:
+                    _session_queues[session_id] = asyncio.Queue()
+                    _session_queue_locks[session_id] = asyncio.Lock()
+                    _session_response_acks[session_id] = asyncio.Event()
+                    _session_response_acks[session_id].set()  # Initially ready
+                
+                # Check if there's an active task
                 if session_id in session_tasks:
                     existing_task = session_tasks[session_id]
                     if existing_task and not existing_task.done():
-                        # Release lock before sending message
-                        has_active = True
+                        # Wait for response to be delivered before accepting new request
+                        ack_event = _session_response_acks[session_id]
+                        if not ack_event.is_set():
+                            logger.info(f"[API SERVER] Waiting for previous response to be delivered for session {session_id}")
+                            # Release lock before waiting
+                            pass
+                        else:
+                            # Task is done but cleanup hasn't happened yet - wait a bit
+                            has_active = True
                     else:
                         # Clean up done task
                         session_tasks.pop(session_id, None)
                         session_cancel_events.pop(session_id, None)
+                        _session_response_acks[session_id].set()  # Ready for next request
                         has_active = False
                 else:
                     has_active = False
             
+            # If there's an active task, wait for it to complete and response to be delivered
             if has_active:
-                await manager.send_message({
-                    "type": "status",
-                    "status": "processing",
-                    "message": "Still working on your previous request. Please wait or press Stop.",
-                    "timestamp": datetime.now().isoformat()
-                }, websocket)
-                continue
+                ack_event = _session_response_acks.get(session_id)
+                if ack_event and not ack_event.is_set():
+                    # Wait for response delivery (with timeout to prevent infinite wait)
+                    try:
+                        await asyncio.wait_for(ack_event.wait(), timeout=300.0)  # 5 min max wait
+                        logger.info(f"[API SERVER] Previous response delivered, processing new request for session {session_id}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[API SERVER] Timeout waiting for response delivery for session {session_id}, proceeding anyway")
+                
+                # Check again if task is still active
+                async with _session_tasks_lock:
+                    if session_id in session_tasks:
+                        existing_task = session_tasks[session_id]
+                        if existing_task and not existing_task.done():
+                            await manager.send_message({
+                                "type": "status",
+                                "status": "processing",
+                                "message": "Still working on your previous request. Please wait or press Stop.",
+                                "timestamp": datetime.now().isoformat()
+                            }, websocket)
+                            continue
+                        else:
+                            # Task completed while we waited - clean up
+                            session_tasks.pop(session_id, None)
+                            session_cancel_events.pop(session_id, None)
+                            _session_response_acks[session_id].set()
+
+            # Reset ack event for this new request
+            async with _session_tasks_lock:
+                if session_id in _session_response_acks:
+                    _session_response_acks[session_id].clear()
 
             await manager.send_message({
                 "type": "status",
@@ -1450,6 +2109,9 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                 cleanup_event.set()
             session_tasks.pop(session_id, None)
             session_cancel_events.pop(session_id, None)
+            # Ensure response ack is set so next request can proceed
+            if session_id in _session_response_acks:
+                _session_response_acks[session_id].set()
 
 @app.post("/api/reindex")
 async def reindex_documents():

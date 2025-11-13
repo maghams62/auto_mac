@@ -3,7 +3,7 @@ LangGraph agent with task decomposition and state management.
 """
 
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
-from threading import Event
+from threading import Event, Lock
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
@@ -11,16 +11,80 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import json
 import logging
 import uuid
+import time
 from pathlib import Path
 from datetime import datetime
 
 from . import ALL_AGENT_TOOLS
 from .feasibility_checker import FeasibilityChecker
 from .verifier import OutputVerifier
+from .telemetry import get_telemetry
 from ..memory import SessionManager
 from ..utils.message_personality import get_generic_success_message
+from ..utils.performance_monitor import get_performance_monitor
 
 logger = logging.getLogger(__name__)
+
+
+class ResultCapture:
+    """
+    Thread-safe result capture mechanism for LangGraph execution.
+    
+    Allows agent.run() to return as soon as finalize() sets the result,
+    even if graph.invoke() continues running in the background.
+    """
+    
+    def __init__(self):
+        self._result = None
+        self._lock = Lock()
+        self._captured = False
+        self._capture_time = None
+    
+    def set(self, result: Dict[str, Any]) -> None:
+        """Set the final result (called by finalize())."""
+        with self._lock:
+            if not self._captured:
+                self._result = result
+                self._captured = True
+                self._capture_time = time.time()
+                logger.info(f"[RESULT_CAPTURE] Result captured at {self._capture_time}")
+    
+    def wait(self, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """
+        Wait for result to be captured.
+        
+        Args:
+            timeout: Maximum time to wait in seconds. None means wait indefinitely.
+            
+        Returns:
+            The captured result dict, or None if timeout occurred.
+        """
+        start_time = time.time()
+        while True:
+            with self._lock:
+                if self._captured:
+                    elapsed = time.time() - start_time
+                    logger.info(f"[RESULT_CAPTURE] Result retrieved after {elapsed:.2f}s wait")
+                    return self._result
+            
+            if timeout is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    logger.warning(f"[RESULT_CAPTURE] Wait timed out after {timeout}s")
+                    return None
+            
+            # Small sleep to avoid busy-waiting
+            time.sleep(0.1)
+    
+    def get(self) -> Optional[Dict[str, Any]]:
+        """Get the result if it's been captured, without waiting."""
+        with self._lock:
+            return self._result if self._captured else None
+    
+    def is_captured(self) -> bool:
+        """Check if result has been captured."""
+        with self._lock:
+            return self._captured
 
 
 class AgentState(TypedDict):
@@ -64,6 +128,9 @@ class AgentState(TypedDict):
     # Reasoning trace instrumentation
     memory: Optional[Any]  # SessionMemory instance for trace instrumentation
     interaction_id: Optional[str]  # Current interaction ID for trace
+    
+    # Result capture for non-blocking execution
+    result_capture: Optional[ResultCapture]  # Thread-safe result capture mechanism
 
 
 class AutomationAgent:
@@ -158,7 +225,7 @@ class AutomationAgent:
         # For the automation agent (main planner), load "automation" agent examples
         try:
             from src.prompt_repository import PromptRepository
-            repo = PromptRepository()
+            repo = PromptRepository(config=self.config)
             few_shot_content = repo.to_prompt_block("automation")
             prompts["few_shot_examples"] = few_shot_content
             logger.info(f"[PROMPT LOADING] Loaded agent-scoped examples for 'automation' agent via PromptRepository")
@@ -185,7 +252,7 @@ class AutomationAgent:
 
         try:
             from src.prompt_repository import PromptRepository
-            repo = PromptRepository()
+            repo = PromptRepository(config=self.config)
 
             # Extract task characteristics from the user request
             task_characteristics = self._extract_task_characteristics(user_request)
@@ -324,7 +391,21 @@ class AutomationAgent:
         """
         Planning node: Decompose user request into steps.
         """
+        # Telemetry: Start planning phase span
+        correlation_id = state.get("correlation_id")
+        span = None
+        if correlation_id:
+            from telemetry.tool_helpers import create_tool_span, record_event
+            span = create_tool_span("plan_task", correlation_id)
+            span.set_attribute("phase", "planning")
+            span.set_attribute("user_request", state.get("user_request", ""))
+            record_event(span, "planning_started", {"correlation_id": correlation_id})
+
         if self._handle_cancellation(state, "planning"):
+            if span:
+                span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+                record_event(span, "planning_cancelled")
+                span.end()
             return state
         
         # Safety check: reject /clear commands (should be handled by WebSocket handler)
@@ -332,11 +413,16 @@ class AutomationAgent:
         if user_request_lowercase_only == '/clear' or user_request_lowercase_only == 'clear':
             logger.warning("Received /clear command in agent - this should be handled by WebSocket handler")
             state["status"] = "error"
-            state["final_result"] = {
+            error_result = {
                 "error": True,
                 "message": "/clear command should be handled by the WebSocket handler, not the agent. Please use /clear directly.",
                 "missing_capabilities": None
             }
+            state["final_result"] = error_result
+            # Capture error result for non-blocking return
+            result_capture = state.get("result_capture")
+            if result_capture:
+                result_capture.set(error_result)
             return state
         
         logger.info("=== PLANNING PHASE ===")
@@ -451,6 +537,14 @@ DELIVERY REQUIREMENT (AUTO-DETECTED):
         available_tools_list = "\n\n".join(tool_descriptions)
         logger.info(f"Planning with {len(ALL_AGENT_TOOLS)} available tools")
 
+        # Get recent failure avoidance tips
+        failure_tips = ""
+        try:
+            from telemetry.catalog_manager import get_planner_failure_tips
+            failure_tips = get_planner_failure_tips()
+        except Exception as e:
+            logger.debug(f"Could not load failure tips: {e}")
+
         planning_prompt = f"""
 {system_prompt}
 
@@ -464,6 +558,8 @@ AVAILABLE TOOLS (COMPLETE LIST - DO NOT HALLUCINATE OTHER TOOLS):
 {available_tools_list}
 
 {few_shot_examples}
+
+{failure_tips}
 
 {self._get_trace_summary_for_prompt(state.get("session_id"))}
 
@@ -712,12 +808,46 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 "message": f"Failed to create execution plan: {str(e)}"
             }
 
+            # Telemetry: Record planning phase failure
+            if correlation_id:
+                from telemetry.tool_helpers import set_span_error
+                if span:
+                    set_span_error(span, Exception(str(e)), {"parsing_error": True, "status": "error"})
+                    span.end()
+
+        # Telemetry: Record planning phase success
+        if correlation_id and state.get("status") != "error":
+            plan_steps = len(state.get("steps", []))
+            if span:
+                span.set_attribute("steps_created", plan_steps)
+                span.set_attribute("goal", state.get("goal", ""))
+                record_event(span, "planning_completed", {
+                    "steps_created": plan_steps,
+                    "goal": state.get("goal", "")
+                })
+                span.end()
+
         return state
 
     def execute_step(self, state: AgentState) -> AgentState:
         """
         Execution node: Execute current step.
         """
+        # Telemetry: Start step execution span
+        correlation_id = state.get("correlation_id")
+        current_step = state.get("current_step", 0)
+        total_steps = len(state.get("steps", []))
+        step_span = None
+
+        if correlation_id:
+            from telemetry.tool_helpers import create_tool_span, record_event, log_tool_step
+            step_span = create_tool_span(f"step_{current_step}", correlation_id)
+            step_span.set_attribute("step_index", current_step)
+            step_span.set_attribute("total_steps", total_steps)
+            record_event(step_span, "step_execution_started", {
+                "step_index": current_step,
+                "total_steps": total_steps
+            })
         if self._handle_cancellation(state, "execution"):
             return state
         current_idx = state["current_step"]
@@ -987,7 +1117,43 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     except Exception as e:
                         logger.debug(f"[MEMORY INTEGRATION] Could not add reasoning context: {e}")
 
-                result = tool.invoke(tool_params)
+                # Telemetry: Record tool call start
+                tool_start_time = time.time()
+                if correlation_id:
+                    log_tool_step(tool_name, "start", {
+                        "inputs": tool_params,
+                        "step_index": current_step,
+                        "_span": step_span
+                    }, correlation_id)
+
+                try:
+                    result = tool.invoke(tool_params)
+                    execution_time_ms = (time.time() - tool_start_time) * 1000
+
+                    # Telemetry: Record tool call success
+                    if correlation_id:
+                        log_tool_step(tool_name, "success", {
+                            "inputs": tool_params,
+                            "outputs": result,
+                            "execution_time_ms": execution_time_ms,
+                            "step_index": current_step,
+                            "_span": step_span
+                        }, correlation_id)
+
+                except Exception as tool_error:
+                    execution_time_ms = (time.time() - tool_start_time) * 1000
+
+                    # Telemetry: Record tool call error
+                    if correlation_id:
+                        log_tool_step(tool_name, "error", {
+                            "inputs": tool_params,
+                            "error_message": str(tool_error),
+                            "execution_time_ms": execution_time_ms,
+                            "step_index": current_step,
+                            "_span": step_span
+                        }, correlation_id)
+                    raise
+
                 logger.info(f"Step {step['id']} result: {result}")
                 result.setdefault("tool", tool_name)
                 
@@ -1119,7 +1285,22 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 else:
                     self._clear_tool_errors(state, tool_name)
 
-                state["step_results"][step["id"]] = result
+                # CRITICAL: Log result structure before storing in step_results
+                step_id = step["id"]
+                logger.info(f"[AGENT] Storing result in step_results[{step_id}] for tool '{tool_name}'")
+                logger.info(f"[AGENT] Result type: {type(result)}, is_dict: {isinstance(result, dict)}")
+                if isinstance(result, dict):
+                    logger.info(f"[AGENT] Result keys: {list(result.keys())}")
+                    result_type = result.get("type", "unknown")
+                    logger.info(f"[AGENT] Result type field: '{result_type}'")
+                    if result_type == "file_list":
+                        files_count = len(result.get("files", []))
+                        logger.info(f"[AGENT] ✅ FILE_LIST detected! files count: {files_count}")
+                        if files_count > 0:
+                            logger.info(f"[AGENT] First file keys: {list(result['files'][0].keys()) if result['files'] else 'empty'}")
+                
+                state["step_results"][step_id] = result
+                logger.info(f"[AGENT] ✅ Result stored in step_results[{step_id}]")
 
                 # Verify output for critical steps (screenshots, attachments, etc.)
                 if self._should_verify_step(step):
@@ -1269,6 +1450,12 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         try:
             reasoning_summary = memory.get_reasoning_summary()
+            
+            # Defensive check: reasoning_summary might be a string instead of dict
+            if not isinstance(reasoning_summary, dict):
+                logger.debug(f"[FINALIZE] reasoning_summary is not a dict (type: {type(reasoning_summary)}), skipping commitment verification")
+                return
+            
             commitments = reasoning_summary.get("commitments", [])
             
             if not commitments:
@@ -1286,8 +1473,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 if commitment == "send_email":
                     # Check if compose_email was executed successfully
                     email_executed = any(
-                        result.get("tool") == "compose_email" and not result.get("error")
-                        for result in step_results.values() if isinstance(result, dict)
+                        isinstance(result, dict) and result.get("tool") == "compose_email" and not result.get("error")
+                        for result in step_results.values()
                     )
                     if not email_executed:
                         unfulfilled.append("send_email")
@@ -1296,10 +1483,11 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 elif commitment == "attach_documents":
                     # Check if email had attachments
                     email_with_attachments = any(
+                        isinstance(result, dict) and
                         result.get("tool") == "compose_email" and 
                         isinstance(result.get("parameters", {}).get("attachments"), list) and
                         len(result.get("parameters", {}).get("attachments", [])) > 0
-                        for result in step_results.values() if isinstance(result, dict)
+                        for result in step_results.values()
                     )
                     if not email_with_attachments:
                         unfulfilled.append("attach_documents")
@@ -1308,8 +1496,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 elif commitment == "play_music":
                     # Check if play_song was executed successfully
                     music_played = any(
-                        result.get("tool") == "play_song" and not result.get("error")
-                        for result in step_results.values() if isinstance(result, dict)
+                        isinstance(result, dict) and result.get("tool") == "play_song" and not result.get("error")
+                        for result in step_results.values()
                     )
                     if not music_played:
                         unfulfilled.append("play_music")
@@ -1356,12 +1544,40 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         If the final step is NOT reply_to_user, automatically execute one with a summary
         of what was accomplished. This guarantees users always get feedback.
 
+        This method ALWAYS succeeds in adding a reply, even if the tool is not found or fails.
+        It will create a manual reply payload as a last resort.
+
         Args:
             state: Current agent state
         """
         steps = state.get("steps", [])
+        step_results = state.get("step_results", {})
+        
+        # Check if we already have a reply in step_results
+        has_reply = False
+        for step_result in step_results.values():
+            if isinstance(step_result, dict) and step_result.get("type") == "reply":
+                has_reply = True
+                logger.debug("[REPLY ENFORCEMENT] ✅ Reply already exists in step_results - no enforcement needed")
+                break
+        
+        if has_reply:
+            return
+        
+        # If no steps, create a minimal reply
         if not steps:
-            logger.warning("[REPLY ENFORCEMENT] No steps in plan - cannot enforce reply_to_user")
+            logger.warning("[REPLY ENFORCEMENT] No steps in plan - creating minimal reply")
+            goal = state.get("goal", "Task")
+            synthetic_step_id = "auto_reply_0"
+            state["step_results"][synthetic_step_id] = {
+                "type": "reply",
+                "message": f"✅ {goal} completed.",
+                "details": "",
+                "artifacts": [],
+                "status": "success",
+                "error": False
+            }
+            logger.info(f"[REPLY ENFORCEMENT] ✅ Created minimal reply (step {synthetic_step_id})")
             return
 
         # Check if final step is reply_to_user
@@ -1373,7 +1589,6 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         logger.warning("[REPLY ENFORCEMENT] ❌ Final step is NOT reply_to_user - enforcing automatic reply")
 
         # Build summary from all step results
-        step_results = state.get("step_results", {})
         successful_steps = []
         failed_steps = []
         key_artifacts = []
@@ -1399,16 +1614,20 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             # Complete failure
             message = f"❌ {goal} failed to complete"
             details = f"Failed steps: {', '.join(failed_steps)}"
+            status = "error"
         elif failed_steps:
             # Partial success
             message = f"⚠️ {goal} completed with some issues"
             details = f"Completed: {', '.join(successful_steps)}\nFailed: {', '.join(failed_steps)}"
+            status = "partial_success"
         else:
             # Full success
             message = f"✅ {goal} completed successfully"
-            details = f"Steps completed: {', '.join(successful_steps)}"
+            details = f"Steps completed: {', '.join(successful_steps)}" if successful_steps else "Task completed."
+            status = "success"
 
-        # Execute reply_to_user automatically
+        # Try to execute reply_to_user tool first
+        reply_result = None
         try:
             reply_tool = self._get_tool_by_name("reply_to_user")
             if reply_tool:
@@ -1416,23 +1635,126 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     "message": message,
                     "details": details,
                     "artifacts": key_artifacts[:5],  # Limit artifacts to prevent overload
-                    "status": "error" if failed_steps and not successful_steps else "partial_success" if failed_steps else "success"
+                    "status": status
                 }
 
                 logger.info(f"[REPLY ENFORCEMENT] Executing automatic reply_to_user: {reply_params}")
 
                 reply_result = reply_tool.invoke(reply_params)
                 if reply_result.get("error"):
-                    logger.error(f"[REPLY ENFORCEMENT] Automatic reply_to_user failed: {reply_result}")
+                    logger.error(f"[REPLY ENFORCEMENT] Automatic reply_to_user returned error: {reply_result}")
+                    reply_result = None  # Fall through to manual creation
                 else:
-                    # Add the reply result to step_results with a synthetic step ID
-                    synthetic_step_id = f"auto_reply_{len(steps)}"
-                    state["step_results"][synthetic_step_id] = reply_result
-                    logger.info(f"[REPLY ENFORCEMENT] ✅ Automatic reply_to_user executed successfully (step {synthetic_step_id})")
+                    logger.info(f"[REPLY ENFORCEMENT] ✅ Automatic reply_to_user executed successfully")
             else:
-                logger.error("[REPLY ENFORCEMENT] reply_to_user tool not found in registry!")
+                logger.warning("[REPLY ENFORCEMENT] reply_to_user tool not found in registry - creating manual reply")
         except Exception as e:
-            logger.error(f"[REPLY ENFORCEMENT] Failed to execute automatic reply_to_user: {e}")
+            logger.error(f"[REPLY ENFORCEMENT] Exception executing reply_to_user tool: {e}", exc_info=True)
+            # Fall through to manual creation
+
+        # CRITICAL: If tool execution failed or tool not found, create reply manually
+        # This ensures we ALWAYS have a reply, preventing stuck "processing" state
+        if not reply_result:
+            logger.warning("[REPLY ENFORCEMENT] Creating manual reply payload as fallback")
+            reply_result = {
+                "type": "reply",
+                "message": message,
+                "details": details,
+                "artifacts": key_artifacts[:5],
+                "status": status,
+                "error": False
+            }
+            logger.info(f"[REPLY ENFORCEMENT] ✅ Created manual reply payload")
+
+        # Add the reply result to step_results with a synthetic step ID
+        synthetic_step_id = f"auto_reply_{len(steps)}"
+        state["step_results"][synthetic_step_id] = reply_result
+        logger.info(f"[REPLY ENFORCEMENT] ✅ Reply added to step_results (step {synthetic_step_id})")
+
+    def _build_failure_summary(
+        self,
+        steps: List[Dict[str, Any]],
+        step_results: Dict[Any, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Build a concise failure summary from step results.
+
+        Returns:
+            Optional dict with headline, details_lines, details_text, status, and failure_count.
+        """
+        if not step_results:
+            return None
+
+        step_index: Dict[Any, Dict[str, Any]] = {}
+        for step in steps or []:
+            step_id = step.get("id")
+            if step_id is None:
+                continue
+            step_index[step_id] = step
+            step_index[str(step_id)] = step
+
+        failures: List[Dict[str, str]] = []
+        success_count = 0
+
+        for step_id, result in step_results.items():
+            if not isinstance(result, dict):
+                continue
+            if result.get("type") == "reply":
+                continue
+
+            status_value = str(result.get("status", "")).lower()
+            is_error = bool(result.get("error")) or status_value in {"error", "failed", "timeout"}
+
+            if is_error:
+                step_meta = step_index.get(step_id) or step_index.get(str(step_id))
+                action_name = ""
+                if step_meta:
+                    action_name = step_meta.get("action") or step_meta.get("description") or ""
+                if not action_name:
+                    action_name = str(step_id)
+
+                tool_name = result.get("tool")
+                label_parts = [action_name]
+                if tool_name and tool_name != action_name:
+                    label_parts.append(tool_name)
+                label = " → ".join(part for part in label_parts if part)
+
+                reason = (
+                    result.get("error_message")
+                    or result.get("message")
+                    or result.get("details")
+                    or status_value
+                    or "Unknown error"
+                )
+                if isinstance(reason, str):
+                    reason_clean = " ".join(reason.split())
+                else:
+                    reason_clean = str(reason)
+
+                if len(reason_clean) > 120:
+                    reason_clean = reason_clean[:117] + "..."
+
+                failures.append({"label": label, "reason": reason_clean})
+            else:
+                success_count += 1
+
+        if not failures:
+            return None
+
+        failure_strings = [f"{entry['label']}: {entry['reason']}" for entry in failures]
+        headline_core = "; ".join(failure_strings[:3])
+        headline = f"Here's what failed: {headline_core}"
+        details_lines = [f"- {entry['label']}: {entry['reason']}" for entry in failures]
+        details_text = "\n".join(details_lines)
+        status = "partial_success" if success_count > 0 else "error"
+
+        return {
+            "headline": headline,
+            "details_lines": details_lines,
+            "details_text": details_text,
+            "status": status,
+            "failure_count": len(failures),
+        }
 
     def finalize(self, state: AgentState) -> AgentState:
         """
@@ -1440,12 +1762,25 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         """
         logger.info("=== FINALIZING ===")
 
+        # Telemetry: Start finalize phase span
+        correlation_id = state.get("correlation_id")
+        finalize_span = None
+        if correlation_id:
+            from telemetry.tool_helpers import create_tool_span, record_event, record_reply_status
+            finalize_span = create_tool_span("finalize", correlation_id)
+            finalize_span.set_attribute("phase", "finalization")
+            record_event(finalize_span, "finalization_started", {"correlation_id": correlation_id})
+
         # Handle case where plan has no steps (impossible task already set error)
         steps = state.get("steps") or []
 
         # Don't override statuses already set (error/cancelled)
         if state.get("status") == "error":
             logger.info("Final status: error (preserved from earlier stage)")
+            if finalize_span:
+                finalize_span.set_status(trace.Status(trace.StatusCode.OK, "error_status_preserved"))
+                record_event(finalize_span, "finalization_completed", {"status": "error_preserved"})
+                finalize_span.end()
             return state
 
         if state.get("status") == "cancelled" or state.get("cancelled"):
@@ -1457,8 +1792,29 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 "message": state.get("cancellation_reason") or "Execution cancelled."
             }
             state["final_result"] = summary
+            # Capture cancellation result for non-blocking return
+            result_capture = state.get("result_capture")
+            if result_capture:
+                result_capture.set(summary)
+                logger.info("[FINALIZE] Cancellation result captured in ResultCapture")
+
+            # Telemetry: Record cancelled reply status
+            if correlation_id:
+                record_reply_status("reply_cancelled", correlation_id, {"reason": summary["message"]})
+
             logger.info("Final status: cancelled")
+            if finalize_span:
+                finalize_span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+                record_event(finalize_span, "finalization_completed", {"status": "cancelled"})
+                finalize_span.end()
             return state
+
+        existing_step_results = state.get("step_results") or {}
+        had_reply_before_enforcement = any(
+            isinstance(res, dict) and res.get("type") == "reply"
+            for res in existing_step_results.values()
+        )
+        failure_summary_applied = False
         
         # CRITICAL: Final commitment verification using reasoning trace
         memory = state.get("memory")
@@ -1469,28 +1825,70 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 logger.error(f"[FINALIZE] Error during commitment verification: {e}")
 
         # CRITICAL: Enforce reply_to_user as final step
+        logger.info("[FINALIZE] Enforcing reply_to_user as final step")
         self._enforce_reply_to_user_final_step(state)
+        
+        # Log reply enforcement result
+        step_results_after = state.get("step_results", {})
+        has_reply_after = any(
+            isinstance(r, dict) and r.get("type") == "reply"
+            for r in step_results_after.values()
+        )
+        if has_reply_after:
+            logger.info("[FINALIZE] ✅ Reply confirmed in step_results after enforcement")
+            # Telemetry: Record successful reply status
+            if correlation_id:
+                record_reply_status("reply_sent", correlation_id, {"enforced": not had_reply_before_enforcement})
+        else:
+            logger.error("[FINALIZE] ❌ CRITICAL: No reply found in step_results after enforcement!")
+            # Telemetry: Record missing reply status
+            if correlation_id:
+                record_reply_status("reply_missing", correlation_id, {
+                    "had_reply_before": had_reply_before_enforcement,
+                    "step_result_keys": list(step_results_after.keys())
+                })
+
+            try:
+                get_performance_monitor().record_alert(
+                    "missing_reply_payload",
+                    "Finalize completed without reply payload",
+                    {
+                        "goal": state.get("goal", ""),
+                        "status": state.get("status"),
+                        "step_result_keys": list(step_results_after.keys()),
+                    },
+                )
+            except Exception as alert_exc:
+                logger.error(f"[FINALIZE] Failed to record telemetry alert: {alert_exc}")
 
         # Gather all results
         step_results_dict = state.get("step_results", {})
+        logger.info(f"[FINALIZE] Gathering results: {len(step_results_dict)} step results")
         summary = {
             "goal": state.get("goal", ""),
             "steps_executed": len(steps),
             "results": step_results_dict,        # Legacy key
             "step_results": step_results_dict,   # API server expects this
             "status": "success" if all(
-                not r.get("error", False) for r in step_results_dict.values()
+                not (isinstance(r, dict) and r.get("error", False))
+                for r in step_results_dict.values()
             ) else "partial_success"
         }
 
         # Prefer dedicated reply payload for user-facing communication
         step_results = state.get("step_results", {})
         reply_payload = None
+        reply_step_id = None
         for step_id, step_result in step_results.items():
             if isinstance(step_result, dict) and step_result.get("type") == "reply":
                 reply_payload = step_result
+                reply_step_id = step_id
                 summary["reply_step_id"] = step_id
+                logger.info(f"[FINALIZE] Found reply_payload in step {step_id}: {reply_payload.get('message', '')[:50]}...")
                 break
+        
+        if not reply_payload:
+            logger.warning("[FINALIZE] ⚠️ No reply_payload found in step_results - summary will use fallback message")
 
         if reply_payload:
             summary["status"] = reply_payload.get("status", summary["status"])
@@ -1500,10 +1898,68 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             if reply_payload.get("artifacts"):
                 summary["artifacts"] = reply_payload["artifacts"]
 
+        auto_reply_enforced = not had_reply_before_enforcement
+        failure_summary_info = self._build_failure_summary(steps, step_results)
+        if failure_summary_info and (auto_reply_enforced or not reply_payload):
+            failure_summary_applied = True
+            summary["status"] = failure_summary_info["status"]
+            summary["message"] = failure_summary_info["headline"]
+            summary["details"] = failure_summary_info["details_text"]
+            summary["failure_details"] = failure_summary_info["details_lines"]
+            if reply_payload:
+                reply_payload["status"] = summary["status"]
+                reply_payload["message"] = summary["message"]
+                reply_payload["details"] = failure_summary_info["details_text"]
+                if reply_step_id is not None:
+                    step_results[reply_step_id] = reply_payload
+            logger.info("[FINALIZE] Applied synthesized failure summary for missing reply_to_user execution")
+
+        # GUARANTEED REPLY FALLBACK: Ensure we ALWAYS have a user-facing message
+        # This is the final safety net when all other reply mechanisms fail
+        current_message = summary.get("message", "").strip()
+        if not current_message or len(current_message) < 10:
+            logger.warning("[FINALIZE] ❌ CRITICAL: No meaningful message found, applying guaranteed fallback")
+
+            # Analyze what went wrong for telemetry
+            failed_tools = []
+            successful_tools = []
+            for step_id, step_result in step_results.items():
+                if isinstance(step_result, dict):
+                    tool_name = step_result.get("tool", "unknown")
+                    if step_result.get("error"):
+                        failed_tools.append(tool_name)
+                    elif step_result.get("success") or not step_result.get("error", True):
+                        successful_tools.append(tool_name)
+
+            # Telemetry: Record fallback usage with root cause analysis
+            if correlation_id:
+                from telemetry.tool_helpers import record_reply_status
+                record_reply_status("fallback_used", correlation_id, {
+                    "reason": "no_meaningful_message",
+                    "failed_tools": failed_tools,
+                    "successful_tools": successful_tools,
+                    "had_reply_payload": reply_payload is not None,
+                    "failure_summary_applied": failure_summary_applied
+                })
+
+            # Generate guaranteed fallback message
+            user_request = state.get("user_request", "your request")
+            if failed_tools:
+                fallback_message = f"I encountered issues completing your request for '{user_request[:50]}...'. Some tools failed ({', '.join(failed_tools[:3])}). Please try rephrasing or contact support if the issue persists."
+            else:
+                fallback_message = f"I processed your request for '{user_request[:50]}...' but couldn't generate a proper response. Please try again or provide more details."
+
+            summary["message"] = fallback_message
+            summary["status"] = "error"
+            summary["fallback_applied"] = True
+            summary["root_cause_tools"] = failed_tools
+
+            logger.info(f"[FINALIZE] ✅ Applied guaranteed fallback reply: {fallback_message[:100]}...")
+
         # Always check step_results for richer message if current message is generic/short
         # This handles cases where reply agent gives generic message but search has detailed summary
         current_message = summary.get("message", "")
-        if step_results and len(current_message) < 100:
+        if step_results and len(current_message) < 100 and not failure_summary_applied and not summary.get("fallback_applied"):
             # Look through all step results for message/summary/content
             for step_id in sorted(step_results.keys()):
                 step_result = step_results[step_id]
@@ -1725,6 +2181,14 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         state["final_result"] = summary
         state["status"] = "completed"
 
+        # CRITICAL: Capture result immediately so agent.run() can return even if graph.invoke() hangs
+        result_capture = state.get("result_capture")
+        if result_capture:
+            result_capture.set(summary)
+            logger.info("[FINALIZE] Result captured in ResultCapture for non-blocking return")
+
+        logger.info(f"[FINALIZE] ✅ Final result set with status: {summary.get('status')}, message: {summary.get('message', '')[:50]}...")
+        logger.info(f"[FINALIZE] Final result keys: {list(summary.keys())}")
         logger.info(f"Final status: {summary['status']}")
 
         # CRITICAL: Check for unresolved template placeholders (regression detection)
@@ -1757,6 +2221,19 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 f"Found: {invalid_placeholders}. These are not valid template syntax. "
                 f"Message: {message[:100]}"
             )
+
+        # Telemetry: Record finalize completion
+        if finalize_span:
+            finalize_span.set_attribute("final_status", summary.get("status"))
+            finalize_span.set_attribute("has_reply", has_reply_after)
+            finalize_span.set_attribute("fallback_used", failure_summary_applied)
+            record_event(finalize_span, "finalization_completed", {
+                "status": summary.get("status"),
+                "has_reply": has_reply_after,
+                "message_length": len(summary.get("message", "")),
+                "steps_executed": len(steps)
+            })
+            finalize_span.end()
 
         return state
 
@@ -2465,6 +2942,10 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 logger.error(f"[AGENT] Explain pipeline error: {e}")
                 # Fall through to normal agent processing
 
+        # Initialize telemetry tracking
+        telemetry = get_telemetry()
+        correlation_id = telemetry.start_request(user_request, session_id or "no_session", context)
+
         # Get session context if available
         session_context = None
         memory = None
@@ -2481,6 +2962,11 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 interaction_id = memory.add_interaction(user_request=user_request)
                 memory.start_reasoning_trace(interaction_id)
                 logger.debug(f"[REASONING TRACE] Started trace for interaction {interaction_id}")
+
+        # Record initial reasoning step
+        telemetry.record_reasoning_step(correlation_id, "request_received",
+                                       f"User request: {user_request[:200]}...",
+                                       {"session_id": session_id, "user_id": user_id})
         
         shared_context = (session_context or {}).get("shared_context", {})
         session_vision_count = shared_context.get("vision_session_count", 0)
@@ -2502,6 +2988,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             "cancelled": False,
             "cancellation_reason": None,
             "tool_attempts": {},
+            "correlation_id": correlation_id,  # Add correlation ID for telemetry
             "vision_usage": {
                 "count": 0,
                 "session_count": session_vision_count
@@ -2549,35 +3036,181 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         # Add persistent memory to planning context
         initial_state["planning_context"]["persistent_memory"] = persistent_memory
 
-        # Run graph
+        # Create result capture for non-blocking execution
+        result_capture = ResultCapture()
+        initial_state["result_capture"] = result_capture
+
+        # Run graph with non-blocking result capture
+        # This allows us to return as soon as finalize() sets the result,
+        # even if graph.invoke() continues running in the background
         try:
-            final_state = self.graph.invoke(initial_state)
-            result = final_state["final_result"]
+            import concurrent.futures
+            import threading
+            
+            graph_start_time = time.time()
+            logger.info(f"[AGENT] Starting graph.invoke() at {graph_start_time}")
+            
+            def run_graph():
+                """Run graph.invoke in a separate thread."""
+                try:
+                    invoke_start = time.time()
+                    final_state = self.graph.invoke(initial_state)
+                    invoke_duration = time.time() - invoke_start
+                    logger.info(f"[AGENT] graph.invoke() completed in {invoke_duration:.2f}s")
+                    return final_state
+                except Exception as e:
+                    logger.error(f"[AGENT] graph.invoke() error: {e}")
+                    raise
+            
+            # Create executor outside context manager to avoid blocking on shutdown
+            # This allows us to return immediately after result capture
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            graph_future = executor.submit(run_graph)
+            
+            # Define callback to handle final_state logging when graph completes
+            def handle_graph_completion(future):
+                """Callback to log session data when graph execution completes."""
+                try:
+                    final_state = future.result()
+                    if self.session_manager and session_id:
+                        memory = self.session_manager.get_or_create_session(session_id)
+                        vision_usage = final_state.get("vision_usage", {})
+                        if vision_usage:
+                            memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
 
-            # Record interaction in session memory
-            if self.session_manager and session_id:
-                memory = self.session_manager.get_or_create_session(session_id)
-                vision_usage = final_state.get("vision_usage", {})
-                if vision_usage:
-                    memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
-                memory.add_interaction(
-                    user_request=user_request,
-                    agent_response=result,
-                    plan=final_state.get("steps", []),
-                    step_results=final_state.get("step_results", {}),
-                    metadata={
-                        "goal": final_state.get("goal", ""),
-                        "status": final_state.get("status", "unknown")
+                        # Get the result that was already captured
+                        captured_result = result_capture.get()
+                        if captured_result:
+                            memory.add_interaction(
+                                user_request=user_request,
+                                agent_response=captured_result,
+                                plan=final_state.get("steps", []),
+                                step_results=final_state.get("step_results", {}),
+                                metadata={
+                                    "goal": final_state.get("goal", ""),
+                                    "status": final_state.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
+                            self.session_manager.save_session(session_id)
+                            logger.info(f"[SESSION] Recorded full interaction for session: {session_id} (after graph completion)")
+
+                    # Record final telemetry completion
+                    telemetry.end_request(correlation_id, captured_result)
+
+                except Exception as e:
+                    logger.warning(f"[AGENT] Error in graph completion callback: {e}")
+                    # Record error in telemetry
+                    telemetry.record_phase_end(correlation_id, "complete", success=False,
+                                             error_message=str(e), metadata={"callback_error": True})
+                finally:
+                    # Shutdown executor without waiting (non-blocking)
+                    executor.shutdown(wait=False)
+            
+            # Register callback to run when graph completes
+            graph_future.add_done_callback(handle_graph_completion)
+            
+            # Wait for result capture (finalize() will set it)
+            # No timeout - agents should run until completion
+            logger.info(f"[AGENT] Waiting for result capture (no timeout - agents run until completion)...")
+            
+            captured_result = result_capture.wait(timeout=None)
+            
+            if captured_result:
+                capture_wait_duration = time.time() - graph_start_time
+                logger.info(f"[AGENT] Result captured after {capture_wait_duration:.2f}s, returning immediately")
+                logger.info(f"[AGENT] graph.invoke() may still be running in background for cleanup")
+                
+                # Try to get final_state quickly for immediate logging (non-blocking)
+                final_state = None
+                if self.session_manager and session_id:
+                    memory = self.session_manager.get_or_create_session(session_id)
+                    try:
+                        final_state = graph_future.result(timeout=1.0)
+                    except (concurrent.futures.TimeoutError, concurrent.futures.CancelledError):
+                        # Graph still running - that's fine, callback will handle it
+                        final_state = None
+                    
+                    if final_state:
+                        # Graph completed quickly, log immediately
+                        vision_usage = final_state.get("vision_usage", {})
+                        if vision_usage:
+                            memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
+                        memory.add_interaction(
+                            user_request=user_request,
+                            agent_response=captured_result,
+                            plan=final_state.get("steps", []),
+                            step_results=final_state.get("step_results", {}),
+                            metadata={
+                                "goal": final_state.get("goal", ""),
+                                "status": final_state.get("status", "unknown")
+                            }
+                        )
+                        self.session_manager.save_session(session_id)
+                        logger.info(f"[SESSION] Recorded interaction for session: {session_id}")
+                    else:
+                        # Graph still running, record with available result
+                        # Callback will update with full state later
+                        logger.debug(f"[SESSION] Recording interaction while graph may still be running")
+                        memory.add_interaction(
+                            user_request=user_request,
+                            agent_response=captured_result,
+                            plan=[],
+                            step_results={},
+                            metadata={
+                                "goal": "",
+                                "status": captured_result.get("status", "unknown")
+                            }
+                        )
+                        self.session_manager.save_session(session_id)
+                
+                # Return immediately - executor and callback handle cleanup
+                result = captured_result
+            else:
+                # Result capture never fired - fall back to waiting for graph.invoke()
+                # No timeout - wait indefinitely for graph completion
+                logger.warning(f"[AGENT] Result capture not set, waiting for graph.invoke() (no timeout)...")
+                try:
+                    final_state = graph_future.result(timeout=None)  # Wait indefinitely
+                    result = final_state.get("final_result") or {
+                        "error": True,
+                        "message": "Graph completed but no result captured"
                     }
-                )
-                # Save session to disk
-                self.session_manager.save_session(session_id)
-                logger.info(f"[SESSION] Recorded interaction for session: {session_id}")
+                    logger.info(f"[AGENT] Retrieved result from graph.invoke() after capture timeout")
+                    
+                    # Log session data
+                    if self.session_manager and session_id:
+                        memory = self.session_manager.get_or_create_session(session_id)
+                        vision_usage = final_state.get("vision_usage", {})
+                        if vision_usage:
+                            memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
+                        memory.add_interaction(
+                            user_request=user_request,
+                            agent_response=result,
+                            plan=final_state.get("steps", []),
+                            step_results=final_state.get("step_results", {}),
+                            metadata={
+                                "goal": final_state.get("goal", ""),
+                                "status": final_state.get("status", "unknown")
+                            }
+                        )
+                        self.session_manager.save_session(session_id)
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"[AGENT] graph.invoke() also timed out - agent may be stuck")
+                    result = {
+                        "error": True,
+                        "message": "Agent execution timed out - finalize() may not have completed"
+                    }
+                finally:
+                    # Shutdown executor
+                    executor.shutdown(wait=False)
 
+            total_duration = time.time() - graph_start_time
+            logger.info(f"[AGENT] Total agent.run() duration: {total_duration:.2f}s")
             return result
 
         except Exception as e:
-            logger.error(f"Agent execution error: {e}")
+            logger.error(f"Agent execution error: {e}", exc_info=True)
             return {
                 "error": True,
                 "message": f"Agent failed: {str(e)}"
