@@ -1231,16 +1231,29 @@ The final `reply_to_user` step should **confirm what was done**, not just echo t
 }
 ```
 
-## Guidelines
+## CRITICAL REQUIREMENTS - ALWAYS FOLLOW
 
-- **Simple tasks** (1-2 steps): Direct execution
-- **Medium tasks** (3-5 steps): Sequential with some dependencies
-- **Complex tasks** (6+ steps): Multi-stage with branching logic
+### Reply-to-User Mandate (MANDATORY!)
+**EVERY PLAN MUST END WITH `reply_to_user` AS THE FINAL STEP!**
+
+- **NO EXCEPTIONS** - Even single-step plans must include `reply_to_user`
+- **ALL workflows conclude with user communication** - Never leave the user without feedback
+- **Format**: Always use `reply_to_user` tool, never direct message returns
+- **Pattern**: `[work_steps...] → reply_to_user(message="...", details="...", artifacts=[...])`
+- **Purpose**: Provides polished UI summaries instead of raw tool outputs
+
+**FAILURE TO INCLUDE `reply_to_user` = INVALID PLAN**
+
+### Guidelines
+
+- **Simple tasks** (1-2 steps): Direct execution → `reply_to_user`
+- **Medium tasks** (3-5 steps): Sequential with dependencies → `reply_to_user`
+- **Complex tasks** (6+ steps): Multi-stage with branching → `reply_to_user`
 
 - Always start with search if document needs to be found
 - Extract before processing (screenshots, content)
 - Compose/create actions come last (they consume earlier outputs)
-- Finish every successful plan with `reply_to_user` so the UI receives a polished summary (even for single-action tasks)
+- **MANDATORY**: Finish every successful plan with `reply_to_user` so the UI receives a polished summary
 - Use context passing between steps
 
 ## Few-Shot Examples

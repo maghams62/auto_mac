@@ -109,6 +109,7 @@ class MailComposer:
                 script_file = f.name
 
             try:
+                # Execute using temp file (already created above)
                 result = subprocess.run(
                     ['osascript', script_file],
                     capture_output=True,
@@ -130,7 +131,14 @@ class MailComposer:
                     logger.info("Email composed successfully")
                 return True
             else:
-                logger.error(f"AppleScript error: {result.stderr}")
+                from ..utils.applescript_utils import format_applescript_error
+                error_info = format_applescript_error(
+                    result,
+                    "compose email",
+                    "Mail.app"
+                )
+                logger.error(f"AppleScript error: {error_info.get('user_friendly_message', result.stderr)}")
+                logger.error(f"Technical details: {error_info.get('technical_details', {})}")
                 return False
 
         except Exception as e:

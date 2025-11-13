@@ -5,10 +5,16 @@ Tool catalog generation from existing tools.
 from typing import List, Dict, Any, Optional
 import logging
 import re
+import hashlib
 from ..agent import ALL_AGENT_TOOLS
 from .state import ToolSpec
 
 logger = logging.getLogger(__name__)
+
+
+# Global cache for tool catalog
+_tool_catalog_cache: Optional[List[ToolSpec]] = None
+_tool_catalog_hash: Optional[str] = None
 
 
 def _build_parameter_metadata(tool) -> List[Dict[str, Any]]:
@@ -253,13 +259,32 @@ def _generate_toolspec_from_tool(tool) -> ToolSpec:
     )
 
 
-def generate_tool_catalog() -> List[ToolSpec]:
+def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
     """
     Generate tool catalog from existing LangChain tools.
+    
+    Results are cached globally for performance. The cache is invalidated
+    if the tool signatures change.
 
+    Args:
+        force_refresh: Force regeneration even if cached
+        
     Returns:
-        List of ToolSpec objects
+        List of ToolSpec objects (cached after first call)
     """
+    global _tool_catalog_cache, _tool_catalog_hash
+    
+    # Compute hash of available tools for cache invalidation
+    tool_signatures = [f"{t.name}:{t.description[:50]}" for t in ALL_AGENT_TOOLS]
+    current_hash = hashlib.md5("".join(tool_signatures).encode()).hexdigest()
+    
+    # Return cached catalog if available and unchanged
+    if not force_refresh and _tool_catalog_cache is not None and _tool_catalog_hash == current_hash:
+        logger.debug(f"[TOOL CATALOG] Using cached catalog ({len(_tool_catalog_cache)} tools)")
+        return _tool_catalog_cache
+    
+    logger.info(f"[TOOL CATALOG] Generating tool catalog (force_refresh={force_refresh})")
+    
     catalog = []
 
     # Map existing tools to catalog specs
@@ -890,6 +915,12 @@ def generate_tool_catalog() -> List[ToolSpec]:
             added_tool_names.add("llamaindex_worker")
 
     logger.info(f"Generated tool catalog with {len(catalog)} tools ({len(added_tool_names)} unique)")
+    
+    # Cache the generated catalog
+    _tool_catalog_cache = catalog
+    _tool_catalog_hash = current_hash
+    logger.info(f"[TOOL CATALOG] Cached tool catalog for future requests")
+    
     return catalog
 
 

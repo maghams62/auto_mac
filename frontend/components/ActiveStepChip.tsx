@@ -38,12 +38,17 @@ export default function ActiveStepChip({ planState, className }: ActiveStepChipP
     <motion.div
       initial={{ scale: 0.8, opacity: 0 }}
       animate={activeStep.status === "running" ? {
-        scale: 1,
+        scale: 1.1,
         opacity: 1,
         boxShadow: [
-          "0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3), 0 0 60px rgba(59, 130, 246, 0.1)",
-          "0 0 30px rgba(59, 130, 246, 0.8), 0 0 60px rgba(59, 130, 246, 0.5), 0 0 90px rgba(59, 130, 246, 0.2)",
-          "0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3), 0 0 60px rgba(59, 130, 246, 0.1)"
+          "0 0 25px rgba(59, 130, 246, 0.7), 0 0 50px rgba(59, 130, 246, 0.4), 0 0 75px rgba(59, 130, 246, 0.2)",
+          "0 0 40px rgba(59, 130, 246, 1), 0 0 80px rgba(59, 130, 246, 0.6), 0 0 120px rgba(59, 130, 246, 0.3)",
+          "0 0 25px rgba(59, 130, 246, 0.7), 0 0 50px rgba(59, 130, 246, 0.4), 0 0 75px rgba(59, 130, 246, 0.2)"
+        ],
+        borderColor: [
+          "rgba(59, 130, 246, 0.3)",
+          "rgba(59, 130, 246, 0.8)",
+          "rgba(59, 130, 246, 0.3)"
         ]
       } : { scale: 1, opacity: 1 }}
       exit={{ scale: 0.8, opacity: 0 }}

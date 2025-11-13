@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.utils import get_temperature_for_model
+from src.utils.openai_client import PooledOpenAIClient
 
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,17 @@ class OutputVerifier:
         """
         self.config = config
         openai_config = config.get("openai", {})
+        
+        # Use pooled client for better performance
+        pooled_client = PooledOpenAIClient.get_client(config)
+        
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
             temperature=get_temperature_for_model(config, default_temperature=0.0),  # Use deterministic output for verification
-            api_key=openai_config.get("api_key")
+            api_key=openai_config.get("api_key"),
+            http_client=pooled_client._http_client if hasattr(pooled_client, '_http_client') else None
         )
+        logger.info("[VERIFIER] Using pooled OpenAI client")
 
     def verify_step_output(
         self,

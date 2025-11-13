@@ -28,8 +28,12 @@ class EmailContentVerifier:
     4. Returns verification result with corrective actions if needed
     """
     
-    def __init__(self):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        if config is None:
+            from ..utils import load_config
+            config = load_config()
+        api_key = config.get("openai", {}).get("api_key")
+        self.client = OpenAI(api_key=api_key)
         
     def verify_email_content(
         self,
@@ -246,25 +250,27 @@ def verify_compose_email_content(
     compose_email_params: Dict[str, Any],
     step_results: Dict[int, Any],
     current_step_id: str,
-    reasoning_context: Optional[Dict[str, Any]] = None
+    reasoning_context: Optional[Dict[str, Any]] = None,
+    config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Convenience function to verify compose_email parameters.
-    
+
     This is the main entry point for email content verification.
     Optionally uses reasoning trace context for learning from past attempts.
-    
+
     Args:
         user_request: Original user request
         compose_email_params: Email parameters to verify
         step_results: Results from previous steps
         current_step_id: Current step ID
         reasoning_context: Optional reasoning trace context (commitments, past attempts)
-    
+        config: Optional config dict (will load from file if not provided)
+
     Returns:
         Verification result with verified flag and suggestions
     """
-    verifier = EmailContentVerifier()
+    verifier = EmailContentVerifier(config=config)
     return verifier.verify_email_content(
         user_request=user_request,
         compose_email_params=compose_email_params,

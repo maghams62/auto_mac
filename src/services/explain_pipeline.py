@@ -99,55 +99,63 @@ class ExplainPipeline:
                     telemetry
                 )
 
-            # Step 2: Search for documents
+            # Step 2: Search for documents and images
             search_result = self._search_documents(topic, task, session_id, max_search_results)
             telemetry["pipeline_steps"].append("search")
-            telemetry["search_results_count"] = len(search_result.get("results", []))
+            results = search_result.get("results", [])
+            telemetry["search_results_count"] = len(results)
 
             if search_result.get("error"):
                 telemetry["failure_step"] = "search"
                 telemetry["error_details"] = search_result
-                error_msg = search_result.get("error_message", f"No documents found matching '{topic}'")
+                error_msg = search_result.get("error_message", f"No documents or images found matching '{topic}'")
                 return self._create_error_response(error_msg, telemetry)
 
-            # Get the best result
-            results = search_result.get("results", [])
             if not results:
                 telemetry["failure_step"] = "search"
                 telemetry["error_details"] = {"reason": "No search results returned"}
-                return self._create_error_response(f"No documents found matching '{topic}'", telemetry)
+                return self._create_error_response(f"No documents or images found matching '{topic}'", telemetry)
 
             best_result = results[0]
             doc_path = best_result.get("doc_path")
+            result_type = best_result.get("result_type", "document")
             telemetry["selected_file"] = doc_path
             telemetry["similarity_score"] = best_result.get("relevance_score", 0.0)
+            telemetry["result_type"] = result_type
 
             if not doc_path:
                 telemetry["failure_step"] = "search"
                 telemetry["error_details"] = {"reason": "Best result missing doc_path"}
-                return self._create_error_response("Document search completed but no valid document found", telemetry)
+                return self._create_error_response("Search completed but no valid document or image found", telemetry)
 
-            # Step 3: Extract content
-            extract_result = self._extract_content(doc_path, session_id)
-            telemetry["pipeline_steps"].append("extract")
-
-            if extract_result.get("error"):
-                # Try to use content preview from search as fallback
-                content_preview = best_result.get("content_preview", "")
-                if content_preview:
-                    logger.warning(f"[EXPLAIN PIPELINE] Extraction failed, using content preview fallback")
-                    extracted_text = content_preview
-                else:
-                    telemetry["failure_step"] = "extract"
-                    telemetry["error_details"] = extract_result
-                    error_msg = extract_result.get("error_message", "Failed to extract document content")
-                    return self._create_error_response(error_msg, telemetry)
+            # Step 3: Extract content (skip for images, use caption instead)
+            if result_type == "image":
+                # For images, use the caption/preview as the content
+                extracted_text = best_result.get("content_preview", best_result.get("caption", ""))
+                telemetry["pipeline_steps"].append("extract_image")
+                logger.info(f"[EXPLAIN PIPELINE] Using image caption for explanation: {extracted_text[:100]}")
             else:
-                extracted_text = extract_result.get("extracted_text", "")
-                if not extracted_text:
-                    telemetry["failure_step"] = "extract"
-                    telemetry["error_details"] = {"reason": "Extraction returned empty content"}
-                    return self._create_error_response("Document extraction completed but no content returned", telemetry)
+                # For documents, extract content normally
+                extract_result = self._extract_content(doc_path, session_id)
+                telemetry["pipeline_steps"].append("extract")
+
+                if extract_result.get("error"):
+                    # Try to use content preview from search as fallback
+                    content_preview = best_result.get("content_preview", "")
+                    if content_preview:
+                        logger.warning(f"[EXPLAIN PIPELINE] Extraction failed, using content preview fallback")
+                        extracted_text = content_preview
+                    else:
+                        telemetry["failure_step"] = "extract"
+                        telemetry["error_details"] = extract_result
+                        error_msg = extract_result.get("error_message", "Failed to extract document content")
+                        return self._create_error_response(error_msg, telemetry)
+                else:
+                    extracted_text = extract_result.get("extracted_text", "")
+                    if not extracted_text:
+                        telemetry["failure_step"] = "extract"
+                        telemetry["error_details"] = {"reason": "Extraction returned empty content"}
+                        return self._create_error_response("Document extraction completed but no content returned", telemetry)
 
             # Step 4: Synthesize content
             if not synthesis_style:
@@ -174,7 +182,8 @@ class ExplainPipeline:
             # Success!
             telemetry["pipeline_steps"].append("complete")
 
-            return {
+            # Build response with image metadata if applicable
+            response = {
                 "success": True,
                 "summary": synthesized_content,
                 "doc_title": best_result.get("doc_title", "Unknown Document"),
@@ -182,8 +191,26 @@ class ExplainPipeline:
                 "word_count": synth_result.get("word_count", 0),
                 "telemetry": telemetry,
                 "rag_pipeline": True,  # For compatibility with existing code
-                "message": synthesized_content  # For reply_to_user compatibility
+                "message": synthesized_content,  # For reply_to_user compatibility
+                "result_type": result_type
             }
+
+            # Add image-specific metadata
+            if result_type == "image":
+                response["thumbnail_url"] = best_result.get("thumbnail_url")
+                response["preview_url"] = best_result.get("preview_url")
+                response["file_type"] = best_result.get("metadata", {}).get("file_type", "image")
+                
+                # Add files array for UI display
+                response["files"] = [{
+                    "file_path": doc_path,
+                    "file_name": best_result.get("doc_title", "Unknown Image"),
+                    "file_type": best_result.get("metadata", {}).get("file_type", "image"),
+                    "thumbnail_url": best_result.get("thumbnail_url"),
+                    "preview_url": best_result.get("preview_url")
+                }]
+
+            return response
 
         except Exception as e:
             logger.error(f"[EXPLAIN PIPELINE] Unexpected error: {e}", exc_info=True)

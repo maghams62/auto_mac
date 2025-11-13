@@ -17,6 +17,7 @@ import { usePlanTelemetry } from "@/lib/usePlanTelemetry";
 import Header from "./Header";
 import PlanProgressRail from "./PlanProgressRail";
 import ActiveStepChip from "./ActiveStepChip";
+import ReasoningTrace from "./ReasoningTrace";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useBootContext } from "@/components/BootProvider";
@@ -29,6 +30,7 @@ export default function ChatInterface() {
   const { messages: allMessages, isConnected, connectionState, lastError, planState, sendMessage, sendCommand } = useWebSocket(wsUrl);
   const { bootPhase, assetsLoaded, signalBootComplete, signalBootError } = useBootContext();
   const [planRailCollapsed, setPlanRailCollapsed] = useState(false);
+  const [showReasoningTrace, setShowReasoningTrace] = useState(false);
   const [inputValue, setInputValue] = useState("");
 
   // Plan telemetry tracking
@@ -297,14 +299,6 @@ export default function ChatInterface() {
     if (connectionState === "connected" && bootPhase !== "ready") {
       signalBootComplete();
     }
-    // TEMPORARY: Force boot completion after 3 seconds for debugging
-    else if (bootPhase === "websocket") {
-      const timer = setTimeout(() => {
-        console.log("🔧 TEMPORARY: Forcing boot completion");
-        signalBootComplete();
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
   }, [connectionState, bootPhase, signalBootComplete]);
 
   // Signal boot error when WebSocket connection fails permanently
@@ -337,8 +331,25 @@ export default function ChatInterface() {
       <PlanProgressRail
         planState={planState}
         isCollapsed={planRailCollapsed}
+        showReasoningTrace={showReasoningTrace}
         onToggleCollapse={() => setPlanRailCollapsed(!planRailCollapsed)}
+        onToggleReasoningTrace={() => setShowReasoningTrace(!showReasoningTrace)}
       />
+
+      {/* Reasoning Trace Panel */}
+      <AnimatePresence>
+        {planState && showReasoningTrace && (
+          <motion.div
+            initial={{ opacity: 0, x: 300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 300 }}
+            transition={{ duration: 0.3 }}
+            className="fixed top-20 right-4 z-40"
+          >
+            <ReasoningTrace planState={planState} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Screen reader announcements */}
       <div

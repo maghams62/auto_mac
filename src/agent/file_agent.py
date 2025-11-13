@@ -22,21 +22,38 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
+def search_documents(query: str, user_request: str = None, include_images: bool = True) -> Dict[str, Any]:
     """
-    Search for documents using semantic search with LLM-determined parameters.
+    Search for documents and optionally images using semantic search with LLM-determined parameters.
 
     FILE AGENT - LEVEL 1: Document Discovery
-    Use this as the first step to find relevant documents.
+    Use this as the first step to find relevant documents and images.
 
     Args:
         query: Natural language search query
         user_request: Original user request for context (optional)
+        include_images: Whether to also search for images (default: True)
 
     Returns:
-        Dictionary with doc_path, doc_title, relevance_score, and metadata
+        Dictionary with results array containing both documents and images:
+        {
+            "results": [
+                {
+                    "doc_path": str,
+                    "doc_title": str,
+                    "relevance_score": float,
+                    "content_preview": str,
+                    "file_type": str,
+                    "result_type": "document" | "image",
+                    "thumbnail_url": str (for images),
+                    "preview_url": str (for images),
+                    "metadata": dict
+                }
+            ],
+            "best_result": dict (top result for backward compatibility)
+        }
     """
-    logger.info(f"[FILE AGENT] Tool: search_documents(query='{query}')")
+    logger.info(f"[FILE AGENT] Tool: search_documents(query='{query}', include_images={include_images})")
 
     try:
         from src.documents import DocumentIndexer, SemanticSearch
@@ -57,28 +74,77 @@ def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
 
         logger.info(f"[FILE AGENT] LLM-determined search params: {search_params}")
 
-        results = search_engine.search(query, top_k=search_params.get('top_k', 1))
+        # Search documents
+        doc_results = search_engine.search(query, top_k=search_params.get('top_k', 1))
+        
+        all_results = []
+        
+        # Add document results
+        for result in doc_results:
+            all_results.append({
+                "doc_path": result["file_path"],
+                "doc_title": result.get("title", Path(result["file_path"]).name),
+                "relevance_score": result.get("score", 0.0),
+                "content_preview": result.get("content_preview", "")[:500],
+                "result_type": "document",
+                "metadata": {
+                    "file_type": Path(result["file_path"]).suffix[1:],
+                    "chunk_count": result.get("chunk_count", 1),
+                    "page_count": result.get("total_pages", 0)
+                }
+            })
 
-        if not results:
+        # Search images if enabled and requested
+        if include_images and indexer.image_indexer:
+            try:
+                image_results = indexer.image_indexer.search_images(query, top_k=search_params.get('top_k', 1))
+                
+                for img_result in image_results:
+                    file_path = img_result.get('file_path', '')
+                    all_results.append({
+                        "doc_path": file_path,
+                        "doc_title": img_result.get('file_name', Path(file_path).name),
+                        "relevance_score": img_result.get('similarity_score', 0.0),
+                        "content_preview": img_result.get('caption', ''),
+                        "result_type": "image",
+                        "thumbnail_url": f"/api/files/thumbnail?path={file_path}&max_size=256",
+                        "preview_url": f"/api/files/preview?path={file_path}",
+                        "metadata": {
+                            "file_type": Path(file_path).suffix[1:] if file_path else "image",
+                            "width": img_result.get('width'),
+                            "height": img_result.get('height'),
+                            "breadcrumb": img_result.get('breadcrumb', '')
+                        }
+                    })
+                    
+                logger.info(f"[FILE AGENT] Found {len(image_results)} image results")
+            except Exception as e:
+                logger.warning(f"[FILE AGENT] Image search failed: {e}")
+
+        # Sort all results by relevance score
+        all_results.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
+
+        if not all_results:
             return {
                 "error": True,
                 "error_type": "NotFoundError",
-                "error_message": f"No documents found matching query: {query}",
-                "retry_possible": True
+                "error_message": f"No documents or images found matching query: {query}",
+                "retry_possible": True,
+                "results": []
             }
 
-        # Return top result with enhanced metadata for RAG
-        result = results[0]
+        # Return results array and best result for backward compatibility
+        best_result = all_results[0]
         return {
-            "doc_path": result["file_path"],
-            "doc_title": result.get("title", Path(result["file_path"]).name),
-            "relevance_score": result.get("score", 0.0),
-            "content_preview": result.get("content_preview", "")[:500],  # First 500 chars for context
-            "metadata": {
-                "file_type": Path(result["file_path"]).suffix[1:],
-                "chunk_count": result.get("chunk_count", 1),
-                "page_count": result.get("total_pages", 0)
-            }
+            "results": all_results,
+            "doc_path": best_result.get("doc_path"),
+            "doc_title": best_result.get("doc_title"),
+            "relevance_score": best_result.get("relevance_score", 0.0),
+            "content_preview": best_result.get("content_preview", ""),
+            "result_type": best_result.get("result_type", "document"),
+            "thumbnail_url": best_result.get("thumbnail_url"),
+            "preview_url": best_result.get("preview_url"),
+            "metadata": best_result.get("metadata", {})
         }
 
     except Exception as e:
@@ -87,7 +153,8 @@ def search_documents(query: str, user_request: str = None) -> Dict[str, Any]:
             "error": True,
             "error_type": "SearchError",
             "error_message": str(e),
-            "retry_possible": False
+            "retry_possible": False,
+            "results": []
         }
 
 

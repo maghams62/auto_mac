@@ -8,8 +8,10 @@ Separation of Concerns:
 
 import logging
 import re
-from typing import Dict, Any, List, Optional
+import asyncio
+from typing import Dict, Any, List, Optional, Set, Tuple
 from enum import Enum
+from collections import defaultdict
 
 from ..agent import ALL_AGENT_TOOLS
 from ..agent.verifier import OutputVerifier
@@ -58,6 +60,19 @@ class PlanExecutor:
         """
         self.config = config
         self.enable_verification = enable_verification
+        
+        # Performance configuration
+        perf_config = config.get("performance", {})
+        parallel_config = perf_config.get("parallel_execution", {})
+        self.parallel_enabled = parallel_config.get("enabled", True)
+        self.max_parallel_steps = parallel_config.get("max_parallel_steps", 5)
+        self.dependency_analysis = parallel_config.get("dependency_analysis", True)
+        
+        background_config = perf_config.get("background_tasks", {})
+        self.background_verification = background_config.get("verification", True)
+        
+        logger.info(f"[EXECUTOR] Parallel execution: {self.parallel_enabled}, Max parallel: {self.max_parallel_steps}")
+        logger.info(f"[EXECUTOR] Background verification: {self.background_verification}")
 
         # Initialize tools (all agent tools)
         self.tools = {tool.name: tool for tool in ALL_AGENT_TOOLS}
@@ -70,7 +85,310 @@ class PlanExecutor:
             from ..agent.verifier import OutputVerifier
             self.verifier = OutputVerifier(config)
             logger.info("Output verification enabled")
+    
+    def _analyze_dependencies(self, plan: List[Dict[str, Any]]) -> Dict[int, Set[int]]:
+        """
+        Analyze step dependencies to enable parallel execution.
+        
+        Args:
+            plan: List of plan steps
+            
+        Returns:
+            Dictionary mapping step_id to set of dependency step_ids
+        """
+        dependencies = {}
+        
+        for step in plan:
+            step_id = step.get("id", -1)
+            
+            # Explicit dependencies from plan
+            explicit_deps = set(step.get("dependencies", []))
+            
+            # Implicit dependencies from parameter references ($stepN.field)
+            implicit_deps = set()
+            parameters = step.get("parameters", {})
+            
+            def find_step_refs(obj):
+                """Recursively find step references in parameters."""
+                if isinstance(obj, str):
+                    matches = PLACEHOLDER_PATTERN.findall(obj)
+                    for match in matches:
+                        # Extract step number from $step3.output or similar
+                        step_num_str = match.split('.')[0].replace('$step', '')
+                        try:
+                            implicit_deps.add(int(step_num_str))
+                        except ValueError:
+                            pass
+                elif isinstance(obj, dict):
+                    for val in obj.values():
+                        find_step_refs(val)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_step_refs(item)
+            
+            find_step_refs(parameters)
+            
+            # Combine explicit and implicit dependencies
+            all_deps = explicit_deps | implicit_deps
+            dependencies[step_id] = all_deps
+            
+            if all_deps:
+                logger.debug(f"[EXECUTOR] Step {step_id} depends on: {all_deps}")
+        
+        return dependencies
+    
+    def _group_steps_by_level(
+        self, 
+        plan: List[Dict[str, Any]], 
+        dependencies: Dict[int, Set[int]]
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Group steps into execution levels where each level can run in parallel.
+        
+        Args:
+            plan: List of plan steps
+            dependencies: Step dependencies from _analyze_dependencies
+            
+        Returns:
+            List of step groups (levels), where steps in same level can run in parallel
+        """
+        # Map step IDs to steps
+        step_map = {step.get("id"): step for step in plan}
+        
+        # Calculate execution level for each step
+        step_levels = {}
+        
+        def get_level(step_id: int) -> int:
+            """Get execution level for a step (recursive with memoization)."""
+            if step_id in step_levels:
+                return step_levels[step_id]
+            
+            deps = dependencies.get(step_id, set())
+            if not deps:
+                # No dependencies = level 0
+                step_levels[step_id] = 0
+                return 0
+            
+            # Level is 1 + max level of dependencies
+            max_dep_level = max(get_level(dep_id) for dep_id in deps if dep_id in step_map)
+            level = max_dep_level + 1
+            step_levels[step_id] = level
+            return level
+        
+        # Calculate levels for all steps
+        for step in plan:
+            get_level(step.get("id"))
+        
+        # Group steps by level
+        levels = defaultdict(list)
+        for step in plan:
+            level = step_levels[step.get("id")]
+            levels[level].append(step)
+        
+        # Convert to sorted list of levels
+        sorted_levels = [levels[i] for i in sorted(levels.keys())]
+        
+        logger.info(f"[EXECUTOR] Grouped {len(plan)} steps into {len(sorted_levels)} execution levels")
+        for i, level_steps in enumerate(sorted_levels):
+            step_ids = [s.get("id") for s in level_steps]
+            logger.info(f"[EXECUTOR] Level {i}: {len(level_steps)} steps (IDs: {step_ids})")
+        
+        return sorted_levels
+    
+    async def _execute_step_async(
+        self,
+        step: Dict[str, Any],
+        state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Execute a single step asynchronously.
+        
+        Args:
+            step: Step to execute
+            state: Current execution state
+            
+        Returns:
+            Step result dictionary
+        """
+        # Use asyncio to run synchronous _execute_step in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._execute_step, step, state)
+    
+    async def _verify_step_async(
+        self,
+        goal: str,
+        step: Dict[str, Any],
+        step_result: Dict[str, Any],
+        state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Verify step output asynchronously.
+        
+        Args:
+            goal: Original user goal
+            step: Step definition
+            step_result: Step execution result
+            state: Execution state
+            
+        Returns:
+            Verification result dictionary
+        """
+        if not self.verifier:
+            return {"valid": True, "issues": [], "suggestions": [], "confidence": 1.0}
+        
+        # Use asyncio to run synchronous verification in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.verifier.verify_step_output,
+            goal,
+            step,
+            step_result,
+            {"previous_steps": state["step_results"]}
+        )
 
+    async def execute_plan_async(
+        self,
+        plan: List[Dict[str, Any]],
+        goal: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a plan with parallel execution where possible (async).
+        
+        Args:
+            plan: List of plan steps to execute
+            goal: Original user goal (for verification)
+            context: Additional execution context
+            
+        Returns:
+            Execution result dictionary
+        """
+        logger.info(f"[EXECUTOR] Executing plan with {len(plan)} steps (async/parallel)")
+        
+        # Initialize execution state
+        state = {
+            "goal": goal,
+            "plan": plan,
+            "context": context or {},
+            "step_results": {},
+            "verification_results": {},
+            "current_step": 0,
+            "status": ExecutionStatus.IN_PROGRESS
+        }
+        
+        # Analyze dependencies and group steps
+        if self.dependency_analysis and len(plan) > 1:
+            dependencies = self._analyze_dependencies(plan)
+            step_levels = self._group_steps_by_level(plan, dependencies)
+        else:
+            # Fallback: treat as sequential
+            step_levels = [[step] for step in plan]
+        
+        total_completed = 0
+        verification_tasks = []
+        
+        # Execute steps level by level
+        for level_idx, level_steps in enumerate(step_levels):
+            logger.info(f"[EXECUTOR] Executing level {level_idx} with {len(level_steps)} steps")
+            
+            # Execute steps in this level in parallel
+            tasks = []
+            for step in level_steps:
+                step_id = step.get("id")
+                
+                # Check dependencies
+                if not self._check_dependencies(step, state):
+                    logger.warning(f"Step {step_id}: Dependencies not met, skipping")
+                    state["step_results"][step_id] = {
+                        "error": True,
+                        "skipped": True,
+                        "error_message": "Dependencies not met"
+                    }
+                    continue
+                
+                # Create execution task
+                task = self._execute_step_async(step, state)
+                tasks.append((step_id, step, task))
+            
+            # Wait for all steps in this level to complete
+            if tasks:
+                results = await asyncio.gather(*[task for _, _, task in tasks], return_exceptions=True)
+                
+                # Process results
+                for (step_id, step, _), result in zip(tasks, results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Step {step_id} failed with exception: {result}")
+                        state["step_results"][step_id] = {
+                            "error": True,
+                            "error_message": str(result),
+                            "output": None
+                        }
+                    else:
+                        state["step_results"][step_id] = result
+                        total_completed += 1
+                    
+                    self._log_step_outcome(step_id, step, state["step_results"][step_id])
+                    
+                    # Check for critical failures
+                    if state["step_results"][step_id].get("error"):
+                        error_result = state["step_results"][step_id]
+                        if error_result.get("retry_possible"):
+                            return {
+                                "status": ExecutionStatus.NEEDS_REPLAN,
+                                "steps_completed": total_completed,
+                                "steps_total": len(plan),
+                                "step_results": state["step_results"],
+                                "verification_results": state["verification_results"],
+                                "final_output": None,
+                                "error": error_result.get("error_message"),
+                                "needs_replan": True,
+                                "replan_reason": f"Step {step_id} failed: {error_result.get('error_message')}"
+                            }
+                    
+                    # Start background verification if enabled
+                    if self.verifier and self._should_verify_step(step) and not state["step_results"][step_id].get("error"):
+                        if self.background_verification:
+                            # Create verification task to run in background
+                            verify_task = asyncio.create_task(
+                                self._verify_step_async(goal, step, state["step_results"][step_id], state)
+                            )
+                            verification_tasks.append((step_id, verify_task))
+                        else:
+                            # Run verification synchronously
+                            verification = await self._verify_step_async(
+                                goal, step, state["step_results"][step_id], state
+                            )
+                            state["verification_results"][step_id] = verification
+        
+        # Wait for all background verification tasks to complete
+        if verification_tasks:
+            logger.info(f"[EXECUTOR] Waiting for {len(verification_tasks)} background verification tasks")
+            verifications = await asyncio.gather(*[task for _, task in verification_tasks], return_exceptions=True)
+            
+            for (step_id, _), verification in zip(verification_tasks, verifications):
+                if isinstance(verification, Exception):
+                    logger.error(f"Verification for step {step_id} failed: {verification}")
+                else:
+                    state["verification_results"][step_id] = verification
+        
+        # All steps completed
+        logger.info(f"[EXECUTOR] Plan execution complete: {total_completed}/{len(plan)} steps succeeded")
+        
+        final_output = state["step_results"].get(plan[-1].get("id")) if plan else None
+        
+        return {
+            "status": ExecutionStatus.SUCCESS,
+            "steps_completed": len(plan),
+            "steps_total": len(plan),
+            "step_results": state["step_results"],
+            "verification_results": state["verification_results"],
+            "final_output": final_output,
+            "error": None,
+            "needs_replan": False,
+            "replan_reason": None
+        }
+    
     def execute_plan(
         self,
         plan: List[Dict[str, Any]],
@@ -78,7 +396,7 @@ class PlanExecutor:
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Execute a plan.
+        Execute a plan (with optional parallel execution).
 
         Args:
             plan: List of plan steps to execute
@@ -99,7 +417,13 @@ class PlanExecutor:
                 "replan_reason": Optional[str]
             }
         """
-        logger.info(f"Executing plan with {len(plan)} steps")
+        # Use async execution if parallel is enabled
+        if self.parallel_enabled and len(plan) > 1:
+            logger.info(f"[EXECUTOR] Using parallel execution for {len(plan)} steps")
+            # Run async version in sync context
+            return asyncio.run(self.execute_plan_async(plan, goal, context))
+        
+        logger.info(f"Executing plan with {len(plan)} steps (sequential)")
 
         # Initialize execution state
         state = {

@@ -109,8 +109,44 @@ def create_reminder(
         if result.get("success"):
             due_info = f" due {result.get('due_date')}" if result.get('due_date') else " (no due date)"
             logger.info(f"[REMINDERS AGENT] ✅ Created reminder: {title}{due_info}")
+            
+            # Format success message for UI using reply_to_user pattern
+            message = result.get("message", f"Created reminder '{title}' in list '{list_name}'")
+            details = ""
+            if due_date := result.get('due_date'):
+                from datetime import datetime
+                try:
+                    dt = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                    details = f"Due: {dt.strftime('%Y-%m-%d %H:%M')}"
+                except:
+                    details = f"Due: {due_date}"
+            
+            # Return formatted result that UI can display nicely
+            return {
+                **result,
+                "type": "reply",
+                "status": "success",
+                "completion_event": {
+                    "action_type": "reminder_created",
+                    "summary": message,
+                    "status": "success",
+                    "artifact_metadata": {
+                        "reminder_id": result.get("reminder_id"),
+                        "list_name": list_name,
+                        "due_date": result.get("due_date")
+                    }
+                }
+            }
         else:
             logger.error(f"[REMINDERS AGENT] ❌ Failed to create reminder: {result.get('error_message')}")
+            # Format error message for UI
+            error_msg = result.get("user_friendly_message") or result.get("error_message", "Failed to create reminder")
+            return {
+                **result,
+                "type": "reply",
+                "status": "error",
+                "message": f"❌ Failed to create reminder: {error_msg}"
+            }
 
         return result
 

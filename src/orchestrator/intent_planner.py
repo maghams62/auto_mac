@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 from typing import Dict, Any, List
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from ..utils import get_temperature_for_model
+from ..utils.openai_client import PooledOpenAIClient
 
 
 logger = logging.getLogger(__name__)
@@ -38,21 +40,27 @@ class IntentPlanner:
 
     def __init__(self, config: Dict[str, Any]):
         openai_cfg = config.get("openai", {})
+        
+        # Use pooled client for better performance
+        pooled_client = PooledOpenAIClient.get_client(config)
+        
         self.llm = ChatOpenAI(
             model=openai_cfg.get("model", "gpt-4o"),
             temperature=get_temperature_for_model(config, default_temperature=0.1),
             api_key=openai_cfg.get("api_key"),
+            http_client=pooled_client._http_client if hasattr(pooled_client, '_http_client') else None
         )
+        logger.info("[INTENT PLANNER] Using pooled OpenAI client")
         self.prompt_template = _load_prompt_template()
 
-    def analyze(self, goal: str, agent_capabilities: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Analyze goal and return structured intent data."""
+    async def analyze(self, goal: str, agent_capabilities: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze goal and return structured intent data (async for performance)."""
 
         capability_block = json.dumps(agent_capabilities, indent=2)
         prompt = self.prompt_template.format(goal=goal, capabilities=capability_block)
 
         try:
-            response = self.llm.invoke([
+            response = await self.llm.ainvoke([
                 SystemMessage(content="You are the Intent Planner."),
                 HumanMessage(content=prompt)
             ])

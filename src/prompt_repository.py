@@ -96,12 +96,13 @@ class PromptRepository:
 
         return []
 
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=256)  # Increased cache size for better hit rate
     def load_category(self, category: str) -> str:
         """
         Load and concatenate all prompt snippets for a category.
 
         The result is cached to avoid re-reading files across calls.
+        Cache size increased to 256 for better performance.
         """
         files = self._index.get("categories", {}).get(category, [])
         if not files:

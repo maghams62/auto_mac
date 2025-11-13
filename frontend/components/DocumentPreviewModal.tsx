@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { overlayFade, modalSlideDown } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,8 @@ export default function DocumentPreviewModal({
   fileType = "pdf",
 }: DocumentPreviewModalProps) {
   const apiBaseUrl = getApiBaseUrl();
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,13 +40,50 @@ export default function DocumentPreviewModal({
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
+      // Reset error state when modal opens
+      setPreviewError(null);
+      setIsLoading(true);
     } else {
       document.body.style.overflow = "";
     }
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isOpen]);
+  }, [isOpen, filePath]);
+
+  // Handle preview load errors
+  const handlePreviewError = (error: string) => {
+    setPreviewError(error);
+    setIsLoading(false);
+  };
+
+  // Check if file is accessible before loading
+  useEffect(() => {
+    if (!isOpen || !filePath) return;
+
+    // Try to fetch the preview URL to check if it's accessible
+    const checkPreviewAccess = async () => {
+      const previewUrl = `${apiBaseUrl}/api/files/preview?path=${encodeURIComponent(filePath)}`;
+      try {
+        const response = await fetch(previewUrl, { method: "HEAD" });
+        if (!response.ok) {
+          if (response.status === 403) {
+            handlePreviewError("Preview not available: File is outside allowed directories");
+          } else if (response.status === 404) {
+            handlePreviewError("Preview not available: File not found");
+          } else {
+            handlePreviewError(`Preview not available: Server error (${response.status})`);
+          }
+        } else {
+          setIsLoading(false);
+        }
+      } catch (err) {
+        handlePreviewError("Preview not available: Unable to load file");
+      }
+    };
+
+    checkPreviewAccess();
+  }, [isOpen, filePath, apiBaseUrl]);
 
   if (!isOpen) return null;
 
@@ -110,28 +149,74 @@ export default function DocumentPreviewModal({
 
           {/* Content Area */}
           <div className="flex-1 overflow-hidden">
-            {fileType === "pdf" && (
-              <iframe
-                src={previewUrl}
-                className="w-full h-full min-h-[600px] border-0"
-                title={fileName}
-              />
-            )}
-            {fileType === "html" && (
-              <iframe
-                src={previewUrl}
-                className="w-full h-full min-h-[600px] border-0"
-                title={fileName}
-              />
-            )}
-            {fileType === "image" && (
-              <div className="flex items-center justify-center p-8 h-full">
-                <img
-                  src={previewUrl}
-                  alt={fileName}
-                  className="max-w-full max-h-full object-contain"
-                />
+            {previewError ? (
+              <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-danger-bg/20 flex items-center justify-center mb-4">
+                  <svg
+                    className="w-8 h-8 text-accent-danger"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-text-primary mb-2">
+                  Preview Not Available
+                </h3>
+                <p className="text-text-muted mb-4 max-w-md">
+                  {previewError}
+                </p>
+                <div className="text-sm text-text-subtle">
+                  <p>You can still:</p>
+                  <ul className="list-disc list-inside mt-2 space-y-1">
+                    <li>Open the file in Finder using the "Reveal" button</li>
+                    <li>Copy the file path to access it manually</li>
+                  </ul>
+                </div>
               </div>
+            ) : (
+              <>
+                {fileType === "pdf" && (
+                  <iframe
+                    src={previewUrl}
+                    className="w-full h-full min-h-[600px] border-0"
+                    title={fileName}
+                    onError={() => handlePreviewError("Failed to load PDF preview")}
+                    onLoad={() => setIsLoading(false)}
+                  />
+                )}
+                {fileType === "html" && (
+                  <iframe
+                    src={previewUrl}
+                    className="w-full h-full min-h-[600px] border-0"
+                    title={fileName}
+                    onError={() => handlePreviewError("Failed to load HTML preview")}
+                    onLoad={() => setIsLoading(false)}
+                  />
+                )}
+                {fileType === "image" && (
+                  <div className="flex items-center justify-center p-8 h-full">
+                    {isLoading && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                    <img
+                      src={previewUrl}
+                      alt={fileName}
+                      className="max-w-full max-h-full object-contain"
+                      onError={() => handlePreviewError("Failed to load image preview")}
+                      onLoad={() => setIsLoading(false)}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 

@@ -8,7 +8,9 @@ import { PlanState } from "@/lib/useWebSocket";
 interface PlanProgressRailProps {
   planState: PlanState | null;
   onToggleCollapse?: () => void;
+  onToggleReasoningTrace?: () => void;
   isCollapsed?: boolean;
+  showReasoningTrace?: boolean;
 }
 
 // Icon components using inline SVGs
@@ -60,10 +62,19 @@ const SkipForwardIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const EyeIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+  </svg>
+);
+
 export default function PlanProgressRail({
   planState,
   onToggleCollapse,
-  isCollapsed = false
+  onToggleReasoningTrace,
+  isCollapsed = false,
+  showReasoningTrace = false
 }: PlanProgressRailProps) {
   const [showRail, setShowRail] = useState(false);
 
@@ -128,22 +139,40 @@ export default function PlanProgressRail({
               </div>
             </div>
 
-            <button
-              onClick={onToggleCollapse}
-              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              {isCollapsed ? (
-                <>
-                  <ChevronDownIcon className="w-3 h-3" />
-                  Expand
-                </>
-              ) : (
-                <>
-                  <ChevronUpIcon className="w-3 h-3" />
-                  Collapse
-                </>
+            <div className="flex items-center gap-2">
+              {onToggleReasoningTrace && (
+                <button
+                  onClick={onToggleReasoningTrace}
+                  className={cn(
+                    "flex items-center gap-1 text-xs transition-colors px-2 py-1 rounded",
+                    showReasoningTrace
+                      ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
+                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                  )}
+                  title={showReasoningTrace ? "Hide detailed reasoning trace" : "Show detailed reasoning trace"}
+                >
+                  <EyeIcon className="w-3 h-3" />
+                  Trace
+                </button>
               )}
-            </button>
+
+              <button
+                onClick={onToggleCollapse}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors px-2 py-1 rounded hover:bg-gray-100"
+              >
+                {isCollapsed ? (
+                  <>
+                    <ChevronDownIcon className="w-3 h-3" />
+                    Expand
+                  </>
+                ) : (
+                  <>
+                    <ChevronUpIcon className="w-3 h-3" />
+                    Collapse
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Progress bar */}
@@ -165,29 +194,61 @@ export default function PlanProgressRail({
                 exit={{ height: 0, opacity: 0 }}
                 className="overflow-hidden"
               >
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 relative">
                   {planState.steps.map((step, index) => (
-                    <motion.div
+                    <React.Fragment key={step.id}>
+                      {/* Connecting line to next step */}
+                      {index < planState.steps.length - 1 && (
+                        <motion.div
+                          className="absolute h-0.5 rounded-full"
+                          style={{
+                            top: '50%',
+                            left: '100%',
+                            width: '12px',
+                            transform: 'translateY(-50%)',
+                            zIndex: 0,
+                            background: step.status === "completed"
+                              ? 'linear-gradient(to right, rgba(59, 130, 246, 0.8), rgba(59, 130, 246, 0.6))'
+                              : step.status === "running"
+                              ? 'linear-gradient(to right, rgba(59, 130, 246, 0.6), rgba(59, 130, 246, 0.4))'
+                              : 'linear-gradient(to right, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1))'
+                          }}
+                          initial={{ scaleX: 0, opacity: 0 }}
+                          animate={{
+                            scaleX: step.status === "completed" ? 1 : step.status === "running" ? 0.7 : 0,
+                            opacity: step.status === "completed" ? 1 : step.status === "running" ? 0.7 : 0
+                          }}
+                          transition={{
+                            duration: step.status === "completed" ? 0.8 : 0.4,
+                            delay: step.status === "completed" ? index * 0.1 + 0.2 : 0,
+                            ease: "easeOut"
+                          }}
+                        />
+                      )}
+
+                      <motion.div
                       key={step.id}
                       initial={{ scale: 0.8, opacity: 0 }}
                       animate={{
-                        scale: 1,
+                        scale: step.status === "running" ? 1.15 : step.status === "completed" ? [1.15, 1] : 1,
                         opacity: 1,
                         boxShadow: step.status === "running" ? [
-                          "0 0 15px rgba(59, 130, 246, 0.4), 0 0 30px rgba(59, 130, 246, 0.2)",
-                          "0 0 25px rgba(59, 130, 246, 0.7), 0 0 50px rgba(59, 130, 246, 0.4)",
-                          "0 0 15px rgba(59, 130, 246, 0.4), 0 0 30px rgba(59, 130, 246, 0.2)"
-                        ] : "0 0 0px rgba(59, 130, 246, 0)"
+                          "0 0 30px rgba(59, 130, 246, 0.7), 0 0 60px rgba(59, 130, 246, 0.4), 0 0 90px rgba(59, 130, 246, 0.2)",
+                          "0 0 50px rgba(59, 130, 246, 1), 0 0 100px rgba(59, 130, 246, 0.6), 0 0 150px rgba(59, 130, 246, 0.3)",
+                          "0 0 30px rgba(59, 130, 246, 0.7), 0 0 60px rgba(59, 130, 246, 0.4), 0 0 90px rgba(59, 130, 246, 0.2)"
+                        ] : step.status === "completed" ? "0 0 15px rgba(34, 197, 94, 0.5)" : "0 0 0px rgba(59, 130, 246, 0)"
                       }}
                       transition={{
                         delay: index * 0.1,
+                        scale: step.status === "running" ? { duration: 1.5, repeat: Infinity, ease: "easeInOut" } :
+                              step.status === "completed" ? { duration: 0.5, type: "spring", bounce: 0.3 } : { duration: 0.3 },
                         boxShadow: step.status === "running" ? { duration: 2, repeat: Infinity, ease: "easeInOut" } : { duration: 0.3 }
                       }}
                       className={cn(
                         "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
-                        "border transition-all duration-300 relative",
+                        "border transition-all duration-300 relative overflow-hidden",
                         getStatusColor(step.status),
-                        step.status === "running" && "ring-2 ring-blue-400/50"
+                        step.status === "running" && "ring-4 ring-blue-500/70 scale-110"
                       )}
                     >
                       {getStatusIcon(step.status)}
@@ -199,7 +260,8 @@ export default function PlanProgressRail({
                           transition={{ duration: 1, repeat: Infinity }}
                         />
                       )}
-                    </motion.div>
+                      </motion.div>
+                    </React.Fragment>
                   ))}
                 </div>
               </motion.div>

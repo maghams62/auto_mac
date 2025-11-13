@@ -21,6 +21,7 @@ Architecture:
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 
 from ..memory import SessionManager
@@ -91,14 +92,14 @@ class MainOrchestrator:
         """Get tool specs as dictionaries."""
         return get_tool_specs_as_dicts(self.tool_catalog)
 
-    def execute(
+    async def execute_async(
         self,
         user_request: str,
         context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Execute a user request.
+        Execute a user request asynchronously (for better performance).
 
         Args:
             user_request: User's request/goal
@@ -109,7 +110,7 @@ class MainOrchestrator:
             Execution result dictionary
         """
         logger.info("=" * 80)
-        logger.info(f"Processing request: {user_request}")
+        logger.info(f"Processing request: {user_request} (async)")
         logger.info("=" * 80)
 
         # Build SessionContext for structured memory access
@@ -160,7 +161,7 @@ class MainOrchestrator:
                 temp_memory.add_interaction(user_request)
                 session_context_obj = temp_memory.build_context(profile="compact", purpose="planner")
 
-            plan_result = self.planner.create_plan(
+            plan_result = await self.planner.create_plan(
                 goal=user_request,
                 available_tools=self.tool_catalog,  # Pass ToolSpec objects, not dicts
                 session_context=session_context_obj,
@@ -305,7 +306,27 @@ class MainOrchestrator:
         result = self.execute(user_request, context)
 
         emit("complete", result)
-        return result
+            return result
+    
+    def execute(
+        self,
+        user_request: str,
+        context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a user request (synchronous wrapper for async execution).
+
+        Args:
+            user_request: User's request/goal
+            context: Optional context
+            session_id: Optional session ID for context tracking
+
+        Returns:
+            Execution result dictionary
+        """
+        # Run async version in sync context
+        return asyncio.run(self.execute_async(user_request, context, session_id))
 
 
 if __name__ == "__main__":

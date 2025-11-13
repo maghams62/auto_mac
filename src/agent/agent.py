@@ -1348,7 +1348,92 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             logger.error(f"[FINALIZE] Error during commitment verification: {e}")
             import traceback
             traceback.print_exc()
-    
+
+    def _enforce_reply_to_user_final_step(self, state: AgentState) -> None:
+        """
+        CRITICAL: Ensure every workflow ends with reply_to_user for UI consistency.
+
+        If the final step is NOT reply_to_user, automatically execute one with a summary
+        of what was accomplished. This guarantees users always get feedback.
+
+        Args:
+            state: Current agent state
+        """
+        steps = state.get("steps", [])
+        if not steps:
+            logger.warning("[REPLY ENFORCEMENT] No steps in plan - cannot enforce reply_to_user")
+            return
+
+        # Check if final step is reply_to_user
+        final_step = steps[-1]
+        if final_step.get("action") == "reply_to_user":
+            logger.debug("[REPLY ENFORCEMENT] ✅ Final step is reply_to_user - no enforcement needed")
+            return
+
+        logger.warning("[REPLY ENFORCEMENT] ❌ Final step is NOT reply_to_user - enforcing automatic reply")
+
+        # Build summary from all step results
+        step_results = state.get("step_results", {})
+        successful_steps = []
+        failed_steps = []
+        key_artifacts = []
+
+        for step_id, result in step_results.items():
+            if isinstance(result, dict):
+                step_info = f"Step {step_id}"
+                if result.get("error"):
+                    failed_steps.append(step_info)
+                else:
+                    successful_steps.append(step_info)
+
+                    # Collect key artifacts (files, emails, etc.)
+                    if "file_path" in result:
+                        key_artifacts.append(result["file_path"])
+                    elif "reminder_id" in result:
+                        key_artifacts.append(f"Reminder ID: {result['reminder_id']}")
+
+        # Create automatic reply message
+        goal = state.get("goal", "task")
+
+        if failed_steps and not successful_steps:
+            # Complete failure
+            message = f"❌ {goal} failed to complete"
+            details = f"Failed steps: {', '.join(failed_steps)}"
+        elif failed_steps:
+            # Partial success
+            message = f"⚠️ {goal} completed with some issues"
+            details = f"Completed: {', '.join(successful_steps)}\nFailed: {', '.join(failed_steps)}"
+        else:
+            # Full success
+            message = f"✅ {goal} completed successfully"
+            details = f"Steps completed: {', '.join(successful_steps)}"
+
+        # Execute reply_to_user automatically
+        try:
+            reply_tool = self._get_tool_by_name("reply_to_user")
+            if reply_tool:
+                reply_params = {
+                    "message": message,
+                    "details": details,
+                    "artifacts": key_artifacts[:5],  # Limit artifacts to prevent overload
+                    "status": "error" if failed_steps and not successful_steps else "partial_success" if failed_steps else "success"
+                }
+
+                logger.info(f"[REPLY ENFORCEMENT] Executing automatic reply_to_user: {reply_params}")
+
+                reply_result = reply_tool.invoke(reply_params)
+                if reply_result.get("error"):
+                    logger.error(f"[REPLY ENFORCEMENT] Automatic reply_to_user failed: {reply_result}")
+                else:
+                    # Add the reply result to step_results with a synthetic step ID
+                    synthetic_step_id = f"auto_reply_{len(steps)}"
+                    state["step_results"][synthetic_step_id] = reply_result
+                    logger.info(f"[REPLY ENFORCEMENT] ✅ Automatic reply_to_user executed successfully (step {synthetic_step_id})")
+            else:
+                logger.error("[REPLY ENFORCEMENT] reply_to_user tool not found in registry!")
+        except Exception as e:
+            logger.error(f"[REPLY ENFORCEMENT] Failed to execute automatic reply_to_user: {e}")
+
     def finalize(self, state: AgentState) -> AgentState:
         """
         Finalization node: Summarize results and verify commitments were fulfilled.
@@ -1383,13 +1468,18 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             except Exception as e:
                 logger.error(f"[FINALIZE] Error during commitment verification: {e}")
 
+        # CRITICAL: Enforce reply_to_user as final step
+        self._enforce_reply_to_user_final_step(state)
+
         # Gather all results
+        step_results_dict = state.get("step_results", {})
         summary = {
             "goal": state.get("goal", ""),
             "steps_executed": len(steps),
-            "results": state.get("step_results", {}),
+            "results": step_results_dict,        # Legacy key
+            "step_results": step_results_dict,   # API server expects this
             "status": "success" if all(
-                not r.get("error", False) for r in state.get("step_results", {}).values()
+                not r.get("error", False) for r in step_results_dict.values()
             ) else "partial_success"
         }
 

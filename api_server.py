@@ -399,62 +399,84 @@ async def process_agent_request(
         
         # If no Maps URL found, check for reply type results in step_results/results
         if not formatted_message or formatted_message == json.dumps(result_dict, indent=2):
-            # First, check for reply type result in step_results (from reply_to_user tool)
+            # Extract reply_to_user message with defensive checks for both possible keys
             reply_result = None
-            if "step_results" in result_dict and result_dict["step_results"]:
-                for step_result in result_dict["step_results"].values():
+            step_results_source = result_dict.get("step_results") or result_dict.get("results")
+            
+            if step_results_source:
+                for step_id, step_result in step_results_source.items():
                     if isinstance(step_result, dict) and step_result.get("type") == "reply":
                         reply_result = step_result
+                        logger.info(f"[API SERVER] Found reply_to_user result in step {step_id}")
                         break
-            elif "results" in result_dict and result_dict["results"]:
-                for step_result in result_dict["results"].values():
-                    if isinstance(step_result, dict) and step_result.get("type") == "reply":
-                        reply_result = step_result
-                        break
+            
+            if not reply_result:
+                logger.warning("[API SERVER] No reply_to_user found in step results")
             
             if reply_result:
                 # Use format_result_message to combine message and details
                 formatted_message = format_result_message(reply_result)
+                logger.info(f"[API SERVER] Using reply_to_user message: {formatted_message[:100]}...")
             else:
                 # Fallback: Try to extract meaningful message from result structure
-                if "step_results" in result_dict and result_dict["step_results"]:
+                if step_results_source:
                     # Get the first result's message if available
-                    first_result = list(result_dict["step_results"].values())[0]
+                    first_result = list(step_results_source.values())[0]
                     if isinstance(first_result, dict) and "message" in first_result:
                         formatted_message = format_result_message(first_result)
+                        logger.info(f"[API SERVER] Using fallback message from first step result")
                     elif isinstance(first_result, dict) and "maps_url" in first_result:
                         formatted_message = format_result_message(first_result)
-                elif "results" in result_dict and result_dict["results"]:
-                    # Get the first result's message if available
-                    first_result = list(result_dict["results"].values())[0]
-                    if isinstance(first_result, dict) and "message" in first_result:
-                        formatted_message = format_result_message(first_result)
-                    elif isinstance(first_result, dict) and "maps_url" in first_result:
-                        formatted_message = format_result_message(first_result)
+                        logger.info(f"[API SERVER] Using maps_url from first step result")
 
         # Extract files/documents array from result if present (for file_list and document_list type responses)
+        # Also check for files array from explain pipeline results
         files_array = None
         documents_array = None
-        if "step_results" in result_dict and result_dict["step_results"]:
-            for step_result in result_dict["step_results"].values():
-                if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
-                    files_array = step_result["files"]
-                    break
-                elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
-                    documents_array = step_result["documents"]
-                    break
-        elif "results" in result_dict and result_dict["results"]:
-            for step_result in result_dict["results"].values():
-                if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
-                    files_array = step_result["files"]
-                    break
-                elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
-                    documents_array = step_result["documents"]
-                    break
-        elif result_dict.get("type") == "file_list" and "files" in result_dict:
-            files_array = result_dict["files"]
-        elif result_dict.get("type") == "document_list" and "documents" in result_dict:
-            documents_array = result_dict["documents"]
+        
+        # Check for files array in explain pipeline results (from explain command)
+        if "final_result" in result_dict:
+            final_result = result_dict["final_result"]
+            if isinstance(final_result, dict) and "files" in final_result:
+                files_array = final_result["files"]
+                logger.info(f"[API SERVER] Found files array in final_result: {len(files_array)} files")
+        
+        # Check step_results/results for file_list/document_list types
+        if files_array is None:
+            if "step_results" in result_dict and result_dict["step_results"]:
+                for step_result in result_dict["step_results"].values():
+                    if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
+                        files_array = step_result["files"]
+                        break
+                    elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
+                        documents_array = step_result["documents"]
+                        break
+                    # Also check for files array directly in explain pipeline results
+                    elif isinstance(step_result, dict) and "files" in step_result and step_result.get("rag_pipeline"):
+                        files_array = step_result["files"]
+                        logger.info(f"[API SERVER] Found files array in explain pipeline result: {len(files_array)} files")
+                        break
+            elif "results" in result_dict and result_dict["results"]:
+                for step_result in result_dict["results"].values():
+                    if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
+                        files_array = step_result["files"]
+                        break
+                    elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
+                        documents_array = step_result["documents"]
+                        break
+                    # Also check for files array directly in explain pipeline results
+                    elif isinstance(step_result, dict) and "files" in step_result and step_result.get("rag_pipeline"):
+                        files_array = step_result["files"]
+                        logger.info(f"[API SERVER] Found files array in explain pipeline result: {len(files_array)} files")
+                        break
+            elif result_dict.get("type") == "file_list" and "files" in result_dict:
+                files_array = result_dict["files"]
+            elif result_dict.get("type") == "document_list" and "documents" in result_dict:
+                documents_array = result_dict["documents"]
+            # Check top-level files array from explain pipeline
+            elif "files" in result_dict and result_dict.get("rag_pipeline"):
+                files_array = result_dict["files"]
+                logger.info(f"[API SERVER] Found files array at top level from explain pipeline: {len(files_array)} files")
 
         # Extract completion_event from reply results if present
         completion_event = None

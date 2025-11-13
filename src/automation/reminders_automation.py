@@ -101,13 +101,20 @@ class RemindersAutomation:
                               (f" due {due_date.strftime('%Y-%m-%d %H:%M')}" if due_date else "")
                 }
             else:
-                error_msg = result.stderr or result.stdout or "Failed to create reminder"
-                logger.error(f"AppleScript error: {error_msg}")
+                from ..utils.applescript_utils import format_applescript_error
+                error_info = format_applescript_error(
+                    result,
+                    "create reminder",
+                    "Reminders.app"
+                )
+                logger.error(f"AppleScript error: {error_info.get('user_friendly_message', result.stderr)}")
                 return {
                     "success": False,
                     "error": True,
-                    "error_message": error_msg,
-                    "retry_possible": True
+                    "error_type": error_info.get("error_type", "AppleScriptError"),
+                    "error_message": error_info.get("error_message", result.stderr or result.stdout or "Failed to create reminder"),
+                    "user_friendly_message": error_info.get("user_friendly_message"),
+                    "retry_possible": error_info.get("retry_possible", True)
                 }
 
         except Exception as e:
@@ -355,6 +362,8 @@ class RemindersAutomation:
 
         script = f'''
         tell application "Reminders"
+            activate
+
             -- Get or create list
             set targetList to missing value
             try
