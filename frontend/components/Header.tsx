@@ -45,10 +45,10 @@ export default function Header({
 
   return (
     <header className={cn(
-      "sticky top-0 z-50 border-b backdrop-blur-glass",
-      "bg-glass-elevated/60 border-glass/50"
+      "sticky top-0 z-50 border-b backdrop-blur-glass shadow-elevated",
+      "bg-glass-elevated/95 border-glass/50"
     )}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Left Section - Brand */}
           <div className="flex items-center gap-3">
@@ -59,64 +59,56 @@ export default function Header({
               <span className="text-white font-bold text-sm">C</span>
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-text-primary tracking-tight">
+              <h1 className="text-xl font-bold text-text-primary tracking-tight">
                 Cerebro
               </h1>
-              <p className="text-xs text-text-muted font-medium">
+              <p className="text-sm text-text-muted font-semibold">
                 Mac OS Assistant
               </p>
             </div>
           </div>
 
-          {/* Center Section - Status Pills */}
-          <div className="flex items-center gap-2">
-            {/* Connection Status */}
+          {/* Center Section - Status Bar */}
+          <div className="flex items-center gap-4">
+            {/* Status Indicator */}
             <div className={cn(
-              "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
-              "bg-glass backdrop-blur-glass border border-glass/50",
-              isConnected
-                ? "text-accent-success border-accent-success/20"
-                : "text-accent-danger border-accent-danger/20"
+              "inline-flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium",
+              "bg-glass-elevated/90 backdrop-blur-glass border border-glass/70",
+              "text-text-primary"
             )}>
               <div className={cn(
                 "w-2 h-2 rounded-full",
                 isConnected ? "bg-accent-success animate-pulse" : "bg-accent-danger"
               )} />
-              <span>{isConnected ? "Connected" : "Disconnected"}</span>
+              <span className="font-semibold">
+                {isConnected ? "Connected" : "Disconnected"}
+                {messageCount > 0 && (
+                  <span className="text-text-muted font-normal ml-2">
+                    • {messageCount} messages
+                  </span>
+                )}
+              </span>
             </div>
-
-            {/* Message Count */}
-            {messageCount > 0 && (
-              <div className={cn(
-                "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
-                "bg-glass backdrop-blur-glass border border-glass/50",
-                "text-text-muted"
-              )}>
-                <span>{messageCount} messages</span>
-              </div>
-            )}
 
             {/* Time */}
             <div className={cn(
-              "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
-              "bg-glass backdrop-blur-glass border border-glass/50",
-              "text-text-muted"
+              "text-sm font-semibold text-text-muted"
             )}>
               <ClientTime />
             </div>
           </div>
 
           {/* Right Section - Quick Actions */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {onShowHelp && (
               <button
                 onClick={onShowHelp}
                 className={cn(
-                  "inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium",
-                  "text-text-muted hover:text-text-primary hover:bg-glass-hover",
-                  "transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-accent-primary/50"
+                  "inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium",
+                  "text-text-muted hover:text-text-primary hover:bg-surface-elevated/80 hover:shadow-soft",
+                  "transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-accent-primary/50"
                 )}
-                title="Help & Commands"
+                title="Help & Commands (⌘?)"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -128,9 +120,9 @@ export default function Header({
               <button
                 onClick={onClearSession}
                 className={cn(
-                  "inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium",
-                  "text-text-muted hover:text-accent-danger hover:bg-accent-danger/10",
-                  "transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-accent-danger/50"
+                  "inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium",
+                  "text-text-muted hover:text-accent-danger hover:bg-surface-elevated/80 hover:shadow-soft",
+                  "transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-accent-danger/50"
                 )}
                 title="Clear Session"
               >

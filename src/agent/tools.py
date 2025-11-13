@@ -288,6 +288,27 @@ def compose_email(
     """
     logger.info(f"Tool: compose_email(subject='{subject}', recipient='{recipient}', send={send})")
 
+    # CRITICAL: Validate attachments are file paths, not content strings
+    if attachments:
+        import os
+        for att_path in attachments:
+            if att_path and isinstance(att_path, str):
+                # Detect if someone is passing report/document CONTENT instead of a file path
+                if len(att_path) > 500 or '\n\n' in att_path or att_path.count('\n') > 10:
+                    logger.error(f"[COMPOSE_EMAIL] ⚠️  PLANNING ERROR: Attachment appears to be TEXT CONTENT, not a FILE PATH!")
+                    logger.error(f"[COMPOSE_EMAIL] ⚠️  First 200 chars: {att_path[:200]}...")
+                    return {
+                        "error": True,
+                        "error_type": "PlanningError",
+                        "error_message": (
+                            "Attachment validation failed: You provided TEXT CONTENT instead of a FILE PATH. "
+                            "To email a report, you must first save it to a file using create_pages_doc. "
+                            "Correct workflow: create_detailed_report → create_pages_doc → compose_email(attachments=['$stepN.pages_path'])"
+                        ),
+                        "retry_possible": True,
+                        "hint": "Use create_pages_doc to save report_content to a file, then attach the pages_path"
+                    }
+
     try:
         success = mail_composer.compose_email(
             subject=subject,

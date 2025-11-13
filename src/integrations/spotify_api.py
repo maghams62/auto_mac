@@ -189,7 +189,26 @@ class SpotifyAPIClient:
         try:
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
-            return response.json()
+
+            # Handle empty responses (204 No Content) from Spotify API
+            # Play/pause/skip endpoints return 204 with no body
+            if response.status_code == 204:
+                return {"success": True, "status_code": response.status_code}
+
+            # Handle responses with no content
+            if not response.content:
+                return {"success": True, "status_code": response.status_code}
+
+            # Try to parse as JSON, but handle cases where Spotify returns non-JSON content
+            try:
+                return response.json()
+            except ValueError:
+                # If it's not valid JSON, return success with the raw content
+                return {
+                    "success": True,
+                    "status_code": response.status_code,
+                    "content": response.content.decode('utf-8', errors='ignore')
+                }
         except requests.HTTPError as e:
             error_data = response.json() if response.content else {}
             error_msg = error_data.get('error', {}).get('message', str(e))
@@ -203,7 +222,25 @@ class SpotifyAPIClient:
                     headers['Authorization'] = self.token.get_authorization_header()
                     response = self.session.request(method, url, **kwargs)
                     response.raise_for_status()
-                    return response.json()
+
+                    # Handle empty responses on retry too
+                    if response.status_code == 204:
+                        return {"success": True, "status_code": response.status_code}
+
+                    # Handle responses with no content
+                    if not response.content:
+                        return {"success": True, "status_code": response.status_code}
+
+                    # Try to parse as JSON, but handle cases where Spotify returns non-JSON content
+                    try:
+                        return response.json()
+                    except ValueError:
+                        # If it's not valid JSON, return success with the raw content
+                        return {
+                            "success": True,
+                            "status_code": response.status_code,
+                            "content": response.content.decode('utf-8', errors='ignore')
+                        }
                 else:
                     raise SpotifyAPIAuthError(f"Authentication failed: {error_msg}")
 
@@ -372,6 +409,10 @@ class SpotifyAPIClient:
         """
         try:
             response = self._make_request('GET', f"{self.BASE_URL}/me/player")
+            # If we got a 204 response (handled by _make_request), it returns {"success": True}
+            # This means no active playback
+            if response.get("success") and response.get("status_code") == 204:
+                return None
             return response
         except SpotifyAPIError as e:
             if e.status_code == 204:  # No active device
@@ -416,23 +457,65 @@ class SpotifyAPIClient:
 
         return self._make_request('PUT', f"{self.BASE_URL}/me/player/play", json=data)
 
-    def pause_playback(self) -> Dict[str, Any]:
+    def pause_playback(self, device_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Pause current playback.
 
+        Args:
+            device_id: Optional device ID to control
+
         Returns:
             Success response
         """
-        return self._make_request('PUT', f"{self.BASE_URL}/me/player/pause")
+        params = {}
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player/pause", params=params)
 
-    def resume_playback(self) -> Dict[str, Any]:
+    def resume_playback(self, device_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Resume current playback.
 
+        Args:
+            device_id: Optional device ID to control
+
         Returns:
             Success response
         """
-        return self._make_request('PUT', f"{self.BASE_URL}/me/player/play")
+        params = {}
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player/play", params=params)
+
+    def skip_to_next(self, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Skip to next track in queue.
+
+        Args:
+            device_id: Optional device ID to control
+
+        Returns:
+            Success response
+        """
+        params = {}
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('POST', f"{self.BASE_URL}/me/player/next", params=params)
+
+    def skip_to_previous(self, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Skip to previous track.
+
+        Args:
+            device_id: Optional device ID to control
+
+        Returns:
+            Success response
+        """
+        params = {}
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('POST', f"{self.BASE_URL}/me/player/previous", params=params)
 
     def get_devices(self) -> List[Dict[str, Any]]:
         """
@@ -443,6 +526,33 @@ class SpotifyAPIClient:
         """
         response = self._make_request('GET', f"{self.BASE_URL}/me/player/devices")
         return response.get('devices', [])
+
+    def transfer_playback(self, device_id: str, play: bool = False) -> Dict[str, Any]:
+        """
+        Transfer playback to another device.
+
+        Args:
+            device_id: ID of the device to transfer playback to
+            play: If true, ensure playback happens on the new device
+
+        Returns:
+            Success response
+        """
+        data = {"device_ids": [device_id], "play": play}
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player", json=data)
+
+    def has_available_devices(self) -> bool:
+        """
+        Check if there are any available devices for playback.
+
+        Returns:
+            True if at least one device is available
+        """
+        try:
+            devices = self.get_devices()
+            return len(devices) > 0
+        except Exception:
+            return False
 
     # Search API Methods
 
@@ -590,8 +700,22 @@ class SpotifyAPIClient:
     def is_authenticated(self) -> bool:
         """
         Check if client has valid authentication.
+        Auto-refreshes expired tokens if refresh token is available.
 
         Returns:
-            True if authenticated and token is valid
+            True if authenticated and token is valid (or successfully refreshed)
         """
-        return self.token is not None and not self.token.is_expired()
+        if not self.token:
+            return False
+        
+        # If token is expired but we have a refresh token, try to refresh
+        if self.token.is_expired() and self.token.refresh_token:
+            try:
+                logger.info("Token expired, auto-refreshing in is_authenticated check")
+                self._refresh_token()
+                return self.token is not None and not self.token.is_expired()
+            except Exception as e:
+                logger.warning(f"Failed to refresh token in is_authenticated: {e}")
+                return False
+        
+        return not self.token.is_expired()

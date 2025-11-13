@@ -1,0 +1,212 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { PlanState } from "@/lib/useWebSocket";
+
+interface PlanProgressRailProps {
+  planState: PlanState | null;
+  onToggleCollapse?: () => void;
+  isCollapsed?: boolean;
+}
+
+// Icon components using inline SVGs
+const ChevronUpIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+  </svg>
+);
+
+const ChevronDownIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
+const ClockIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <circle cx={12} cy={12} r={10} />
+    <polyline points="12,6 12,12 16,14" />
+  </svg>
+);
+
+const CheckCircleIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+    <polyline points="22,4 12,14.01 9,11.01" />
+  </svg>
+);
+
+const XCircleIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <circle cx={12} cy={12} r={10} />
+    <line x1={15} y1={9} x2={9} y2={15} />
+    <line x1={9} y1={9} x2={15} y2={15} />
+  </svg>
+);
+
+const PlayCircleIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <circle cx={12} cy={12} r={10} />
+    <polygon points="10,8 16,12 10,16 10,8" />
+  </svg>
+);
+
+const SkipForwardIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <polygon points="5,4 15,12 5,20 5,4" />
+    <line x1={19} y1={5} x2={19} y2={19} />
+  </svg>
+);
+
+export default function PlanProgressRail({
+  planState,
+  onToggleCollapse,
+  isCollapsed = false
+}: PlanProgressRailProps) {
+  const [showRail, setShowRail] = useState(false);
+
+  useEffect(() => {
+    // Show rail when plan is active
+    setShowRail(planState !== null && planState.status === "executing");
+  }, [planState]);
+
+  if (!planState || !showRail) return null;
+
+  const completedSteps = planState.steps.filter(step => step.status === "completed").length;
+  const totalSteps = planState.steps.length;
+  const progressPercentage = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "running":
+        return <PlayCircleIcon className="w-4 h-4 text-blue-500 animate-pulse" />;
+      case "completed":
+        return <CheckCircleIcon className="w-4 h-4 text-green-500" />;
+      case "failed":
+        return <XCircleIcon className="w-4 h-4 text-red-500" />;
+      case "skipped":
+        return <SkipForwardIcon className="w-4 h-4 text-gray-400" />;
+      default:
+        return <ClockIcon className="w-4 h-4 text-gray-400" />;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "running":
+        return "border-blue-500 bg-blue-50";
+      case "completed":
+        return "border-green-500 bg-green-50";
+      case "failed":
+        return "border-red-500 bg-red-50";
+      case "skipped":
+        return "border-gray-400 bg-gray-50";
+      default:
+        return "border-gray-300 bg-gray-50";
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ y: -100, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: -100, opacity: 0 }}
+        className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-lg"
+      >
+        <div className="max-w-4xl mx-auto px-4 py-3">
+          {/* Header with goal and progress */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="text-sm font-medium text-gray-900 truncate">
+                🎯 {planState.goal}
+              </div>
+              <div className="text-xs text-gray-500">
+                {completedSteps}/{totalSteps} steps
+              </div>
+            </div>
+
+            <button
+              onClick={onToggleCollapse}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              {isCollapsed ? (
+                <>
+                  <ChevronDownIcon className="w-3 h-3" />
+                  Expand
+                </>
+              ) : (
+                <>
+                  <ChevronUpIcon className="w-3 h-3" />
+                  Collapse
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+            <motion.div
+              className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full"
+              initial={{ width: 0 }}
+              animate={{ width: `${progressPercentage}%` }}
+              transition={{ duration: 0.5 }}
+            />
+          </div>
+
+          {/* Steps - conditionally shown */}
+          <AnimatePresence>
+            {!isCollapsed && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-wrap gap-2">
+                  {planState.steps.map((step, index) => (
+                    <motion.div
+                      key={step.id}
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{
+                        scale: 1,
+                        opacity: 1,
+                        boxShadow: step.status === "running" ? [
+                          "0 0 15px rgba(59, 130, 246, 0.4), 0 0 30px rgba(59, 130, 246, 0.2)",
+                          "0 0 25px rgba(59, 130, 246, 0.7), 0 0 50px rgba(59, 130, 246, 0.4)",
+                          "0 0 15px rgba(59, 130, 246, 0.4), 0 0 30px rgba(59, 130, 246, 0.2)"
+                        ] : "0 0 0px rgba(59, 130, 246, 0)"
+                      }}
+                      transition={{
+                        delay: index * 0.1,
+                        boxShadow: step.status === "running" ? { duration: 2, repeat: Infinity, ease: "easeInOut" } : { duration: 0.3 }
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
+                        "border transition-all duration-300 relative",
+                        getStatusColor(step.status),
+                        step.status === "running" && "ring-2 ring-blue-400/50"
+                      )}
+                    >
+                      {getStatusIcon(step.status)}
+                      <span className="truncate max-w-32">{step.action}</span>
+                      {step.status === "running" && (
+                        <motion.div
+                          className="w-1 h-1 bg-blue-500 rounded-full"
+                          animate={{ scale: [1, 1.5, 1] }}
+                          transition={{ duration: 1, repeat: Infinity }}
+                        />
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}

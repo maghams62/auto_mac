@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 
-export default function RedirectPage() {
+function RedirectPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
@@ -127,6 +127,25 @@ export default function RedirectPage() {
         <p className="text-white text-lg">{message}</p>
       </div>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+        <p className="text-white text-lg">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function RedirectPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <RedirectPageContent />
+    </Suspense>
   );
 }
 

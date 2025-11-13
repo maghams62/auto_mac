@@ -39,7 +39,8 @@ MAX_SNIPPET_CHARS = 400
 def google_search(
     query: str,
     num_results: int = 5,
-    search_type: str = "web"
+    search_type: str = "web",
+    reasoning_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Search the web using DuckDuckGo's free API (no API key required).
@@ -79,6 +80,17 @@ def google_search(
         google_search("Python async programming", num_results=10)
     """
     logger.info(f"[SEARCH AGENT] Tool: google_search (DuckDuckGo) query='{query}', num={num_results}, type={search_type}")
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[SEARCH AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with searches before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[SEARCH AGENT] Learning from {past_attempts} past attempts - using more comprehensive search")
+            num_results = min(num_results + 2, 25)  # Get a few more results if we've had issues
 
     try:
         # Validate parameters

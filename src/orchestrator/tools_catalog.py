@@ -490,6 +490,114 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Publish a status update to Bluesky using the configured account."
         ),
+        "fetch_bluesky_following_feed": ToolSpec(
+            name="fetch_bluesky_following_feed",
+            kind="tool",
+            io={
+                "in": ["max_posts: int"],
+                "out": ["count", "posts"]
+            },
+            strengths=[
+                "Gets recent posts from accounts you follow",
+                "Shows timeline activity including replies and reposts",
+                "Useful for monitoring followed accounts in real-time"
+            ],
+            limits=[
+                "Requires Bluesky credentials",
+                "Limited to your following feed (not global timeline)"
+            ],
+            description="Fetch recent posts from the authenticated user's following feed (timeline)."
+        ),
+        "fetch_bluesky_list_feed": ToolSpec(
+            name="fetch_bluesky_list_feed",
+            kind="tool",
+            io={
+                "in": ["list_uri: str", "max_posts: int"],
+                "out": ["list_uri", "count", "posts"]
+            },
+            strengths=[
+                "Gets posts from curated Bluesky lists",
+                "Useful for monitoring specific communities or topics",
+                "Supports AT Protocol list URIs"
+            ],
+            limits=[
+                "Requires valid list URI",
+                "Limited to public lists and your access permissions"
+            ],
+            description="Fetch posts from a specific Bluesky list."
+        ),
+        "list_bluesky_notifications": ToolSpec(
+            name="list_bluesky_notifications",
+            kind="tool",
+            io={
+                "in": ["max_notifications: int"],
+                "out": ["count", "notifications"]
+            },
+            strengths=[
+                "Retrieves mentions, replies, likes, follows, and other notifications",
+                "Includes post context for notifications about specific posts",
+                "Supports real-time monitoring of social interactions"
+            ],
+            limits=[
+                "Requires Bluesky credentials",
+                "Limited to authenticated user's notifications"
+            ],
+            description="Fetch recent notifications (mentions, replies, likes, follows, etc.)."
+        ),
+        "reply_to_bluesky_post": ToolSpec(
+            name="reply_to_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "text: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "url", "message"]
+            },
+            strengths=[
+                "Creates threaded replies to existing posts",
+                "Automatically fetches post CID if not provided",
+                "Maintains conversation context and threading"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Replies limited to 300 characters"
+            ],
+            description="Reply to a Bluesky post, creating a threaded conversation."
+        ),
+        "like_bluesky_post": ToolSpec(
+            name="like_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "message"]
+            },
+            strengths=[
+                "Adds likes to posts via AT Protocol",
+                "Automatically fetches post CID if not provided",
+                "Provides engagement feedback to post authors"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Can only like posts once per account"
+            ],
+            description="Like a Bluesky post."
+        ),
+        "repost_bluesky_post": ToolSpec(
+            name="repost_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "message"]
+            },
+            strengths=[
+                "Reposts (boosts) content to your followers",
+                "Automatically fetches post CID if not provided",
+                "Increases post visibility and engagement"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Can only repost posts once per account"
+            ],
+            description="Repost (boost) a Bluesky post to your followers."
+        ),
         "organize_files": ToolSpec(
             name="organize_files",
             kind="tool",
@@ -543,6 +651,31 @@ def generate_tool_catalog() -> List[ToolSpec]:
                 "Does not bundle sub-folder creation (combine with organize_files if needed)"
             ],
             description="Create ZIP archives with optional filename pattern and extension filters."
+        ),
+        # Knowledge Tools (Factual Information)
+        "wiki_lookup": ToolSpec(
+            name="wiki_lookup",
+            kind="knowledge_tool",
+            io={
+                "in": ["query: str"],
+                "out": ["title", "summary", "url", "confidence", "error", "error_type", "error_message"]
+            },
+            strengths=[
+                "FASTEST way to get factual overviews and background information",
+                "Uses Wikipedia REST API with intelligent caching (24-hour TTL)",
+                "Returns structured data: title, summary, source URL, confidence score",
+                "Perfect for quick reference, definitions, and factual verification",
+                "No web scraping or browser automation - pure API calls",
+                "Cached responses load instantly on repeat queries"
+            ],
+            limits=[
+                "Limited to Wikipedia content only (no other knowledge sources yet)",
+                "May return low confidence for ambiguous or non-existent topics",
+                "Summaries are excerpts only - use browser tools for full articles",
+                "Requires internet connection for uncached queries",
+                "404s are handled gracefully with structured error responses"
+            ],
+            description="Look up factual information on Wikipedia with fast API access and caching."
         ),
         # Browser Tools (Separate Hierarchy)
         "google_search": ToolSpec(

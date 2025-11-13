@@ -100,7 +100,7 @@ export default function ThingsYouCanTryToast({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 20 }}
         transition={{ duration: 0.3 }}
-        className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50"
+        className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-40"
       >
         <div className="glass rounded-xl px-4 py-3 border border-white/20 shadow-lg backdrop-blur-xl flex items-center space-x-3 max-w-md">
           <span className="text-xl">{suggestion.icon}</span>

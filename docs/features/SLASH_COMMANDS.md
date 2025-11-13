@@ -33,7 +33,8 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 **Agent:** File Agent
 **Capabilities:**
 - Search for documents
-- List multiple related documents (new!)
+- **List indexed documents** (directory-style listing)
+- List multiple related documents (semantic search)
 - Organize files by category
 - Create ZIP archives
 - Take document screenshots
@@ -45,23 +46,49 @@ Slash commands provide a **direct interface to specialized agents**, bypassing t
 /files Create a ZIP of all images in Downloads
 /files Find documents about machine learning
 /files Take a screenshot of page 5 in report.pdf
+
+# Document Directory Listing (NEW)
+/files list                    # List all indexed documents
+/files list guitar            # List documents containing "guitar"
+/files show folder=finance    # List documents in finance folder
+/files browse                 # Browse all indexed documents
+/files                        # Same as /files list
+
+# Semantic Search for Related Documents
 /files show all guitar tab documents
 /files list all PDF files
 /files pull up all meeting notes
 ```
 
-**File Listing (New Feature):**
-The `/files` command now supports listing multiple related documents. Use keywords like "show all", "list all", "pull up all", or "find all" followed by a description to get a structured list of matching files.
+**Document Listing Features:**
 
-**Response Format:**
-When listing files, you'll receive a `file_list` response with:
-- A summary message (e.g., "Found 4 guitar tab documents")
-- A `files` array containing:
-  - `name`: Filename
-  - `path`: Full file path
-  - `score`: Similarity score (0-1)
-  - `meta`: File type and optional page count
-- Actions: "Reveal in Finder" and "Copy path" for each file
+1. **Directory Listing** (`/files list`): Browse all indexed documents with metadata like file size, modification date, and preview snippets. Supports filtering by name or folder.
+
+2. **Semantic Search** (`/files show all <topic>`): Find multiple related documents using natural language queries. Use keywords like "show all", "list all", "pull up all", or "find all" followed by a description.
+
+**Response Formats:**
+
+1. **Directory Listing** (`/files list`): Returns a `document_list` response with:
+   - A summary message (e.g., "Found 12 documents")
+   - A `documents` array containing:
+     - `name`: Filename
+     - `path`: Full file path
+     - `size`: File size in bytes
+     - `modified`: Last modification date
+     - `size_human`: Human-readable file size (e.g., "1.2 MB")
+     - `preview`: Text preview snippet
+     - `type`: File extension
+     - `total_pages`: Page count (for PDFs, etc.)
+   - Actions: "Reveal in Finder" and "Copy path" for each document
+
+2. **Semantic Search** (`/files show all <topic>`): Returns a `file_list` response with:
+   - A summary message (e.g., "Found 4 guitar tab documents")
+   - A `files` array containing:
+     - `name`: Filename
+     - `path`: Full file path
+     - `score`: Similarity score (0-1)
+     - `meta`: File type and optional page count
+   - Actions: "Reveal in Finder" and "Copy path" for each file
 
 **Example Response:**
 ```
@@ -75,6 +102,50 @@ Found 4 guitar tab documents
    Similarity: 85% • PDF • 3 pages
    [Reveal] [Copy]
 ...
+```
+
+---
+
+### 📖 Document Explanation
+```
+ /explain <topic>
+ /files explain <topic>
+```
+
+**Agent:** Explain Pipeline
+**Capabilities:**
+- Explain document content using semantic search
+- Summarize documents with AI synthesis
+- Answer questions about embedded documents
+- Provide detailed or concise explanations based on context
+
+**Examples:**
+```
+/explain Edgar Allan Poe
+/explain machine learning concepts
+/files explain the Tell-Tale Heart story
+/files summarize the quarterly report
+```
+
+**Smart Routing:**
+- `/explain` commands go directly to the explain pipeline
+- `/files explain...` or `/files summarize...` are automatically routed to the explain agent instead of file management
+- Natural language queries like "explain X" or "summarize Y" also trigger the explain pipeline
+
+**Response Features:**
+- Semantic search across all embedded documents
+- AI-powered synthesis with different styles (concise, comprehensive, comparative, chronological)
+- Rich telemetry including selected document, similarity score, and processing steps
+- Automatic fallback if no matching documents are found
+
+**Example Response:**
+```
+## Summary: Edgar Allan Poe
+
+Edgar Allan Poe (1809-1849) was an American writer, poet, editor, and literary critic best known for his poetry and short stories, particularly his tales of mystery and the macabre...
+
+*Summary length: 247 words*
+*Document: Poe_Biography.pdf (similarity: 0.92)*
 ```
 
 ---

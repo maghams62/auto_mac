@@ -13,29 +13,40 @@ export default function TypingIndicator() {
       variants={messageEntrance}
       className="flex justify-start mb-5"
     >
-      <div className={cn(
-        "max-w-[80%] rounded-lg px-5 py-3",
-        "bg-glass-assistant backdrop-blur-glass shadow-inset-border"
-      )}>
-        <div className="flex items-center space-x-2.5">
+      <motion.div
+        className={cn(
+          "relative max-w-[80%] rounded-full bg-white/8 px-4 py-2 backdrop-blur-glass shadow-inset-border overflow-hidden",
+          "before:absolute before:inset-0 before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent before:animate-shimmer"
+        )}
+        animate={{
+          boxShadow: [
+            "0 0 15px rgba(139, 92, 246, 0.3), 0 0 30px rgba(139, 92, 246, 0.1)",
+            "0 0 25px rgba(139, 92, 246, 0.5), 0 0 50px rgba(139, 92, 246, 0.2)",
+            "0 0 15px rgba(139, 92, 246, 0.3), 0 0 30px rgba(139, 92, 246, 0.1)"
+          ]
+        }}
+        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <div className="flex items-center justify-center space-x-1 relative z-10">
           {[0, 1, 2].map((i) => (
-            <motion.div
+            <motion.span
               key={i}
-              className="w-2 h-2 bg-accent-primary rounded-full"
+              className="w-1 h-4 bg-accent-primary rounded-full"
               animate={{
-                opacity: [0.4, 1, 0.4],
-                scale: [0.8, 1.2, 0.8],
+                x: [-8, 8, -8],
+                opacity: [0.5, 1, 0.5]
               }}
               transition={{
-                duration: 0.1, // duration.fast
+                duration: 1.4,
                 repeat: Infinity,
-                delay: i * 0.05,
                 ease: "easeInOut",
+                delay: i * 0.15,
+                opacity: { duration: 1.4, repeat: Infinity, delay: i * 0.15 }
               }}
             />
           ))}
         </div>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }

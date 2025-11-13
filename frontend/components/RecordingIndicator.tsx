@@ -39,6 +39,17 @@ export default function RecordingIndicator({
     };
   }, [isRecording]);
 
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (isRecording || isTranscribing || error) {
+      const originalStyle = window.getComputedStyle(document.body).overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalStyle;
+      };
+    }
+  }, [isRecording, isTranscribing, error]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -49,25 +60,25 @@ export default function RecordingIndicator({
     <AnimatePresence>
       {(isRecording || isTranscribing || error) && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop - Fixed to viewport */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40"
-            onClick={onStop} // Allow clicking backdrop to stop
+            onClick={onStop}
           />
 
-          {/* Modal */}
+          {/* Modal - Fixed to viewport, always centered */}
           <motion.div
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
-            className="fixed inset-0 flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none"
           >
-            <div className="relative w-full max-w-sm">
+            <div className="relative w-full max-w-sm pointer-events-auto">
               {/* Pulsing background rings */}
               {isRecording && (
                 <>
@@ -78,7 +89,7 @@ export default function RecordingIndicator({
                       opacity: [0.3, 0, 0.3],
                     }}
                     transition={{
-                      duration: 2,
+                      duration: 1.5,
                       repeat: Infinity,
                       ease: "easeInOut",
                     }}
@@ -90,7 +101,7 @@ export default function RecordingIndicator({
                       opacity: [0.2, 0, 0.2],
                     }}
                     transition={{
-                      duration: 2,
+                      duration: 1.5,
                       repeat: Infinity,
                       ease: "easeInOut",
                       delay: 0.5,
@@ -115,7 +126,7 @@ export default function RecordingIndicator({
                   ]
                 } : {}}
                 transition={{
-                  duration: 2,
+                  duration: 1.5,
                   repeat: isRecording ? Infinity : 0,
                   ease: "easeInOut"
                 }}
@@ -134,7 +145,7 @@ export default function RecordingIndicator({
                         scale: [1, 1.1, 1],
                       }}
                       transition={{
-                        duration: 2,
+                        duration: 1.5,
                         repeat: Infinity,
                         ease: "easeInOut",
                       }}
@@ -276,7 +287,7 @@ export default function RecordingIndicator({
                         ease: "easeInOut",
                       }}
                     >
-                      {Array.from({ length: 20 }).map((_, i) => (
+                      {Array.from({ length: 15 }).map((_, i) => (
                         <motion.div
                           key={i}
                           className="w-1 bg-gradient-to-t from-accent-danger to-accent-danger/60 rounded-full"
@@ -296,7 +307,7 @@ export default function RecordingIndicator({
                             duration: 0.8,
                             repeat: Infinity,
                             ease: "easeInOut",
-                            delay: i * 0.05,
+                            delay: i * 0.06,
                           }}
                         />
                       ))}

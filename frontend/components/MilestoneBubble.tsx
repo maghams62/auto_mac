@@ -39,7 +39,7 @@ export default function MilestoneBubble({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: -20 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        className="fixed top-24 left-1/2 transform -translate-x-1/2 z-50"
+        className="fixed top-24 left-1/2 transform -translate-x-1/2 z-40"
       >
         <div className="glass rounded-full px-4 py-2 border border-accent-cyan/35 shadow-glow-secondary flex items-center space-x-2.5">
           <span className="text-lg">{icon}</span>

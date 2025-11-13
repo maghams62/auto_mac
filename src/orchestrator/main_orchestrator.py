@@ -71,15 +71,25 @@ class MainOrchestrator:
         if self.session_manager:
             logger.info("[MAIN ORCHESTRATOR] Session management enabled")
 
-        # Initialize tool catalog
-        self.tool_catalog = generate_tool_catalog()
-        self.tool_specs = get_tool_specs_as_dicts(self.tool_catalog)
-
-        # Initialize components
+        # Initialize components (tool catalog generated lazily)
         self.planner = Planner(config)
         self.executor = PlanExecutor(config, enable_verification=True)
+        self._tool_catalog = None  # Lazy-loaded
 
-        logger.info(f"MainOrchestrator initialized with {len(self.tool_specs)} tools")
+        logger.info("MainOrchestrator initialized (lazy tool loading)")
+
+    @property
+    def tool_catalog(self):
+        """Lazily generate tool catalog when first accessed."""
+        if self._tool_catalog is None:
+            logger.info("[MAIN ORCHESTRATOR] Generating tool catalog (lazy loading)")
+            self._tool_catalog = generate_tool_catalog()
+        return self._tool_catalog
+
+    @property
+    def tool_specs(self):
+        """Get tool specs as dictionaries."""
+        return get_tool_specs_as_dicts(self.tool_catalog)
 
     def execute(
         self,

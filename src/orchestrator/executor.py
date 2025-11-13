@@ -440,6 +440,56 @@ class PlanExecutor:
                 "missing_parameters": missing_sorted,
             }
 
+        # Special validation for compose_email attachments
+        if tool_name == "compose_email" and "attachments" in parameters:
+            attachments = parameters.get("attachments")
+            if attachments:
+                if not isinstance(attachments, list):
+                    return {
+                        "error": True,
+                        "error_type": "InvalidAttachments",
+                        "error_message": (
+                            "compose_email 'attachments' parameter must be a list of file paths. "
+                            f"Got {type(attachments).__name__} instead."
+                        ),
+                        "retry_possible": False,
+                        "suggestion": "Use create_pages_doc to save report content to a file, then pass the file path in attachments."
+                    }
+                
+                for att in attachments:
+                    if not isinstance(att, str):
+                        return {
+                            "error": True,
+                            "error_type": "InvalidAttachments",
+                            "error_message": (
+                                "All items in 'attachments' must be strings (file paths). "
+                                f"Found {type(att).__name__} in the list."
+                            ),
+                            "retry_possible": False,
+                            "suggestion": "Ensure all attachments are file paths, not content/data objects."
+                        }
+                    
+                    # Check if string looks like TEXT CONTENT rather than a file path
+                    # Heuristics: contains newlines, is very long, or doesn't look like a path
+                    if len(att) > 500 or '\n' in att or '\r' in att:
+                        return {
+                            "error": True,
+                            "error_type": "InvalidAttachments",
+                            "error_message": (
+                                "Attachment appears to be TEXT CONTENT rather than a file path. "
+                                f"The attachment string is {len(att)} characters long and contains newlines. "
+                                "compose_email 'attachments' parameter requires FILE PATHS, not content."
+                            ),
+                            "retry_possible": True,
+                            "suggestion": (
+                                "To email a report: "
+                                "1. Use create_detailed_report to generate report content (returns report_content as TEXT) "
+                                "2. Use create_pages_doc(content=$stepN.report_content) to save it to a file (returns pages_path) "
+                                "3. Use compose_email(attachments=[$stepN.pages_path]) with the FILE PATH"
+                            ),
+                            "detected_content_preview": att[:200] + "..." if len(att) > 200 else att
+                        }
+
         return None
 
     def _check_dependencies(

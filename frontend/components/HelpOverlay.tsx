@@ -207,7 +207,7 @@ export default function HelpOverlay({ isOpen, onClose }: HelpOverlayProps) {
           >
             {Object.keys(groupedCommands).length === 0 ? (
               <div className="text-center py-12 text-text-muted">
-                No commands found matching "{searchQuery}"
+                No commands found matching &ldquo;{searchQuery}&rdquo;
               </div>
             ) : (
               Object.entries(groupedCommands).map(([category, commands]) => (

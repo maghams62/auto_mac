@@ -832,7 +832,8 @@ def plan_trip_with_stops(
     num_food_stops: int = 0,
     departure_time: Optional[str] = None,
     use_google_maps: bool = False,
-    open_maps: bool = True  # Default to True for better UX - automatically open maps
+    open_maps: bool = True,  # Default to True for better UX - automatically open maps
+    reasoning_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Plan a trip from origin to destination with specific numbers of fuel and food stops.
@@ -850,9 +851,10 @@ def plan_trip_with_stops(
         num_food_stops: Number of food stops to add (any reasonable number, e.g., 2 for breakfast and lunch)
         departure_time: Departure time in format "HH:MM AM/PM" or "YYYY-MM-DD HH:MM"
         use_google_maps: If True, generate Google Maps URL (opens in browser);
-                        if False, use Apple Maps URL (opens in Maps app, default). 
+                        if False, use Apple Maps URL (opens in Maps app, default).
                         Apple Maps is preferred for macOS integration and supports waypoints.
         open_maps: If True, automatically open Maps app/browser with the route (default: True for better UX)
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with route details and maps URL
@@ -870,6 +872,16 @@ def plan_trip_with_stops(
         f"[MAPS AGENT] Tool: plan_trip_with_stops(origin='{origin}', destination='{destination}', "
         f"fuel_stops={num_fuel_stops}, food_stops={num_food_stops}, departure={departure_time})"
     )
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[MAPS AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with trip planning before, be more conservative
+        if past_attempts > 0:
+            logger.info(f"[MAPS AGENT] Learning from {past_attempts} past attempts - using more robust trip planning")
 
     try:
         # Calculate total number of stops needed

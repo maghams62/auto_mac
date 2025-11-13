@@ -146,6 +146,13 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Initialize Bluesky notification service (after manager is created)
+from src.orchestrator.bluesky_notification_service import BlueskyNotificationService
+bluesky_notifications = BlueskyNotificationService(
+    connection_manager=manager,
+    config=config_manager.get_config()
+)
+
 # Track active agent tasks so we can support safe cancellation per session
 # Use async lock for thread-safe access
 _session_tasks_lock = asyncio.Lock()
@@ -264,9 +271,71 @@ async def process_agent_request(
         except Exception as e:
             logger.error(f"Failed to send plan to UI: {e}")
 
-    # Pass callback through run() method instead of setting on agent instance to avoid cross-talk
+    # Define callbacks for live plan progress tracking
+    def send_step_started(data: Dict[str, Any]):
+        """Send step started event to UI."""
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.send_message({
+                    "type": "plan_update",
+                    "step_id": data["step_id"],
+                    "status": "running",
+                    "sequence_number": data["sequence_number"],
+                    "timestamp": data["timestamp"]
+                }, websocket),
+                loop
+            )
+        except Exception as e:
+            logger.error(f"Failed to send step started event: {e}")
+
+    def send_step_succeeded(data: Dict[str, Any]):
+        """Send step succeeded event to UI."""
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.send_message({
+                    "type": "plan_update",
+                    "step_id": data["step_id"],
+                    "status": "completed",
+                    "sequence_number": data["sequence_number"],
+                    "output_preview": data.get("output_preview"),
+                    "timestamp": data["timestamp"]
+                }, websocket),
+                loop
+            )
+        except Exception as e:
+            logger.error(f"Failed to send step succeeded event: {e}")
+
+    def send_step_failed(data: Dict[str, Any]):
+        """Send step failed event to UI."""
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.send_message({
+                    "type": "plan_update",
+                    "step_id": data["step_id"],
+                    "status": "failed",
+                    "sequence_number": data["sequence_number"],
+                    "error": data.get("error"),
+                    "can_retry": data.get("can_retry", False),
+                    "timestamp": data["timestamp"]
+                }, websocket),
+                loop
+            )
+        except Exception as e:
+            logger.error(f"Failed to send step failed event: {e}")
+
+    # Pass callbacks through run() method instead of setting on agent instance to avoid cross-talk
     try:
-        result = await asyncio.to_thread(agent.run, user_message, session_id, cancel_event, None, send_plan_to_ui)
+        result = await asyncio.to_thread(
+            agent.run,
+            user_message,
+            session_id,
+            cancel_event,
+            None,  # context
+            send_plan_to_ui,
+            send_step_started,
+            send_step_succeeded,
+            send_step_failed
+        )
         result_dict = result if isinstance(result, dict) else {"message": str(result)}
         
         # Check if this is a retry_with_orchestrator result from slash command
@@ -294,6 +363,19 @@ async def process_agent_request(
             result_dict = result if isinstance(result, dict) else {"message": str(result)}
         
         result_status = result_dict.get("status", "completed")
+
+        # Send plan_finalize event to close out the plan streaming
+        await manager.send_message({
+            "type": "plan_finalize",
+            "status": result_status,
+            "timestamp": datetime.now().isoformat(),
+            "summary": {
+                "total_steps": len(result_dict.get("step_results", {})),
+                "completed_steps": sum(1 for step in result_dict.get("step_results", {}).values() if not step.get("error")),
+                "failed_steps": sum(1 for step in result_dict.get("step_results", {}).values() if step.get("error")),
+                "duration": result_dict.get("duration", None)
+            }
+        }, websocket)
 
         session_memory = session_manager.get_or_create_session(session_id)
 
@@ -350,20 +432,29 @@ async def process_agent_request(
                     elif isinstance(first_result, dict) and "maps_url" in first_result:
                         formatted_message = format_result_message(first_result)
 
-        # Extract files array from result if present (for file_list type responses)
+        # Extract files/documents array from result if present (for file_list and document_list type responses)
         files_array = None
+        documents_array = None
         if "step_results" in result_dict and result_dict["step_results"]:
             for step_result in result_dict["step_results"].values():
                 if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
                     files_array = step_result["files"]
+                    break
+                elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
+                    documents_array = step_result["documents"]
                     break
         elif "results" in result_dict and result_dict["results"]:
             for step_result in result_dict["results"].values():
                 if isinstance(step_result, dict) and step_result.get("type") == "file_list" and "files" in step_result:
                     files_array = step_result["files"]
                     break
+                elif isinstance(step_result, dict) and step_result.get("type") == "document_list" and "documents" in step_result:
+                    documents_array = step_result["documents"]
+                    break
         elif result_dict.get("type") == "file_list" and "files" in result_dict:
             files_array = result_dict["files"]
+        elif result_dict.get("type") == "document_list" and "documents" in result_dict:
+            documents_array = result_dict["documents"]
 
         # Extract completion_event from reply results if present
         completion_event = None
@@ -394,6 +485,10 @@ async def process_agent_request(
         if files_array is not None:
             response_payload["files"] = files_array
 
+        # Add documents array if present
+        if documents_array is not None:
+            response_payload["documents"] = documents_array
+
         # Add completion_event if present (for rich UI feedback)
         if completion_event is not None:
             response_payload["completion_event"] = completion_event
@@ -411,6 +506,13 @@ async def process_agent_request(
 
     except asyncio.CancelledError:
         logger.info(f"Agent task cancelled for session {session_id}")
+        # Send plan_finalize event for cancellation
+        await manager.send_message({
+            "type": "plan_finalize",
+            "status": "cancelled",
+            "timestamp": datetime.now().isoformat(),
+            "summary": {"reason": "user_cancelled"}
+        }, websocket)
         await manager.send_message({
             "type": "status",
             "status": "cancelled",
@@ -419,6 +521,13 @@ async def process_agent_request(
         }, websocket)
     except Exception as e:
         logger.error(f"Error executing task: {e}")
+        # Send plan_finalize event for errors
+        await manager.send_message({
+            "type": "plan_finalize",
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "summary": {"error": str(e)}
+        }, websocket)
         await manager.send_message({
             "type": "error",
             "message": f"Error: {str(e)}",
@@ -636,6 +745,184 @@ async def search_help(q: str, limit: int = 10):
     except Exception as e:
         logger.error(f"Error searching help: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/universal-search")
+async def universal_search(q: str, limit: int = 10, types: str = "document,image"):
+    """Universal semantic search across indexed documents and images with highlighting"""
+    try:
+        # Validate input
+        if not q or not q.strip():
+            raise HTTPException(status_code=400, detail="Query parameter 'q' is required and cannot be empty")
+
+        # Sanitize and limit query length
+        query = q.strip()[:200]  # Limit query length for security
+        if not query:
+            raise HTTPException(status_code=400, detail="Query cannot be empty after trimming")
+
+        # Parse types filter
+        requested_types = set(t.strip().lower() for t in types.split(',') if t.strip())
+        if not requested_types:
+            requested_types = {"document", "image"}
+
+        # Search results from different sources
+        all_results = []
+
+        # Document search
+        if "document" in requested_types:
+            try:
+                grouped_results = orchestrator.search.search_and_group(query)
+                doc_limit = limit if len(requested_types) == 1 else limit // 2
+
+                for result in grouped_results[:doc_limit]:
+                    # Get the best chunk for snippet generation
+                    best_chunk = max(result['chunks'], key=lambda x: x['similarity'])
+
+                    # Generate highlighted snippet
+                    snippet, highlight_offsets = _generate_highlighted_snippet(
+                        best_chunk['full_content'],
+                        query,
+                        context_chars=150
+                    )
+
+                    all_results.append({
+                        "result_type": "document",
+                        "file_path": result['file_path'],
+                        "file_name": result['file_name'],
+                        "file_type": result['file_type'],
+                        "page_number": best_chunk.get('page_number'),
+                        "total_pages": result['total_pages'],
+                        "similarity_score": round(result['max_similarity'], 3),
+                        "snippet": snippet,
+                        "highlight_offsets": highlight_offsets,
+                        "breadcrumb": _generate_breadcrumb(result['file_path']),
+                        "metadata": {
+                            "width": None,
+                            "height": None
+                        }
+                    })
+            except Exception as e:
+                logger.error(f"Error searching documents: {e}")
+
+        # Image search
+        if "image" in requested_types and orchestrator.indexer.image_indexer:
+            try:
+                image_results = orchestrator.indexer.image_indexer.search_images(query, top_k=limit // 2)
+
+                for result in image_results:
+                    all_results.append({
+                        "result_type": "image",
+                        "file_path": result['file_path'],
+                        "file_name": result['file_name'],
+                        "file_type": result['file_type'],
+                        "similarity_score": round(result['similarity_score'], 3),
+                        "snippet": result['caption'],  # Caption serves as snippet for images
+                        "highlight_offsets": [],  # No highlighting for images
+                        "breadcrumb": result['breadcrumb'],
+                        "thumbnail_url": f"/api/files/thumbnail?path={result['file_path']}&max_size=256",
+                        "preview_url": f"/api/files/preview?path={result['file_path']}",
+                        "metadata": {
+                            "width": result.get('width'),
+                            "height": result.get('height')
+                        }
+                    })
+            except Exception as e:
+                logger.error(f"Error searching images: {e}")
+
+        # Sort all results by similarity score (descending)
+        all_results.sort(key=lambda x: x['similarity_score'], reverse=True)
+
+        # Apply final limit
+        final_results = all_results[:limit]
+
+        return {
+            "query": query,
+            "count": len(final_results),
+            "results": final_results,
+            "types_searched": list(requested_types)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in universal search: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+def _generate_highlighted_snippet(content: str, query: str, context_chars: int = 150) -> tuple[str, list[list[int]]]:
+    """Generate a highlighted snippet with character offsets for query terms"""
+    import re
+
+    if not content:
+        return "", []
+
+    # Simple keyword extraction from query (split on spaces and punctuation)
+    keywords = re.findall(r'\b\w+\b', query.lower())
+    if not keywords:
+        # Fallback: return first part of content
+        snippet = content[:context_chars * 2] + "..." if len(content) > context_chars * 2 else content
+        return snippet, []
+
+    # Find best matching section
+    content_lower = content.lower()
+    best_start = 0
+    max_matches = 0
+
+    # Slide through content to find section with most keyword matches
+    window_size = context_chars * 2
+    for i in range(0, len(content) - window_size + 1, context_chars // 2):
+        window = content_lower[i:i + window_size]
+        matches = sum(1 for keyword in keywords if keyword in window)
+        if matches > max_matches:
+            max_matches = matches
+            best_start = i
+
+    # Extract snippet around best match
+    start = max(0, best_start - context_chars // 2)
+    end = min(len(content), start + context_chars * 2)
+
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet = snippet + "..."
+
+    # Find highlight offsets within the snippet
+    highlight_offsets = []
+    snippet_lower = snippet.lower()
+
+    for keyword in keywords:
+        # Find all occurrences of this keyword in the snippet
+        for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', snippet_lower, re.IGNORECASE):
+            start_offset = match.start()
+            end_offset = match.end()
+            # Adjust for the "..." prefix if present
+            if snippet.startswith("..."):
+                start_offset += 3
+                end_offset += 3
+            highlight_offsets.append([start_offset, end_offset])
+
+    return snippet, highlight_offsets
+
+
+def _generate_breadcrumb(file_path: str) -> str:
+    """Generate a breadcrumb path for display"""
+    # Get relative path from configured document directories
+    config = config_manager.get_config()
+    folders = config.get('documents', {}).get('folders', [])
+
+    for folder in folders:
+        try:
+            folder_path = Path(folder)
+            file_path_obj = Path(file_path)
+            if file_path_obj.is_relative_to(folder_path):
+                relative_path = file_path_obj.relative_to(folder_path)
+                return str(relative_path)
+        except (ValueError, OSError):
+            continue
+
+    # Fallback: return just the filename
+    return Path(file_path).name
 
 
 @app.get("/api/help/categories")
@@ -1144,10 +1431,41 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
 
 @app.post("/api/reindex")
 async def reindex_documents():
-    """Trigger document reindexing"""
+    """Trigger document and image reindexing"""
     try:
-        logger.info("Document reindexing not yet implemented in this API version")
-        return {"status": "info", "message": "Document reindexing feature coming soon"}
+        logger.info("Starting document and image reindexing")
+
+        # Get configured folders
+        config = config_manager.get_config()
+        folders = config.get('documents', {}).get('folders', [])
+
+        if not folders:
+            return {"status": "error", "message": "No folders configured for indexing"}
+
+        # Run indexing synchronously (this is a simple MVP - in production might want async)
+        indexed_docs = orchestrator.indexer.index_documents(folders)
+
+        # Get stats
+        doc_stats = orchestrator.indexer.get_stats()
+        image_stats = {}
+        if orchestrator.indexer.image_indexer:
+            image_stats = orchestrator.indexer.image_indexer.get_stats()
+
+        total_docs = doc_stats.get('total_documents', 0)
+        total_images = image_stats.get('total_images', 0)
+
+        logger.info(f"Reindexing complete: {indexed_docs} documents indexed, {total_images} total images")
+
+        return {
+            "status": "success",
+            "message": f"Indexed {indexed_docs} documents and {total_images} images",
+            "stats": {
+                "documents_indexed": indexed_docs,
+                "total_documents": total_docs,
+                "total_images": total_images,
+                "folders": folders
+            }
+        }
     except Exception as e:
         logger.error(f"Error reindexing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1218,6 +1536,12 @@ async def preview_file(path: str):
             Path(__file__).resolve().parent / "data" / "presentations",
             Path(__file__).resolve().parent / "data" / "screenshots",
         ]
+
+        # Also allow files from configured document folders
+        config = config_manager.get_config()
+        document_folders = config.get('documents', {}).get('folders', [])
+        for folder in document_folders:
+            allowed_roots.append(Path(folder).resolve())
         
         # Check if file is within an allowed directory
         is_allowed = False
@@ -1285,6 +1609,117 @@ async def preview_file(path: str):
     except Exception as e:
         logger.error(f"Error previewing file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/files/thumbnail")
+async def get_thumbnail(path: str, max_size: int = 256):
+    """
+    Generate and serve thumbnail for image files.
+
+    Args:
+        path: Path to the image file
+        max_size: Maximum dimension for thumbnail
+
+    Returns:
+        Thumbnail image as JPEG response
+    """
+    try:
+        from pathlib import Path
+        from PIL import Image
+        from fastapi.responses import FileResponse
+        import hashlib
+        import os
+
+        file_path = Path(path)
+
+        # Resolve to absolute path
+        if not file_path.is_absolute():
+            project_root = Path(__file__).resolve().parent
+            file_path = (project_root / file_path).resolve()
+
+        # Security: Only allow thumbnails for images in configured document folders
+        config = config_manager.get_config()
+        allowed_roots = config.get('documents', {}).get('folders', [])
+
+        is_allowed = False
+        for allowed_root in allowed_roots:
+            try:
+                allowed_path = Path(allowed_root).resolve()
+                file_path.resolve().relative_to(allowed_path)
+                is_allowed = True
+                break
+            except ValueError:
+                continue
+
+        # Also allow from standard data directories for backwards compatibility
+        if not is_allowed:
+            standard_roots = [
+                Path(__file__).resolve().parent / "data" / "reports",
+                Path(__file__).resolve().parent / "data" / "presentations",
+                Path(__file__).resolve().parent / "data" / "screenshots",
+            ]
+            for allowed_root in standard_roots:
+                try:
+                    file_path.resolve().relative_to(allowed_root.resolve())
+                    is_allowed = True
+                    break
+                except ValueError:
+                    continue
+
+        if not is_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Thumbnail not allowed for this path"
+            )
+
+        # Check if file exists and is an image
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+
+        ext = file_path.suffix.lower()
+        supported_image_types = config.get('documents', {}).get('supported_image_types', [])
+        if ext not in supported_image_types:
+            raise HTTPException(status_code=400, detail=f"Not a supported image type: {ext}")
+
+        # Thumbnail cache settings
+        thumbnail_config = config.get('images', {}).get('thumbnail', {})
+        cache_dir = Path(thumbnail_config.get('cache_dir', 'data/cache/thumbnails'))
+        quality = thumbnail_config.get('quality', 85)
+
+        # Create cache directory
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate thumbnail filename
+        file_hash = hashlib.md5(str(file_path).encode()).hexdigest()[:8]
+        thumbnail_filename = f"{file_hash}_{max_size}x{max_size}.jpg"
+        thumbnail_path = cache_dir / thumbnail_filename
+
+        # Generate thumbnail if it doesn't exist
+        if not thumbnail_path.exists():
+            try:
+                with Image.open(file_path) as img:
+                    # Create thumbnail
+                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+                    # Save thumbnail
+                    img.save(thumbnail_path, 'JPEG', quality=quality)
+            except Exception as e:
+                logger.error(f"Error generating thumbnail for {file_path}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {e}")
+
+        # Return thumbnail
+        return FileResponse(
+            str(thumbnail_path),
+            media_type='image/jpeg',
+            filename=thumbnail_filename
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving thumbnail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
@@ -1460,16 +1895,22 @@ async def text_to_speech_api(
 # Startup and shutdown handlers for recurring scheduler
 @app.on_event("startup")
 async def startup_event():
-    """Start the recurring task scheduler on app startup."""
+    """Start background services on app startup."""
     logger.info("Starting recurring task scheduler...")
     await recurring_scheduler.start()
+
+    logger.info("Starting Bluesky notification service...")
+    await bluesky_notifications.start()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the recurring task scheduler on app shutdown."""
+    """Stop background services on app shutdown."""
     logger.info("Stopping recurring task scheduler...")
     await recurring_scheduler.stop()
+
+    logger.info("Stopping Bluesky notification service...")
+    await bluesky_notifications.stop()
 
 
 # API endpoint for managing recurring tasks
@@ -1588,17 +2029,20 @@ class OAuthCallbackRequest(BaseModel):
 async def oauth_callback(request: OAuthCallbackRequest):
     """
     Handle OAuth callback with authorization code.
-    
-    This endpoint processes OAuth callbacks from various providers.
-    The actual OAuth flow implementation depends on the provider.
+
+    This endpoint processes OAuth callbacks, specifically implementing Spotify OAuth flow.
     """
     try:
         logger.info(f"OAuth callback received: code={request.code[:20]}..., state={request.state}, redirect_uri={request.redirect_uri}")
-        
-        # Get OAuth configuration
+
+        # Check if this is a Spotify callback (state contains 'spotify')
+        if request.state and 'spotify' in request.state:
+            return await _handle_spotify_callback(request)
+
+        # Get OAuth configuration for other providers
         oauth_config = config_manager.get_config().get("oauth", {})
         allowed_domains = oauth_config.get("allowed_redirect_domains", ["localhost", "127.0.0.1"])
-        
+
         # Validate redirect URI
         try:
             redirect_url = request.redirect_uri
@@ -1606,14 +2050,10 @@ async def oauth_callback(request: OAuthCallbackRequest):
             # In a real implementation, you would validate against allowed domains
         except Exception as e:
             logger.warning(f"Invalid redirect URI: {e}")
-        
-        # TODO: Implement actual OAuth token exchange based on provider
+
+        # TODO: Implement actual OAuth token exchange for other providers
         # This is a placeholder that returns success
-        # In production, you would:
-        # 1. Exchange the authorization code for tokens
-        # 2. Store tokens securely
-        # 3. Return appropriate response
-        
+
         return {
             "success": True,
             "message": "Authentication successful. Redirecting...",
@@ -1623,6 +2063,58 @@ async def oauth_callback(request: OAuthCallbackRequest):
     except Exception as e:
         logger.error(f"Error processing OAuth callback: {e}")
         raise HTTPException(status_code=500, detail=f"OAuth callback failed: {str(e)}")
+
+
+async def _handle_spotify_callback(request: OAuthCallbackRequest):
+    """
+    Handle Spotify OAuth callback by exchanging authorization code for tokens.
+    """
+    try:
+        logger.info("Processing Spotify OAuth callback")
+        logger.info(f"Code: {request.code[:20]}..., Redirect URI: {request.redirect_uri}")
+
+        # Get Spotify API configuration
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+        
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+        logger.info(f"Token storage path: {api_config.token_storage_path}")
+
+        # Initialize Spotify API client
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=request.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        # Exchange authorization code for tokens
+        logger.info("Exchanging authorization code for tokens")
+        token = client.exchange_code_for_token(request.code)
+
+        if token:
+            logger.info(f"Spotify authentication successful! Token saved to: {api_config.token_storage_path}")
+            # Verify the token was saved
+            if client.is_authenticated():
+                logger.info("Token verified - client is authenticated")
+            else:
+                logger.warning("Token exchange succeeded but client not showing as authenticated")
+            
+            return {
+                "success": True,
+                "message": "Spotify authentication successful! You can now play music.",
+                "redirect_to": "/",
+                "provider": "spotify"
+            }
+        else:
+            logger.error("Failed to exchange authorization code for tokens - token is None")
+            raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+
+    except Exception as e:
+        logger.error(f"Error processing Spotify OAuth callback: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Spotify authentication failed: {str(e)}")
 
 
 @app.get("/api/auth/redirect-url")
@@ -1681,10 +2173,17 @@ async def spotify_auth_status():
     try:
         from src.integrations.spotify_api import SpotifyAPIClient
         from src.config_validator import get_config_accessor
+        import os
 
         config = config_manager.get_config()
         accessor = get_config_accessor(config)
         api_config = accessor.get_spotify_api_config()
+
+        # Check if token file exists
+        token_file_exists = False
+        if api_config.token_storage_path:
+            token_file_exists = os.path.exists(api_config.token_storage_path)
+            logger.info(f"Token file check: {api_config.token_storage_path} exists={token_file_exists}")
 
         client = SpotifyAPIClient(
             client_id=api_config.client_id,
@@ -1694,13 +2193,17 @@ async def spotify_auth_status():
         )
 
         is_auth = client.is_authenticated()
+        logger.info(f"Spotify auth status: authenticated={is_auth}, has_token={client.token is not None}, token_file_exists={token_file_exists}")
+        
         return {
             "authenticated": is_auth,
-            "has_credentials": bool(api_config.client_id and api_config.client_secret)
+            "has_credentials": bool(api_config.client_id and api_config.client_secret),
+            "token_file_exists": token_file_exists,
+            "has_token_object": client.token is not None
         }
     except Exception as e:
-        logger.warning(f"Spotify auth status check failed: {e}")
-        return {"authenticated": False, "has_credentials": False}
+        logger.warning(f"Spotify auth status check failed: {e}", exc_info=True)
+        return {"authenticated": False, "has_credentials": False, "error": str(e)}
 
 
 @app.get("/api/spotify/token")
@@ -1724,12 +2227,19 @@ async def get_spotify_token():
         if not client.is_authenticated():
             raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
 
-        # Get the token data
-        token_data = client._load_token()
-        if not token_data or "access_token" not in token_data:
+        # Get the access token directly from the client's token object
+        if not client.token or not client.token.access_token:
             raise HTTPException(status_code=401, detail="No valid token available")
 
-        return {"access_token": token_data["access_token"]}
+        # Refresh token if it's expired
+        if client.token.is_expired():
+            try:
+                client._refresh_token()
+            except Exception as e:
+                logger.error(f"Failed to refresh token: {e}")
+                raise HTTPException(status_code=401, detail="Token expired and refresh failed")
+
+        return {"access_token": client.token.access_token}
     except HTTPException:
         raise
     except Exception as e:
@@ -1796,6 +2306,197 @@ async def get_spotify_device_id():
     if not web_player_device_id:
         raise HTTPException(status_code=404, detail="No web player device registered")
     return {"device_id": web_player_device_id}
+
+
+@app.get("/api/spotify/devices")
+async def get_spotify_devices():
+    """Get available Spotify devices."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        devices = client.get_devices()
+        return {"devices": devices}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting Spotify devices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spotify/pause")
+async def spotify_pause():
+    """Pause Spotify playback."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        result = client.pause_playback()
+        logger.info(f"Pause result: {result}")
+        # Handle 204 No Content responses
+        if result.get("status_code") == 204:
+            return {"success": True, "message": "Playback paused"}
+        return {"success": True, "message": "Playback paused", "result": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pausing playback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/spotify/status")
+async def get_spotify_status():
+    """Get current Spotify playback status."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        status = client.get_current_playback()
+        return {"status": status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting Spotify status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spotify/play")
+async def spotify_play():
+    """Resume Spotify playback."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        result = client.resume_playback()
+        # Handle 204 No Content responses
+        if result.get("status_code") == 204:
+            return {"success": True, "message": "Playback resumed"}
+        return {"success": True, "message": "Playback resumed", "result": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resuming playback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spotify/next")
+async def spotify_next():
+    """Skip to next track."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        # Use web player device if available
+        global web_player_device_id
+        result = client.skip_to_next(device_id=web_player_device_id)
+        return {"success": True, "message": "Skipped to next track"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error skipping to next track: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spotify/previous")
+async def spotify_previous():
+    """Skip to previous track."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        # Use web player device if available
+        global web_player_device_id
+        result = client.skip_to_previous(device_id=web_player_device_id)
+        return {"success": True, "message": "Skipped to previous track"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error skipping to previous track: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

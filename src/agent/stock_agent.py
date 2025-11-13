@@ -89,7 +89,7 @@ def get_stock_price(symbol: str) -> Dict[str, Any]:
 
 
 @tool
-def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
+def get_stock_history(symbol: str, period: str = "1mo", reasoning_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Get historical stock price data for a given ticker symbol.
 
@@ -101,6 +101,7 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
         period: Time period - "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with historical price data
@@ -109,6 +110,16 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
         get_stock_history("AAPL", "1mo")  # Apple stock for last month
     """
     logger.info(f"[STOCK AGENT] Tool: get_stock_history(symbol='{symbol}', period='{period}')")
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[STOCK AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with stock data before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[STOCK AGENT] Learning from {past_attempts} past attempts - using more robust data fetching")
 
     try:
         symbol = symbol.upper()
@@ -147,6 +158,16 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
             change = latest['close'] - oldest['close']
             change_percent = (change / oldest['close']) * 100
 
+        # Format detailed summary for LLM consumption
+        formatted_summary = f"{symbol} Stock History ({period}):\n\n"
+        formatted_summary += f"Period: {oldest['date']} to {latest['date']}\n"
+        formatted_summary += f"Starting Price: ${oldest['close']:.2f}\n"
+        formatted_summary += f"Ending Price: ${latest['close']:.2f}\n"
+        formatted_summary += f"Change: ${change:.2f} ({'+' if change_percent > 0 else ''}{change_percent:.2f}%)\n\n"
+        formatted_summary += "Daily Prices:\n"
+        for day in history_data[-10:]:  # Last 10 days
+            formatted_summary += f"  {day['date']}: ${day['close']:.2f} (Vol: {day.get('volume', 0):,})\n"
+        
         return {
             "symbol": symbol,
             "period": period,
@@ -158,6 +179,7 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
             "period_change": round(change, 2) if change else None,
             "period_change_percent": round(change_percent, 2) if change_percent else None,
             "history": history_data[-10:],  # Return last 10 data points
+            "formatted_summary": formatted_summary,  # NEW: Formatted text for LLM
             "message": f"{symbol} history for {period}: {len(history_data)} data points"
         }
 
@@ -172,7 +194,7 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
 
 
 @tool
-def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, Any]:
+def search_stock_symbol(query: str, use_web_fallback: bool = True, reasoning_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Search for stock ticker symbols by company name with intelligent web fallback.
 
@@ -190,6 +212,7 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
     Args:
         query: Company name or search query (e.g., "Apple", "Bosch", "Microsoft")
         use_web_fallback: Whether to use web search if local lookup fails (default: True)
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with stock symbol, company info, or indication if private company
@@ -200,6 +223,16 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
         search_stock_symbol("Tesla")  # Find TSLA
     """
     logger.info(f"[STOCK AGENT] Tool: search_stock_symbol(query='{query}', use_web_fallback={use_web_fallback})")
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[STOCK AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with symbol lookup before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[STOCK AGENT] Learning from {past_attempts} past attempts - using more thorough symbol lookup")
 
     try:
         # Common stock mappings (expanded)

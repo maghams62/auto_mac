@@ -65,10 +65,45 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showConnecting, setShowConnecting] = useState(false);
+  const [scrollToBottomVisible, setScrollToBottomVisible] = useState(false);
 
   const apiBaseUrl = getApiBaseUrl();
   const scriptLoadedRef = useRef(false);
   const playerInitializedRef = useRef(false);
+
+  // Detect ScrollToBottom button visibility for collision avoidance
+  useEffect(() => {
+    const checkScrollToBottomVisibility = () => {
+      const scrollToBottomButton = document.querySelector('[aria-label="Scroll to bottom"]');
+      if (scrollToBottomButton) {
+        const computedStyle = window.getComputedStyle(scrollToBottomButton);
+        const isVisible = computedStyle.display !== 'none' && computedStyle.opacity !== '0';
+        setScrollToBottomVisible(isVisible);
+      } else {
+        setScrollToBottomVisible(false);
+      }
+    };
+
+    // Check immediately
+    checkScrollToBottomVisibility();
+
+    // Set up observer for DOM changes
+    const observer = new MutationObserver(checkScrollToBottomVisibility);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class']
+    });
+
+    // Also check periodically in case of dynamic visibility changes
+    const interval = setInterval(checkScrollToBottomVisibility, 1000);
+
+    return () => {
+      observer.disconnect();
+      clearInterval(interval);
+    };
+  }, []);
 
   // Check authentication status
   useEffect(() => {
@@ -76,6 +111,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
       try {
         const response = await fetch(`${apiBaseUrl}/api/spotify/auth-status`);
         const data = await response.json();
+        console.log("Spotify auth status:", data);
         setIsAuthenticated(data.authenticated || false);
         setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated");
       } catch (error) {
@@ -84,9 +120,30 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
       }
     };
 
+    // Check immediately
     checkAuth();
-    const interval = setInterval(checkAuth, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    
+    // Check frequently for the first 30 seconds (in case user just authenticated)
+    const quickCheckInterval = setInterval(checkAuth, 2000);
+    setTimeout(() => {
+      clearInterval(quickCheckInterval);
+    }, 30000);
+    
+    // Then check every 5 minutes
+    const slowCheckInterval = setInterval(checkAuth, 5 * 60 * 1000);
+    
+    // Also check when window regains focus (user might have authenticated in another tab)
+    const handleFocus = () => {
+      console.log("Window focused, re-checking Spotify auth status");
+      checkAuth();
+    };
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      clearInterval(quickCheckInterval);
+      clearInterval(slowCheckInterval);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [apiBaseUrl]);
 
   // Get access token from backend
@@ -254,7 +311,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   // Show login button if not authenticated
   if (!isAuthenticated) {
     return (
-      <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className={`fixed ${scrollToBottomVisible ? 'bottom-20' : 'bottom-6'} right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-500 transition-all`}>
         <div className="bg-gradient-to-br from-gray-900/95 to-gray-800/95 backdrop-blur-xl border border-gray-700/50 rounded-2xl p-5 shadow-2xl hover:shadow-green-500/20 transition-all duration-300 hover:scale-105">
           <div className="flex items-center gap-4">
             <div className="flex-shrink-0">
@@ -283,7 +340,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   // Minimized view
   if (isMinimized) {
     return (
-      <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className={`fixed ${scrollToBottomVisible ? 'bottom-20' : 'bottom-6'} right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300 transition-all`}>
         <button
           onClick={() => setIsMinimized(false)}
           className="group bg-gradient-to-br from-gray-900/95 to-gray-800/95 backdrop-blur-xl border border-gray-700/50 rounded-2xl shadow-2xl hover:shadow-green-500/20 transition-all duration-300 hover:scale-105 active:scale-95"
@@ -326,7 +383,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   // Full player view
   return (
     <div
-      className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-500"
+      className={`fixed ${scrollToBottomVisible ? 'bottom-20' : 'bottom-6'} right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-500 transition-all`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

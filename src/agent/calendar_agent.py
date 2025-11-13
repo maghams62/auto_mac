@@ -145,6 +145,63 @@ def get_calendar_event_details(
 
 
 @tool
+def create_calendar_event(
+    title: str,
+    start_time: str,
+    end_time: str,
+    location: Optional[str] = None,
+    notes: Optional[str] = None,
+    attendees: Optional[List[str]] = None,
+    calendar_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a new calendar event.
+
+    CALENDAR AGENT - LEVEL 1: Event Creation
+    Use this to add new events to your calendar, especially for commitments
+    discovered in emails or reminders that don't have calendar entries yet.
+
+    Args:
+        title: Event title/summary
+        start_time: Start time in ISO format (e.g., "2024-01-15T14:00:00")
+        end_time: End time in ISO format (e.g., "2024-01-15T15:00:00")
+        location: Optional location for the event
+        notes: Optional notes or description
+        attendees: Optional list of attendee email addresses
+        calendar_name: Optional calendar name (uses default if not specified)
+
+    Returns:
+        Dictionary with success status and event details
+    """
+    logger.info(f"[CALENDAR AGENT] Tool: create_calendar_event(title='{title}', start='{start_time}')")
+
+    try:
+        config, calendar_automation = _load_calendar_runtime()
+
+        result = calendar_automation.create_event(
+            title=title,
+            start_time=start_time,
+            end_time=end_time,
+            location=location,
+            notes=notes,
+            attendees=attendees,
+            calendar_name=calendar_name
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[CALENDAR AGENT] Error in create_calendar_event: {e}")
+        return {
+            "success": False,
+            "error": True,
+            "error_type": "CalendarCreationError",
+            "error_message": str(e),
+            "retry_possible": True
+        }
+
+
+@tool
 def prepare_meeting_brief(
     event_title: str,
     start_time_window: Optional[str] = None,
@@ -411,6 +468,7 @@ Keep it concise and actionable."""
 CALENDAR_AGENT_TOOLS = [
     list_calendar_events,
     get_calendar_event_details,
+    create_calendar_event,
     prepare_meeting_brief,
 ]
 

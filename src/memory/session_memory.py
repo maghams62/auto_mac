@@ -16,6 +16,8 @@ from threading import Lock
 from collections import OrderedDict
 
 from .context_bus import ContextBus, ContextPurpose
+from .user_memory_store import PersistentContext
+from .memory_extraction_pipeline import MemoryExtractionPipeline
 
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ class SessionContext:
     token_budget_metadata: Dict[str, Any] = field(default_factory=dict)
     derived_topic: Optional[str] = None
     purpose: str = "general"
+    persistent_context: Optional['PersistentContext'] = None
 
     def headline(self) -> str:
         """
@@ -202,20 +205,29 @@ class SessionMemory:
     def __init__(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         user_context: Optional[UserContext] = None,
+        user_memory_store: Optional['UserMemoryStore'] = None,
         enable_reasoning_trace: bool = False,
-        enable_retry_logging: bool = False
+        enable_retry_logging: bool = False,
+        active_context_window: int = 5,
+        enable_conversation_summary: bool = False
     ):
         """
         Initialize session memory.
 
         Args:
             session_id: Unique session identifier (generated if not provided)
+            user_id: User identifier for persistent memory association
             user_context: User preferences and patterns (new if not provided)
+            user_memory_store: Persistent user memory store instance
             enable_reasoning_trace: Enable reasoning trace feature (default: False)
             enable_retry_logging: Enable retry logging feature (default: False)
+            active_context_window: Number of recent interactions to keep in active context (default: 5)
+            enable_conversation_summary: Enable conversation summarization for token management (default: False)
         """
         self.session_id = session_id or str(uuid.uuid4())
+        self.user_id = user_id  # User identifier for persistent memory
         self.status = SessionStatus.ACTIVE
         self.created_at = datetime.now().isoformat()
         self.last_active_at = self.created_at
@@ -223,12 +235,27 @@ class SessionMemory:
         # Conversation history
         self.interactions: List[Interaction] = []
 
+        # Bounded conversational memory window
+        self.active_context_window = active_context_window
+        self._active_window_start: Optional[int] = None
+        self._enable_conversation_summary = enable_conversation_summary  # Index where active window begins
+
         # Shared context for inter-agent communication
         # e.g., {"last_file_path": "/path/to/file", "current_presentation_id": "123"}
         self.shared_context: Dict[str, Any] = {}
 
         # User preferences and patterns
         self.user_context = user_context or UserContext()
+
+        # Persistent user memory store (lazy-loaded)
+        self.user_memory_store = user_memory_store
+
+        # Memory extraction pipeline (created when user_memory_store is available)
+        self.memory_extraction_pipeline = None
+        if self.user_memory_store:
+            self.memory_extraction_pipeline = MemoryExtractionPipeline(
+                user_memory_store=self.user_memory_store
+            )
 
         # Additional metadata
         self.metadata: Dict[str, Any] = {
@@ -264,7 +291,7 @@ class SessionMemory:
         # Context bus for standardized context exchange
         self._context_bus = ContextBus()
 
-        logger.info(f"[SESSION MEMORY] Created session: {self.session_id}")
+        logger.info(f"[SESSION MEMORY] Created session: {self.session_id} (active window: {active_context_window})")
 
     def add_interaction(
         self,
@@ -311,6 +338,33 @@ class SessionMemory:
                 for result in step_results.values():
                     if "tool" in result:
                         self.metadata["tools_used"].add(result["tool"])
+
+            # Check if context window should be reset based on heuristics
+            if self.should_reset_context_window(interaction):
+                self.reset_active_context_window()
+
+            # Extract and store memories from this interaction
+            if self.memory_extraction_pipeline:
+                try:
+                    extraction_result = self.memory_extraction_pipeline.extract_and_store(
+                        user_request=user_request,
+                        agent_response=agent_response,
+                        interaction_id=interaction_id
+                    )
+
+                    # Store extraction stats in interaction metadata
+                    interaction.metadata["memory_extraction"] = {
+                        "extracted_count": len(extraction_result.extracted_memories),
+                        "duplicates_skipped": len(extraction_result.duplicates_skipped),
+                        "stored_count": len(extraction_result.stored_memories),
+                        "processing_stats": extraction_result.processing_stats
+                    }
+
+                    logger.debug(f"[SESSION MEMORY] Memory extraction completed: {extraction_result.processing_stats}")
+
+                except Exception as e:
+                    logger.error(f"[SESSION MEMORY] Memory extraction failed: {e}")
+                    interaction.metadata["memory_extraction_error"] = str(e)
 
             logger.debug(f"[SESSION MEMORY] Added interaction {interaction_id}")
 
@@ -387,6 +441,133 @@ class SessionMemory:
             List of recent interactions
         """
         return self.interactions[-n:] if self.interactions else []
+
+    def get_active_context_interactions(self) -> List[Interaction]:
+        """
+        Get interactions within the active context window.
+
+        Returns interactions from the active window start to the most recent,
+        limited by the active_context_window size.
+
+        Returns:
+            List of interactions in the active context window
+        """
+        if not self.interactions:
+            return []
+
+        # Start from the active window start index, or from the beginning
+        # if no explicit window start has been set
+        start_idx = self._active_window_start or 0
+        window_interactions = self.interactions[start_idx:]
+
+        # Limit to the configured window size
+        if len(window_interactions) > self.active_context_window:
+            window_interactions = window_interactions[-self.active_context_window:]
+
+        return window_interactions
+
+    def reset_active_context_window(self):
+        """
+        Reset the active context window to start from the current interaction.
+
+        This should be called when starting a new workflow or when a task
+        is completed to prevent context bleed-through.
+        """
+        with self._lock:
+            if self.interactions:
+                self._active_window_start = len(self.interactions) - 1
+                logger.debug(f"[SESSION MEMORY] Reset active context window to interaction {self._active_window_start}")
+            else:
+                self._active_window_start = None
+
+    def should_reset_context_window(self, interaction: Interaction) -> bool:
+        """
+        Determine if the active context window should be reset based on heuristics.
+
+        Heuristics for reset:
+        1. Explicit /clear command
+        2. Task completion (final_result.status in {"success", "partial_success"})
+        3. Major workflow transitions (e.g., switching from music to email)
+
+        Args:
+            interaction: The interaction to evaluate
+
+        Returns:
+            True if the context window should be reset
+        """
+        # Check for explicit clear command
+        user_request = interaction.user_request.lower().strip()
+        if user_request.startswith('/clear') or user_request == 'clear':
+            return True
+
+        # Check for task completion indicators in agent response
+        if interaction.agent_response:
+            # Check top-level status (agent records summary directly as response)
+            status = interaction.agent_response.get('status')
+
+            # Reset on successful or partially successful task completion
+            if status in {"success", "partial_success"}:
+                return True
+
+            # Keep nested check for backward compatibility/tests that might use final_result
+            final_result = interaction.agent_response.get('final_result', {})
+            nested_status = final_result.get('status')
+            if nested_status in {"success", "partial_success"}:
+                return True
+
+        return False
+
+    def get_conversation_summary(self, max_interactions: int = 3) -> str:
+        """
+        Generate a lightweight summary of recent conversation for token management.
+
+        This creates a condensed "task memo" of recent interactions when the
+        active context window becomes too large for efficient prompting.
+
+        Args:
+            max_interactions: Maximum interactions to summarize
+
+        Returns:
+            Condensed summary string suitable for LLM context
+        """
+        active_interactions = self.get_active_context_interactions()
+        if len(active_interactions) <= max_interactions:
+            # No need to summarize if within limits
+            return ""
+
+        # Take the most recent interactions for detailed summary
+        recent = active_interactions[-max_interactions:]
+        summary_lines = ["Recent Conversation Summary:"]
+
+        for interaction in recent:
+            user_msg = interaction.user_request[:100] + ("..." if len(interaction.user_request) > 100 else "")
+
+            if interaction.agent_response and interaction.agent_response.get("message"):
+                agent_msg = interaction.agent_response["message"][:100] + ("..." if len(interaction.agent_response["message"]) > 100 else "")
+                summary_lines.append(f"• User: {user_msg}")
+                summary_lines.append(f"  Agent: {agent_msg}")
+            else:
+                summary_lines.append(f"• User: {user_msg} (pending)")
+
+        # Add context about total interactions for continuity
+        older_count = len(active_interactions) - max_interactions
+        if older_count > 0:
+            summary_lines.append(f"• ... and {older_count} earlier interactions in this conversation")
+
+        return "\n".join(summary_lines)
+
+    def should_use_conversation_summary(self) -> bool:
+        """
+        Determine if conversation summary should be used instead of full history.
+
+        Returns:
+            True if active context window exceeds threshold and summarization is enabled
+        """
+        if not self._enable_conversation_summary:
+            return False
+
+        active_count = len(self.get_active_context_interactions())
+        return active_count > 8  # Threshold for summarization
 
     def get_conversation_history(
         self,
@@ -471,21 +652,52 @@ class SessionMemory:
         """
         Get context formatted for LangGraph state injection.
 
-        This can be merged into OrchestratorState or AgentState to provide
-        session awareness to the LangGraph execution.
+        This uses the active context window to provide bounded conversational memory
+        and prevent full-history bleed-through into prompts. Optionally uses
+        conversation summary for token management when window becomes large.
 
         Returns:
             Dictionary compatible with LangGraph state
         """
+        # Use active context window for conversation history
+        active_interactions = self.get_active_context_interactions()
+
+        # Check if we should use summary for token management
+        if self.should_use_conversation_summary():
+            # Use condensed summary instead of full history
+            conversation_summary = self.get_conversation_summary(max_interactions=3)
+            conversation_history = [{
+                "type": "summary",
+                "content": conversation_summary,
+                "timestamp": self.last_active_at
+            }]
+        else:
+            # Use full recent history from active window
+            conversation_history = []
+            for interaction in active_interactions[-5:]:  # Limit to 5 most recent in window
+                turn = {
+                    "timestamp": interaction.timestamp,
+                    "user": interaction.user_request,
+                }
+
+                if interaction.agent_response:
+                    turn["assistant"] = interaction.agent_response.get("message", "")
+                    turn["status"] = interaction.agent_response.get("status", "unknown")
+
+                conversation_history.append(turn)
+
         return {
             "session_id": self.session_id,
             "session_status": self.status.value,
-            "conversation_history": self.get_conversation_history(max_interactions=5),
+            "conversation_history": conversation_history,
             "shared_context": self.shared_context.copy(),
             "session_metadata": {
                 "created_at": self.created_at,
                 "last_active_at": self.last_active_at,
                 "total_requests": self.metadata["total_requests"],
+                "active_context_window": self.active_context_window,
+                "active_window_size": len(active_interactions),
+                "using_summary": self.should_use_conversation_summary(),
             }
         }
 
@@ -591,6 +803,19 @@ class SessionMemory:
                 )
                 derived_topic = temp_context.headline()
 
+            # Build persistent context if available
+            persistent_context = None
+            if self.user_memory_store and hasattr(self.user_memory_store, 'build_persistent_context'):
+                try:
+                    persistent_context = self.user_memory_store.build_persistent_context(
+                        query=original_query,
+                        top_k=5,
+                        include_summaries=True
+                    )
+                    logger.debug(f"[SESSION MEMORY] Built persistent context with {len(persistent_context.top_persistent_memories)} memories")
+                except Exception as e:
+                    logger.error(f"[SESSION MEMORY] Failed to build persistent context: {e}")
+
             session_context = SessionContext(
                 original_query=original_query,
                 session_id=self.session_id,
@@ -599,7 +824,8 @@ class SessionMemory:
                 retrieval_handles=retrieval_handles,
                 token_budget_metadata=token_budget_metadata,
                 derived_topic=derived_topic,
-                purpose=purpose
+                purpose=purpose,
+                persistent_context=persistent_context
             )
 
             # Publish through context bus for telemetry and validation
@@ -896,6 +1122,7 @@ class SessionMemory:
         """
         result = {
             "session_id": self.session_id,
+            "user_id": self.user_id,
             "status": self.status.value,
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
@@ -934,7 +1161,11 @@ class SessionMemory:
         """
         # Restore reasoning_trace_enabled flag (default: False for backward compatibility)
         enable_reasoning_trace = data.get("reasoning_trace_enabled", False)
-        memory = cls(session_id=data["session_id"], enable_reasoning_trace=enable_reasoning_trace)
+        memory = cls(
+            session_id=data["session_id"],
+            user_id=data.get("user_id"),  # Optional for backward compatibility
+            enable_reasoning_trace=enable_reasoning_trace
+        )
         memory.status = SessionStatus(data["status"])
         memory.created_at = data["created_at"]
         memory.last_active_at = data["last_active_at"]

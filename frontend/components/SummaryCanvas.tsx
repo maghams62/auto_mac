@@ -33,6 +33,22 @@ export default function SummaryCanvas({
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
 
+  // Extract a better title from the summary if not provided
+  const displayTitle = useMemo(() => {
+    if (title) return title;
+
+    // Try to extract title from message or summary
+    const source = message || summary;
+    const firstSentence = source.split(/[.!?]/)[0].trim();
+
+    // If first sentence is short and looks like a title, use it
+    if (firstSentence.length < 60 && firstSentence.length > 0) {
+      return firstSentence;
+    }
+    
+    return "Summary";
+  }, [title, message, summary]);
+
   // Prevent body scroll when canvas is open
   useEffect(() => {
     if (isOpen) {
@@ -46,22 +62,6 @@ export default function SummaryCanvas({
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  // Extract a better title from the summary if not provided
-  const displayTitle = useMemo(() => {
-    if (title) return title;
-    
-    // Try to extract title from message or summary
-    const source = message || summary;
-    const firstSentence = source.split(/[.!?]/)[0].trim();
-    
-    // If first sentence is short and looks like a title, use it
-    if (firstSentence.length < 60 && firstSentence.length > 0) {
-      return firstSentence;
-    }
-    
-    return "Summary";
-  }, [title, message, summary]);
 
   // Split summary into paragraphs for better formatting
   const paragraphs = summary.split("\n\n").filter((p) => p.trim());

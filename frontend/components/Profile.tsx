@@ -195,7 +195,7 @@ export default function Profile() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-white/80 mb-2">
-              Default Email (for "email to me")
+              Default Email (for &ldquo;email to me&rdquo;)
             </label>
             <input
               type="email"

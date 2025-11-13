@@ -23,6 +23,8 @@ Available Commands:
     /confetti               - Trigger celebratory confetti effects
     /notify <task>          - Send system notifications
     /report <task>          - Generate PDF reports from local files
+    /calendar <task>        - List events & prepare meeting briefs
+    /day <filters>          - Generate comprehensive daily briefings
     /recurring <schedule>   - Schedule recurring tasks (e.g., weekly reports)
     /help [command]         - Show help for commands
     /agents                 - List all available agents
@@ -35,6 +37,7 @@ from typing import Dict, Any, Optional, Tuple, List
 import re
 
 from ..utils.screenshot import get_screenshot_dir
+from ..services.explain_pipeline import ExplainPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +160,7 @@ class SlashCommandParser:
         "file": "file",
         "folder": "folder",  # Routes to file agent for explanation, folder agent for management
         "folders": "folder",  # Routes to file agent for explanation, folder agent for management
+        "explain": "explain",  # Dedicated explain command
         "organize": "folder",
         "google": "google",
         "search": "google",
@@ -206,6 +210,8 @@ class SlashCommandParser:
         "remind": "reminders",
         "calendar": "calendar",
         "cal": "calendar",
+        "day": "daily_overview",
+        "daily": "daily_overview",
         "recurring": "recurring",
         "schedule": "recurring",
     }
@@ -214,12 +220,13 @@ class SlashCommandParser:
     SYSTEM_COMMANDS = ["help", "agents", "clear", "recurring"]
     
     # Commands that can execute without a task (execute immediately)
-    NO_TASK_COMMANDS = ["confetti", "celebrate", "party"]
+    NO_TASK_COMMANDS = ["confetti", "celebrate", "party", "files"]
 
     # Quick palette entries (primary commands only)
     COMMAND_TOOLTIPS = [
         {"command": "/files", "label": "File Ops", "description": "Search, organize, zip local files"},
         {"command": "/folder", "label": "Folder Agent", "description": "List & reorganize folders"},
+        {"command": "/explain", "label": "Explain", "description": "Explain documents using AI"},
         {"command": "/browse", "label": "Browser", "description": "Search the web & extract content"},
         {"command": "/present", "label": "Presentations", "description": "Create Keynote/Pages docs"},
         {"command": "/email", "label": "Email", "description": "Read, summarize & draft emails"},
@@ -241,6 +248,7 @@ class SlashCommandParser:
         {"command": "/notes", "label": "Notes", "description": "Create and manage Apple Notes"},
         {"command": "/remind", "label": "Reminders", "description": "Create time-based reminders"},
         {"command": "/calendar", "label": "Calendar", "description": "List events & prepare meeting briefs"},
+        {"command": "/day", "label": "Daily Overview", "description": "Get comprehensive daily briefings"},
         {"command": "/recurring", "label": "Recurring Tasks", "description": "Schedule weekly/daily automated tasks"},
     ]
 
@@ -248,6 +256,7 @@ class SlashCommandParser:
     AGENT_DESCRIPTIONS = {
         "file": "Handle file operations: search, organize, zip, screenshots",
         "folder": "Folder management: list, organize, rename files (LLM-driven, sandboxed)",
+        "explain": "Explain document content using semantic search and AI synthesis",
         "google": "DuckDuckGo web search (legacy name), fast structured results without a browser",
         "browser": "Web browsing: search Google, navigate URLs, extract content",
         "presentation": "Create presentations: Keynote, Pages documents",
@@ -269,6 +278,7 @@ class SlashCommandParser:
         "notes": "Create, append, and read notes in Apple Notes (persistent storage)",
         "reminders": "Create and manage time-based reminders in Apple Reminders",
         "calendar": "Read calendar events and generate meeting briefs from indexed documents",
+        "daily_overview": "Generate comprehensive daily briefings: meetings, reminders, email actions",
         "recurring": "Schedule recurring automated tasks (weekly reports, daily summaries, etc.)",
     }
 
@@ -286,6 +296,12 @@ class SlashCommandParser:
             '/folder Explain files',
             '/folder organize alpha',
             '/organize music files',
+        ],
+        "explain": [
+            '/explain Edgar Allan Poe',
+            '/explain the Tell-Tale Heart story',
+            '/explain machine learning concepts',
+            '/explain this document about AI',
         ],
         "google": [
             '/google Python async programming tutorials',
@@ -362,6 +378,9 @@ class SlashCommandParser:
             '/bluesky search "agent ecosystems" limit:8',
             '/bluesky summarize "mac automation" 12h',
             '/bluesky post "Testing the Bluesky integration ✨"',
+            '/bluesky reply https://bsky.app/profile/user.bsky.social/post/abc123 "Great post!"',
+            '/bluesky like https://bsky.app/profile/user.bsky.social/post/abc123',
+            '/bluesky repost https://bsky.app/profile/user.bsky.social/post/abc123',
         ],
         "weather": [
             '/weather today',
@@ -384,6 +403,12 @@ class SlashCommandParser:
             '/calendar prep for Q4 Review meeting',
             '/calendar brief docs for Team Standup',
             '/calendar details for "Project Kickoff"',
+        ],
+        "daily_overview": [
+            '/day today',
+            '/day tomorrow morning',
+            '/day next 3 days',
+            '/day this afternoon',
         ],
         "recurring": [
             '/recurring Create a weekly screen time report and email it every Friday',
@@ -875,6 +900,7 @@ class SlashCommandHandler:
         self.session_manager = session_manager
         self.config = config or {}
         self.parser = SlashCommandParser()
+        self.explain_pipeline = ExplainPipeline(agent_registry)
         logger.info("[SLASH COMMANDS] Handler initialized")
 
     def handle(self, message: str, session_id: Optional[str] = None) -> Tuple[bool, Any]:
@@ -986,6 +1012,9 @@ class SlashCommandHandler:
                 "search": "search_bluesky_posts",
                 "summary": "summarize_bluesky_posts",
                 "post": "post_bluesky_update",
+                "reply": "reply_to_bluesky_post",
+                "like": "like_bluesky_post",
+                "repost": "repost_bluesky_post",
             }
 
             tool_name = tool_map[mode]
@@ -1015,6 +1044,23 @@ class SlashCommandHandler:
                 "params": params,
                 "result": result,
             }
+
+        # Special handling: /files for explanation tasks should route to explain agent
+        if agent_name == "file" and parsed["command"] in ["files", "file"]:
+            # Check if task is about explaining content (not file management)
+            explanation_keywords = ["summarize", "summarise", "summary", "explain", "describe", "what is", "tell me about"]
+            management_keywords = ["organize", "sort", "arrange", "zip", "compress", "archive", "screenshot", "capture", "snap", "show all", "list all", "pull up all", "find all"]
+
+            # Route to explain agent if contains explanation keywords and no management keywords
+            is_explanation = (
+                task_lower and
+                any(keyword in task_lower for keyword in explanation_keywords) and
+                not any(word in task_lower for word in management_keywords)
+            )
+
+            if is_explanation:
+                agent_name = "explain"
+                logger.info(f"[SLASH COMMAND] Routing /files explanation request to explain agent")
 
         # Special handling: /folder for explanation tasks should route to file agent
         if agent_name == "folder" and parsed["command"] in ["folder", "folders"]:
@@ -1093,6 +1139,15 @@ class SlashCommandHandler:
                 routing_attempted = True
                 tool_name, params, status_msg = self._route_messaging_command(task, "twitter")
             # Note: Bluesky is handled above with _parse_bluesky_task, so skip here
+            elif agent_name == "explain" and task:
+                # Direct RAG pipeline execution for explain commands
+                result = self._execute_rag_pipeline(task, session_id)
+                return True, {
+                    "type": "result",
+                    "agent": "explain",
+                    "command": parsed["command"],
+                    "result": result,
+                }
             elif agent_name == "report" and task:
                 routing_attempted = True
                 tool_name, params, status_msg = self._route_report_command(task)
@@ -1183,6 +1238,14 @@ class SlashCommandHandler:
                             formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
                 elif original_agent == "folder":
                     reply_payload = self._format_folder_result(result, task, session_id=session_id)
+                    if reply_payload:
+                        formatted_result = reply_payload
+                        formatted_result.setdefault("_raw_result", result)
+                        # Add demo root message to formatted reply
+                        if demo_root_message and formatted_result.get("message"):
+                            formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+                elif result.get("type") == "document_list":
+                    reply_payload = self._format_document_list_result(result, task, session_id=session_id)
                     if reply_payload:
                         formatted_result = reply_payload
                         formatted_result.setdefault("_raw_result", result)
@@ -1306,6 +1369,50 @@ class SlashCommandHandler:
                     message = quoted
 
                 return "post", {"message": message.strip()}
+
+        # 1.5. Interaction verbs (reply, like, repost)
+        interaction_verbs = {
+            "reply": "reply",
+            "respond": "reply",
+            "like": "like",
+            "favorite": "like",
+            "repost": "repost",
+            "boost": "repost",
+            "reshare": "repost"
+        }
+
+        for verb, action in interaction_verbs.items():
+            if lower.startswith(verb + " ") or lower.startswith(verb + ":"):
+                # Strip the verb and any separator
+                remainder = text[len(verb):].strip()
+                if remainder.startswith(":"):
+                    remainder = remainder[1:].strip()
+                if remainder.startswith("-"):
+                    remainder = remainder[1:].strip()
+
+                if not remainder:
+                    raise ValueError(f"Provide a post URI to {verb}, e.g. /bluesky {verb} https://bsky.app/profile/user.bsky.social/post/abc123")
+
+                # For reply, we need both URI and message
+                if action == "reply":
+                    # Try to extract quoted message and URI
+                    quoted_match = re.search(r'"([^"]*)"\s+(.+)|\'([^\']*)\'\s+(.+)', remainder)
+                    if quoted_match:
+                        message = quoted_match.group(1) or quoted_match.group(3)
+                        uri = (quoted_match.group(2) or quoted_match.group(4)).strip()
+                    else:
+                        # Assume URI followed by message
+                        parts = remainder.split(None, 1)
+                        if len(parts) == 2:
+                            uri, message = parts
+                        else:
+                            raise ValueError(f"Provide both URI and message to reply, e.g. /bluesky reply https://bsky.app/profile/user.bsky.social/post/abc123 \"Your message\"")
+
+                    return "reply", {"uri": uri.strip(), "text": message.strip()}
+                else:
+                    # For like/repost, URI is sufficient
+                    uri = remainder.strip()
+                    return action, {"uri": uri}
 
         # 2. Short free-form text heuristic (post mode)
         # If text is short (≤128 chars) and doesn't contain explicit keywords, treat as post
@@ -1596,6 +1703,87 @@ class SlashCommandHandler:
 
         return None
 
+    def _format_document_list_result(
+        self,
+        result: Dict[str, Any],
+        task: str,
+        session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert document list results into a reply payload for user-facing display.
+        """
+        try:
+            if result.get("error"):
+                return None
+
+            documents = result.get("documents", [])
+            total_count = result.get("total_count", 0)
+            has_more = result.get("has_more", False)
+            message = result.get("message", "")
+
+            if not documents:
+                # Handle empty results
+                return self._format_with_reply(
+                    message=message or "No documents found",
+                    details="Try /files refresh to index documents or specify a different filter.",
+                    artifacts=[],
+                    status="info",
+                    session_id=session_id
+                )
+
+            # Format the document list
+            detail_lines = []
+
+            # Add summary info
+            showing_count = len(documents)
+            detail_lines.append(f"**Documents ({showing_count}{'+' if has_more else ''} of {total_count}):**\n")
+
+            # Format each document
+            for i, doc in enumerate(documents, 1):
+                name = doc.get("name", "Unknown")
+                path = doc.get("path", "")
+                size_human = doc.get("size_human", "Unknown")
+                modified = doc.get("modified")
+
+                # Format modification date
+                if modified and hasattr(modified, 'strftime'):
+                    modified_str = modified.strftime("%Y-%m-%d %H:%M")
+                else:
+                    modified_str = "Unknown"
+
+                # Get preview snippet
+                preview = doc.get("preview", "").strip()
+                if preview:
+                    # Truncate preview if too long
+                    if len(preview) > 80:
+                        preview = preview[:77] + "..."
+                    preview = f" - {preview}"
+
+                # Format the document entry
+                detail_lines.append(f"{i}. **{name}**")
+                detail_lines.append(f"   📁 {path}")
+                detail_lines.append(f"   📊 {size_human} • 📅 {modified_str}{preview}")
+                detail_lines.append("")  # Empty line between documents
+
+            details = "\n".join(detail_lines)
+
+            # Add "Show more" hint if there are more results
+            if has_more:
+                details += f"\n*Showing first {showing_count} documents. Use filters to narrow down results.*"
+
+            return self._format_with_reply(
+                message=message,
+                details=details,
+                artifacts=[],
+                status="success",
+                session_id=session_id
+            )
+
+        except Exception as exc:
+            logger.warning(f"[SLASH COMMAND] Failed to format document list result: {exc}", exc_info=True)
+
+        return None
+
     def _format_with_reply(
         self,
         message: str,
@@ -1758,6 +1946,27 @@ class SlashCommandHandler:
             return "take_screenshot", {
                 "save_path": str(screenshot_dir)
             }, None
+
+        # List documents (directory listing)
+        simple_list_keywords = ["list", "show", "browse"]
+        if (any(kw in task_lower for kw in simple_list_keywords) and
+            not any(kw in task_lower for kw in ["show all", "list all", "pull up all", "find all"]) and
+            not (task_lower.startswith("all ") and "files" in task_lower)) or not task_lower:
+            # Extract filter from task (e.g., "list guitar" -> filter="guitar")
+            import re
+            filter_text = task.strip()
+            if filter_text:
+                # Remove the listing keyword
+                for kw in simple_list_keywords:
+                    filter_text = re.sub(r'\b' + re.escape(kw) + r'\b', '', filter_text, flags=re.IGNORECASE).strip()
+                # Remove common words but preserve folder= syntax
+                filter_text = re.sub(r'\b(files|file|docs|documents|doc)\b', '', filter_text, flags=re.IGNORECASE).strip()
+                # Don't remove "folder" if it's part of "folder=" syntax
+
+            return "list_documents", {
+                "filter": filter_text or None,
+                "folder_path": None  # None for general listing to show all indexed documents
+            }, None  # Don't show demo message for general listing
 
         # List/show all files matching query
         listing_keywords = ["show all", "list all", "pull up all", "find all"]
@@ -2809,130 +3018,17 @@ Use LLM reasoning to parse values from the task description."""
     def _execute_rag_pipeline(self, task: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Execute RAG pipeline for summarize/explain requests.
-        
-        Pipeline: search_documents → extract_section → synthesize_content → reply_to_user
-        
+
+        Now delegates to the ExplainPipeline service for better reusability and telemetry.
+
         Args:
             task: User task (e.g., "Summarize the Ed Sheeran files")
             session_id: Optional session ID
-            
+
         Returns:
-            Result dictionary with synthesized summary
+            Result dictionary with synthesized summary and telemetry
         """
-        logger.info(f"[SLASH COMMAND] Executing RAG pipeline for: {task}")
-        
-        # Extract topic from task (remove summarize/explain keywords)
-        import re
-        rag_keywords_pattern = r'\b(summarize|summarise|summary|explain|describe|what is|tell me about)\b'
-        topic = re.sub(rag_keywords_pattern, '', task, flags=re.IGNORECASE).strip()
-        topic = re.sub(r'\b(the|my|files|docs|documents|file|doc)\b', '', topic, flags=re.IGNORECASE).strip()
-        
-        if not topic:
-            topic = task  # Fallback to full task if extraction fails
-        
-        # Step 1: Search for documents
-        search_result = self.registry.execute_tool(
-            "search_documents",
-            {"query": topic, "user_request": task},
-            session_id=session_id
-        )
-        
-        if search_result.get("error"):
-            # No documents found - return structured error
-            return {
-                "error": True,
-                "error_type": "NotFoundError",
-                "error_message": f"No documents found matching '{topic}'. Please check your document index or try a different search term.",
-                "rag_pipeline": True,
-                "step": "search"
-            }
-        
-        doc_path = search_result.get("doc_path")
-        if not doc_path:
-            return {
-                "error": True,
-                "error_type": "SearchError",
-                "error_message": "Document search completed but no document path returned.",
-                "rag_pipeline": True,
-                "step": "search"
-            }
-        
-        # Step 2: Extract section
-        extract_result = self.registry.execute_tool(
-            "extract_section",
-            {"doc_path": doc_path, "section": "all"},
-            session_id=session_id
-        )
-        
-        if extract_result.get("error"):
-            # Extraction failed - try to use content preview from search if available
-            content_preview = search_result.get("content_preview", "")
-            if content_preview:
-                extracted_text = content_preview
-            else:
-                return {
-                    "error": True,
-                    "error_type": "ExtractionError",
-                    "error_message": extract_result.get("error_message", "Failed to extract document content."),
-                    "rag_pipeline": True,
-                    "step": "extract",
-                    "doc_path": doc_path
-                }
-        else:
-            extracted_text = extract_result.get("extracted_text", "")
-            if not extracted_text:
-                return {
-                    "error": True,
-                    "error_type": "ExtractionError",
-                    "error_message": "Document extraction completed but no content returned.",
-                    "rag_pipeline": True,
-                    "step": "extract"
-                }
-        
-        # Step 3: Synthesize content
-        # Determine synthesis style based on keywords
-        synthesis_style = "concise"
-        if "explain" in task.lower() or "detailed" in task.lower() or "comprehensive" in task.lower():
-            synthesis_style = "comprehensive"
-        
-        synth_result = self.registry.execute_tool(
-            "synthesize_content",
-            {
-                "source_contents": [extracted_text],
-                "topic": f"{topic} Summary" if "summar" in task.lower() else f"{topic} Explanation",
-                "synthesis_style": synthesis_style
-            },
-            session_id=session_id
-        )
-        
-        if synth_result.get("error"):
-            return {
-                "error": True,
-                "error_type": "SynthesisError",
-                "error_message": synth_result.get("error_message", "Failed to synthesize content."),
-                "rag_pipeline": True,
-                "step": "synthesize"
-            }
-        
-        synthesized_content = synth_result.get("synthesized_content", "")
-        if not synthesized_content:
-            return {
-                "error": True,
-                "error_type": "SynthesisError",
-                "error_message": "Content synthesis completed but no summary returned.",
-                "rag_pipeline": True,
-                "step": "synthesize"
-            }
-        
-        # Step 4: Format as reply (mimicking reply_to_user)
-        return {
-            "summary": synthesized_content,
-            "doc_title": search_result.get("doc_title", "Unknown"),
-            "doc_path": doc_path,
-            "word_count": synth_result.get("word_count", 0),
-            "rag_pipeline": True,
-            "message": synthesized_content  # For compatibility with reply_to_user format
-        }
+        return self.explain_pipeline.execute(task, session_id)
 
     def _route_weather_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
         """Route /weather commands to appropriate weather agent tools."""

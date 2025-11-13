@@ -33,19 +33,19 @@ This guide is the authoritative reference for any agent (human or automated) tha
 
 The registry exposes one or more agents, each registering tools (LangChain `@tool` functions). Specialists delegate to deterministic helpers so LLM output stays bounded.
 
-| Agent | File | Domain | Key Tools |
-|-------|------|--------|-----------|
-| FileAgent | `src/agent/file_agent.py` | Document search/extraction | `search_documents`, `extract_section`, `take_screenshot`, `organize_files`, `create_zip_archive` |
-| FolderAgent | `src/agent/folder_agent.py` | Folder listing & normalization | `folder_list`, `folder_plan_alpha`, `folder_apply`, `folder_organize_by_type` |
-| BrowserAgent | `src/agent/browser_agent.py` | Web search with Playwright | `google_search`, `navigate_to_url`, `extract_page_content`, `take_web_screenshot`, `close_browser` |
-| PresentationAgent | `src/agent/presentation_agent.py` | Keynote & Pages creation | `create_keynote`, `create_keynote_with_images`, `create_pages_doc` |
-| EmailAgent | `src/agent/email_agent.py` | Mail.app automation | `compose_email` |
-| WritingAgent | `src/agent/writing_agent.py` | LLM-assisted content generation | `synthesize_content`, `create_slide_deck_content`, `create_detailed_report`, `create_meeting_notes` |
-| MapsAgent | `src/agent/maps_agent.py` | Apple Maps automation | `plan_trip_with_stops`, `open_maps_with_route` |
-| TwitterAgent | `src/agent/twitter_agent.py` | Twitter/X summaries & posting | `summarize_list_activity`, `tweet_message` |
-| BlueskyAgent | `src/agent/bluesky_agent.py` | Bluesky search, summaries, posting | `search_bluesky_posts`, `summarize_bluesky_posts`, `post_bluesky_update` |
-| ReplyAgent | `src/agent/reply_tool.py` | UI-facing message wrapper | `reply_to_user` |
-| (Additional agents) | `src/agent/` | Discord, Reddit, Notifications, Finance, etc. | See `docs/architecture/AGENT_HIERARCHY.md` |
+| Category | Agent Count | Total Tools | Key Agents | Example Tools |
+|----------|-------------|------------|------------|--------------|
+| **Core Productivity** | 6 agents | 28 tools | File, Browser, Presentation, Email, Writing, Calendar | `search_documents`, `google_search`, `create_keynote`, `compose_email`, `synthesize_content`, `list_calendar_events` |
+| **Communication** | 7 agents | 28 tools | iMessage, Discord, WhatsApp, Twitter, Bluesky, Reddit, Notifications | `send_imessage`, `discord_read_channel_messages`, `whatsapp_read_messages`, `summarize_list_activity`, `search_bluesky_posts` |
+| **Finance & Data** | 4 agents | 17 tools | Google Finance, Stock, Report, Enriched Stock | `get_google_finance_data`, `get_stock_quote`, `generate_financial_report`, `get_enriched_stock_data` |
+| **Utilities** | 4 agents | 11 tools | Micro Actions, Voice, Vision, Reply | `launch_app`, `transcribe_audio_file`, `analyze_ui_screenshot`, `reply_to_user` |
+| **Location & Media** | 3 agents | 11 tools | Maps, Weather, Spotify | `plan_trip_with_stops`, `get_weather_forecast`, `play_music` |
+| **Social & Personal** | 3 agents | 12 tools | Notes, Reminders, Daily Overview | `create_note`, `create_reminder`, `generate_daily_overview` |
+| **Quality Assurance** | 1 agent | 4 tools | Critic | `verify_output`, `check_quality`, `validate_plan` |
+| **Development** | 2 agents | 6 tools | Screen Capture, Test Runner | `capture_screenshot`, `run_tests` |
+| **TOTAL** | **27 agents** | **115 tools** | Complete ecosystem | Auto-generated from code |
+
+**Complete Agent List:** FileAgent, FolderAgent, BrowserAgent, PresentationAgent, EmailAgent, WritingAgent, CalendarAgent, iMessageAgent, DiscordAgent, WhatsAppAgent, TwitterAgent, BlueskyAgent, RedditAgent, NotificationsAgent, GoogleFinanceAgent, StockAgent, EnrichedStockAgent, ReportAgent, MapsAgent, WeatherAgent, SpotifyAgent, MicroActionsAgent, VoiceAgent, VisionAgent, ReplyAgent, NotesAgent, RemindersAgent, DailyOverviewAgent, CriticAgent.
 
 **How agents interact:**
 1. **Planning** (`src/agent/agent.py`): The LangGraph state machine produces a plan using the prompts under `prompts/`.
@@ -111,7 +111,53 @@ The registry exposes one or more agents, each registering tools (LangChain `@too
 
 ---
 
-## 5. Document & Spec References
+## 5. Universal Search (Command-K)
+
+### Overview
+Command-K provides Raycast-style semantic document search across all indexed folders. Press `⌘K` (or `Ctrl+K` on Windows) to open the search palette.
+
+### Features
+- **Universal Search**: Search across both documents and images using semantic similarity
+- **Document Search**: Natural language queries find relevant documents using FAISS vector similarity
+- **Image Search**: CLIP-powered semantic image search with automatic captioning
+- **Live Highlighting**: Query terms are highlighted in real-time as you type (documents)
+- **Thumbnails**: Visual previews for image results in search palette
+- **Inline Preview**: Press `␣` (Space) for quick document/image preview in the palette
+- **Open in App**: Press `↵` (Enter) to open documents/images in the built-in viewer
+- **Open Externally**: Press `⌘↵` (Cmd+Enter) to reveal files in Finder/System Explorer
+- **Keyboard Navigation**: `↑↓` to navigate, `Esc` to close
+
+### Configuration
+- **Indexed Folders**: Configured in `config.yaml` under `documents.folders`
+- **Search Settings**: Similarity threshold and result limits in `search` section
+- **Universal Search Config**: Enable/disable and debounce settings in `universal_search` section
+
+### API Endpoints
+```
+GET /api/universal-search?q={query}&limit={limit}&types={document,image}
+```
+
+Returns structured results with snippets, highlight offsets, thumbnails, and metadata for both documents and images.
+
+```
+GET /api/files/thumbnail?path={image_path}&max_size={size}
+```
+
+Generates and serves cached thumbnails for image files.
+
+### Implementation Notes
+- **Document Search**: Uses `SemanticSearch.search_and_group()` with custom snippet generation and highlighting
+- **Image Search**: Uses `ImageIndexer` with CLIP embeddings for semantic similarity matching
+- **Captioning**: Automatic image captioning for search and display (MVP: filename-based with fallback)
+- **Thumbnails**: On-demand thumbnail generation with caching for performance
+- **Frontend**: `CommandPalette` component handles both document and image results with appropriate UI
+- **Modal Integration**: Extends `DocumentPreviewModal` to support image display
+- **Security**: Rate limited, path validated, only indexes and returns results from configured directories
+- **Indexing**: Unified `/api/reindex` endpoint handles both documents and images
+
+---
+
+## 7. Document & Spec References
 
 - **Architecture:** `docs/architecture/AGENT_ARCHITECTURE.md` (LangGraph flow, state shape), `docs/architecture/AGENT_HIERARCHY.md` (agent summaries), `docs/architecture/guides/` (experiment notes).
 - **Features:** `docs/features/*.md` (slash commands, Maps improvements, UI updates).
@@ -122,7 +168,7 @@ The registry exposes one or more agents, each registering tools (LangChain `@too
 
 ---
 
-## 6. Worked Examples (Copy These Patterns)
+## 8. Worked Examples (Copy These Patterns)
 
 ### Example A – Twitter List Summaries
 Files: `src/agent/twitter_agent.py`, `src/integrations/twitter_client.py`

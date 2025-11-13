@@ -231,6 +231,11 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
         client = self._get_api_client()
         return client is not None and client.is_authenticated()
 
+    def has_available_devices(self) -> bool:
+        """Check if there are available devices for playback."""
+        client = self._get_api_client()
+        return client is not None and client.is_authenticated() and client.has_available_devices()
+
     def play(self) -> PlaybackResult:
         """Resume playback using API."""
         try:
@@ -241,6 +246,29 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     error_type="APINotAvailable", error_message="Spotify API not available"
                 )
 
+            # Check for available devices
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="play", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback control.",
+                    retry_possible=True
+                )
+
+            # Try to resume on the web player device first, fallback to any available device
+            device_id = self._web_player_device_id
+            if device_id:
+                logger.info(f"[SPOTIFY API BACKEND] Attempting resume with device ID: {device_id}")
+                try:
+                    result = client.resume_playback(device_id=device_id)
+                    return PlaybackResult(
+                        success=True, action="play", message="Resumed playback",
+                        backend=self.backend_type
+                    )
+                except Exception as device_e:
+                    logger.warning(f"[SPOTIFY API BACKEND] Failed to resume on web player device: {device_e}")
+
+            # Fallback: try to resume without specifying device (uses active device)
             result = client.resume_playback()
             return PlaybackResult(
                 success=True, action="play", message="Resumed playback",
@@ -248,10 +276,21 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
             )
         except Exception as e:
             logger.error(f"API play failed: {e}")
-            return PlaybackResult(
-                success=False, action="play", backend=self.backend_type,
-                error_type="APIError", error_message=str(e)
-            )
+            # Provide more specific error messages
+            error_msg = str(e)
+            if "restriction violated" in error_msg.lower():
+                return PlaybackResult(
+                    success=False, action="play", backend=self.backend_type,
+                    error_type="DeviceRestriction",
+                    error_message="Cannot control this Spotify device due to restrictions. Try playing music on a different device first.",
+                    retry_possible=True
+                )
+            else:
+                return PlaybackResult(
+                    success=False, action="play", backend=self.backend_type,
+                    error_type="APIError", error_message=f"API resume failed: {error_msg}",
+                    retry_possible=True
+                )
 
     def pause(self) -> PlaybackResult:
         """Pause playback using API."""
@@ -263,6 +302,29 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     error_type="APINotAvailable", error_message="Spotify API not available"
                 )
 
+            # Check for available devices
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="pause", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback control.",
+                    retry_possible=True
+                )
+
+            # Try to pause on the web player device first, fallback to any available device
+            device_id = self._web_player_device_id
+            if device_id:
+                logger.info(f"[SPOTIFY API BACKEND] Attempting pause with device ID: {device_id}")
+                try:
+                    result = client.pause_playback(device_id=device_id)
+                    return PlaybackResult(
+                        success=True, action="pause", message="Paused playback",
+                        backend=self.backend_type
+                    )
+                except Exception as device_e:
+                    logger.warning(f"[SPOTIFY API BACKEND] Failed to pause on web player device: {device_e}")
+
+            # Fallback: try to pause without specifying device (uses active device)
             result = client.pause_playback()
             return PlaybackResult(
                 success=True, action="pause", message="Paused playback",
@@ -270,10 +332,21 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
             )
         except Exception as e:
             logger.error(f"API pause failed: {e}")
-            return PlaybackResult(
-                success=False, action="pause", backend=self.backend_type,
-                error_type="APIError", error_message=str(e)
-            )
+            # Provide more specific error messages
+            error_msg = str(e)
+            if "restriction violated" in error_msg.lower():
+                return PlaybackResult(
+                    success=False, action="pause", backend=self.backend_type,
+                    error_type="DeviceRestriction",
+                    error_message="Cannot control this Spotify device due to restrictions. Try playing music on a different device first.",
+                    retry_possible=True
+                )
+            else:
+                return PlaybackResult(
+                    success=False, action="pause", backend=self.backend_type,
+                    error_type="APIError", error_message=f"API pause failed: {error_msg}",
+                    retry_possible=True
+                )
 
     def get_status(self) -> PlaybackResult:
         """Get playback status using API."""
@@ -312,6 +385,71 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                 error_type="APIError", error_message=str(e)
             )
 
+    def _activate_device(self, client, preferred_device_id: Optional[str] = None) -> Optional[str]:
+        """Activate a Spotify device for playback.
+
+        Returns the device ID that was activated, or None if activation failed.
+        """
+        try:
+            devices = client.get_devices()
+            if not devices:
+                logger.warning("[SPOTIFY API BACKEND] No devices available for activation")
+                return None
+
+            # Priority order: preferred device, then Cerebro Web Player, then MacBook Air, then any device
+            device_priority = []
+
+            # Add preferred device first if specified
+            if preferred_device_id:
+                device_priority.append(preferred_device_id)
+
+            # Add Cerebro Web Player
+            cerebro_devices = [d for d in devices if 'Cerebro' in d.get('name', '')]
+            if cerebro_devices:
+                device_priority.append(cerebro_devices[0]['id'])
+
+            # Add MacBook Air
+            mac_devices = [d for d in devices if 'MacBook Air' in d.get('name', '')]
+            if mac_devices:
+                device_priority.append(mac_devices[0]['id'])
+
+            # Add any remaining devices
+            for device in devices:
+                device_id = device['id']
+                if device_id not in device_priority:
+                    device_priority.append(device_id)
+
+            # Try to activate devices in priority order
+            for device_id in device_priority:
+                try:
+                    logger.info(f"[SPOTIFY API BACKEND] Attempting to activate device: {device_id}")
+                    # Transfer playback to the device and start playing (play=True)
+                    client.transfer_playback(device_id, play=True)
+
+                    # Wait a moment for activation to take effect
+                    import time
+                    time.sleep(1)
+
+                    # Verify the device is now active
+                    updated_devices = client.get_devices()
+                    activated_device = next((d for d in updated_devices if d['id'] == device_id), None)
+                    if activated_device and activated_device.get('is_active', False):
+                        logger.info(f"[SPOTIFY API BACKEND] Successfully activated device: {device_id}")
+                        return device_id
+                    else:
+                        logger.warning(f"[SPOTIFY API BACKEND] Device {device_id} not active after transfer")
+
+                except Exception as e:
+                    logger.warning(f"[SPOTIFY API BACKEND] Failed to activate device {device_id}: {e}")
+                    continue
+
+            logger.error("[SPOTIFY API BACKEND] Failed to activate any device")
+            return None
+
+        except Exception as e:
+            logger.error(f"[SPOTIFY API BACKEND] Error during device activation: {e}")
+            return None
+
     def play_track(self, track_identifier: str, artist: Optional[str] = None) -> PlaybackResult:
         """Play a track by URI or search query using API."""
         try:
@@ -320,6 +458,15 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                 return PlaybackResult(
                     success=False, action="play_track", backend=self.backend_type,
                     error_type="APINotAvailable", error_message="Spotify API not available"
+                )
+
+            # Check for available devices first
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="play_track", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback. Please make sure Spotify is running on at least one device.",
+                    retry_possible=True
                 )
 
             # Check if it's already a URI
@@ -337,20 +484,71 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                         retry_possible=True
                     )
 
-            result = client.play_track(track_uri, device_id=self._web_player_device_id)
-            return PlaybackResult(
-                success=True, action="play_song", message="Started track playback",
-                backend=self.backend_type
-            )
+            # Try to play with device activation logic
+            device_id_to_use = self._web_player_device_id
+
+            # First attempt: try to play directly (Spotify will use active device if available)
+            try:
+                logger.info(f"[SPOTIFY API BACKEND] Attempting direct playback")
+                result = client.play_track(track_uri, device_id=device_id_to_use)
+                return PlaybackResult(
+                    success=True, action="play_song", message="Started track playback",
+                    backend=self.backend_type
+                )
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "no active device" not in error_msg:
+                    # Re-raise if it's not a "no active device" error
+                    raise e
+
+                # No active device - try to activate one
+                logger.info("[SPOTIFY API BACKEND] No active device found, attempting device activation")
+                activated_device_id = self._activate_device(client, device_id_to_use)
+
+                if activated_device_id:
+                    # Try to play again with the activated device
+                    try:
+                        logger.info(f"[SPOTIFY API BACKEND] Retrying playback with activated device: {activated_device_id}")
+                        result = client.play_track(track_uri, device_id=activated_device_id)
+                        return PlaybackResult(
+                            success=True, action="play_song", message="Started track playback",
+                            backend=self.backend_type
+                        )
+                    except Exception as retry_error:
+                        logger.error(f"[SPOTIFY API BACKEND] Playback failed even after device activation: {retry_error}")
+                        raise retry_error
+                else:
+                    # Could not activate any device
+                    return PlaybackResult(
+                        success=False, action="play_song", backend=self.backend_type,
+                        error_type="DeviceActivationFailed",
+                        error_message="Could not activate any Spotify device for playback. Please ensure Spotify is running and accessible.",
+                        retry_possible=True
+                    )
+
         except Exception as e:
             logger.error(f"API play_track failed: {e}")
             # Provide more specific error messages
             error_msg = str(e)
-            if "not found" in error_msg.lower() or "no active device" in error_msg.lower():
+            if "not found" in error_msg.lower():
                 return PlaybackResult(
                     success=False, action="play_song", backend=self.backend_type,
                     error_type="SongNotFound",
-                    error_message=f"Could not play track '{track_identifier}': {error_msg}",
+                    error_message=f"Could not find track '{track_identifier}' on Spotify",
+                    retry_possible=True
+                )
+            elif "no active device" in error_msg.lower():
+                return PlaybackResult(
+                    success=False, action="play_song", backend=self.backend_type,
+                    error_type="NoActiveDevice",
+                    error_message="No active Spotify device found. Please start Spotify on a device and try again.",
+                    retry_possible=True
+                )
+            elif "device not found" in error_msg.lower():
+                return PlaybackResult(
+                    success=False, action="play_song", backend=self.backend_type,
+                    error_type="DeviceNotFound",
+                    error_message="The specified Spotify device is not available. Please check your device connections.",
                     retry_possible=True
                 )
             else:
@@ -370,6 +568,15 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     error_type="APINotAvailable", error_message="Spotify API not available"
                 )
 
+            # Check for available devices first
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="play_album", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback. Please make sure Spotify is running on at least one device.",
+                    retry_possible=True
+                )
+
             # Check if it's already a URI
             if self._is_spotify_uri(album_identifier):
                 album_uri = album_identifier
@@ -385,11 +592,46 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                         retry_possible=True
                     )
 
-            result = client.play_context(album_uri, device_id=self._web_player_device_id)
-            return PlaybackResult(
-                success=True, action="play_album", message="Started album playback",
-                backend=self.backend_type
-            )
+            # Try to play with device activation logic
+            device_id_to_use = self._web_player_device_id
+
+            # First attempt: try to play directly
+            try:
+                logger.info(f"[SPOTIFY API BACKEND] Attempting direct album playback")
+                result = client.play_context(album_uri, device_id=device_id_to_use)
+                return PlaybackResult(
+                    success=True, action="play_album", message="Started album playback",
+                    backend=self.backend_type
+                )
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "no active device" not in error_msg:
+                    raise e
+
+                # No active device - try to activate one
+                logger.info("[SPOTIFY API BACKEND] No active device found for album playback, attempting device activation")
+                activated_device_id = self._activate_device(client, device_id_to_use)
+
+                if activated_device_id:
+                    # Try to play again with the activated device
+                    try:
+                        logger.info(f"[SPOTIFY API BACKEND] Retrying album playback with activated device: {activated_device_id}")
+                        result = client.play_context(album_uri, device_id=activated_device_id)
+                        return PlaybackResult(
+                            success=True, action="play_album", message="Started album playback",
+                            backend=self.backend_type
+                        )
+                    except Exception as retry_error:
+                        logger.error(f"[SPOTIFY API BACKEND] Album playback failed even after device activation: {retry_error}")
+                        raise retry_error
+                else:
+                    # Could not activate any device
+                    return PlaybackResult(
+                        success=False, action="play_album", backend=self.backend_type,
+                        error_type="DeviceActivationFailed",
+                        error_message="Could not activate any Spotify device for playback. Please ensure Spotify is running and accessible.",
+                        retry_possible=True
+                    )
         except Exception as e:
             logger.error(f"API play_album failed: {e}")
             # Provide more specific error messages
@@ -418,6 +660,15 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     error_type="APINotAvailable", error_message="Spotify API not available"
                 )
 
+            # Check for available devices first
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="play_artist", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback. Please make sure Spotify is running on at least one device.",
+                    retry_possible=True
+                )
+
             # Check if it's already a URI
             if self._is_spotify_uri(artist_identifier):
                 artist_uri = artist_identifier
@@ -433,11 +684,46 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                         retry_possible=True
                     )
 
-            result = client.play_context(artist_uri, device_id=self._web_player_device_id)
-            return PlaybackResult(
-                success=True, action="play_artist", message="Started artist playback",
-                backend=self.backend_type
-            )
+            # Try to play with device activation logic
+            device_id_to_use = self._web_player_device_id
+
+            # First attempt: try to play directly
+            try:
+                logger.info(f"[SPOTIFY API BACKEND] Attempting direct artist playback")
+                result = client.play_context(artist_uri, device_id=device_id_to_use)
+                return PlaybackResult(
+                    success=True, action="play_artist", message="Started artist playback",
+                    backend=self.backend_type
+                )
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "no active device" not in error_msg:
+                    raise e
+
+                # No active device - try to activate one
+                logger.info("[SPOTIFY API BACKEND] No active device found for artist playback, attempting device activation")
+                activated_device_id = self._activate_device(client, device_id_to_use)
+
+                if activated_device_id:
+                    # Try to play again with the activated device
+                    try:
+                        logger.info(f"[SPOTIFY API BACKEND] Retrying artist playback with activated device: {activated_device_id}")
+                        result = client.play_context(artist_uri, device_id=activated_device_id)
+                        return PlaybackResult(
+                            success=True, action="play_artist", message="Started artist playback",
+                            backend=self.backend_type
+                        )
+                    except Exception as retry_error:
+                        logger.error(f"[SPOTIFY API BACKEND] Artist playback failed even after device activation: {retry_error}")
+                        raise retry_error
+                else:
+                    # Could not activate any device
+                    return PlaybackResult(
+                        success=False, action="play_artist", backend=self.backend_type,
+                        error_type="DeviceActivationFailed",
+                        error_message="Could not activate any Spotify device for playback. Please ensure Spotify is running and accessible.",
+                        retry_possible=True
+                    )
         except Exception as e:
             logger.error(f"API play_artist failed: {e}")
             # Provide more specific error messages
@@ -686,8 +972,97 @@ class SpotifyPlaybackService:
                 if device_id:
                     self.api_backend.set_web_player_device_id(device_id)
                     logger.info(f"[PLAYBACK SERVICE] Synced web player device ID: {device_id}")
+                    return device_id
+                else:
+                    logger.warning("[PLAYBACK SERVICE] Device ID endpoint returned empty device_id")
+            else:
+                logger.warning(f"[PLAYBACK SERVICE] Device ID endpoint returned status {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"[PLAYBACK SERVICE] Could not connect to API server for device ID: {e}")
         except Exception as e:
-            logger.debug(f"Could not sync web player device ID: {e}")
+            logger.error(f"[PLAYBACK SERVICE] Error syncing web player device ID: {e}")
+        return None
+
+    def _transfer_playback_to_available_device(self, track_identifier: str, artist: Optional[str] = None) -> PlaybackResult:
+        """
+        Transfer playback to an available device and play the track.
+
+        Args:
+            track_identifier: Track URI or search query
+            artist: Optional artist name
+
+        Returns:
+            PlaybackResult indicating success or failure
+        """
+        try:
+            client = self.api_backend._get_api_client()
+            if not client:
+                return PlaybackResult(
+                    success=False, action="transfer_playback",
+                    error_type="APINotAvailable", error_message="Spotify API not available"
+                )
+
+            # Get available devices
+            devices = client.get_devices()
+            if not devices:
+                return PlaybackResult(
+                    success=False, action="transfer_playback",
+                    error_type="NoDevices", error_message="No Spotify devices found"
+                )
+
+            # Find the first active device (preferably not restricted)
+            target_device = None
+            for device in devices:
+                if device.get("is_active", False):
+                    target_device = device
+                    break
+                elif not device.get("is_restricted", True):
+                    target_device = device
+                    break
+
+            if not target_device:
+                # If no active device, use the first available device
+                target_device = devices[0]
+
+            device_id = target_device["id"]
+            device_name = target_device.get("name", "Unknown Device")
+            logger.info(f"[PLAYBACK SERVICE] Transferring playback to device: {device_name} ({device_id})")
+
+            # First, try to transfer playback to the target device
+            try:
+                transfer_result = client.transfer_playback(device_id, play=False)
+                logger.info(f"[PLAYBACK SERVICE] Playback transferred to {device_name}")
+            except Exception as transfer_e:
+                logger.warning(f"[PLAYBACK SERVICE] Could not transfer playback to {device_name}: {transfer_e}")
+                # Continue anyway - we might still be able to play directly on the device
+
+            # Check if it's already a URI
+            if self.api_backend._is_spotify_uri(track_identifier):
+                track_uri = track_identifier
+            else:
+                # Resolve the query to a URI
+                track_uri = self.api_backend._resolve_track_to_uri(track_identifier, artist)
+                if not track_uri:
+                    return PlaybackResult(
+                        success=False, action="transfer_playback",
+                        error_type="SongNotFound", error_message=f"Could not find track '{track_identifier}'"
+                    )
+
+            # Play the track on the target device
+            result = client.play_track(track_uri, device_id=device_id)
+
+            return PlaybackResult(
+                success=True, action="transfer_playback",
+                message=f"Transferred playback to {device_name} and started track",
+                backend=self.api_backend.backend_type
+            )
+
+        except Exception as e:
+            logger.error(f"[PLAYBACK SERVICE] Failed to transfer playback: {e}")
+            return PlaybackResult(
+                success=False, action="transfer_playback",
+                error_type="TransferFailed", error_message=f"Could not transfer playback: {str(e)}"
+            )
 
     def _select_backend(self, operation: str) -> SpotifyPlaybackBackend:
         """
@@ -699,13 +1074,14 @@ class SpotifyPlaybackService:
         3. Error if no backend available and automation fallback disabled
         """
         if self.prefer_api and self.api_backend.is_available():
-            logger.debug(f"Selected API backend for {operation}")
+            logger.info(f"[BACKEND SELECTION] Selected API backend for {operation} (prefer_api={self.prefer_api}, api_available={self.api_backend.is_available()})")
             return self.api_backend
         elif not self.disable_automation_fallback:
-            logger.debug(f"Selected automation backend for {operation}")
+            logger.warning(f"[BACKEND SELECTION] Selected automation backend for {operation} (automation fallback enabled)")
             return self.automation_backend
         else:
             # No backend available and automation fallback disabled
+            logger.error(f"[BACKEND SELECTION] No backend available for {operation}: prefer_api={self.prefer_api}, api_available={self.api_backend.is_available()}, disable_automation_fallback={self.disable_automation_fallback}")
             raise ValueError(f"No playback backend available for {operation}. Web API requires authentication. Please connect Spotify first.")
 
     def play(self) -> PlaybackResult:
@@ -759,27 +1135,19 @@ class SpotifyPlaybackService:
             artist: Optional artist name (only used for search queries)
         """
         # Sync web player device ID before playing
-        self._sync_web_player_device_id()
+        device_id = self._sync_web_player_device_id()
+        logger.info(f"[PLAYBACK SERVICE] Attempting to play track with device_id: {device_id}")
 
-        # Check if it's a Spotify URI
-        if track_identifier.startswith("spotify:track:") or track_identifier.startswith("spotify:album:") or track_identifier.startswith("spotify:artist:"):
-            # Use API backend for URIs if available
-            if self.api_backend.is_available():
-                backend = self.api_backend
-                logger.debug("Using API backend for URI playback")
-            else:
-                backend = self.automation_backend
-                logger.debug("Using automation backend for URI playback (API not available)")
-        else:
-            # For search queries, use normal backend selection
-            try:
-                backend = self._select_backend("play_track")
-            except ValueError as e:
-                logger.warning(f"No backend available for play_track: {e}")
-                return PlaybackResult(
-                    success=False, action="play_track", backend=None,
-                    error_type="NoBackendAvailable", error_message=str(e)
-                )
+        # Always use backend selection logic - this respects disable_automation_fallback setting
+        # URIs and search queries both should use the same backend selection
+        try:
+            backend = self._select_backend("play_track")
+        except ValueError as e:
+            logger.warning(f"No backend available for play_track: {e}")
+            return PlaybackResult(
+                success=False, action="play_track", backend=None,
+                error_type="NoBackendAvailable", error_message=str(e)
+            )
 
         try:
             if track_identifier.startswith("spotify:track:"):
@@ -796,6 +1164,19 @@ class SpotifyPlaybackService:
             return result
         except Exception as e:
             logger.error(f"Error playing track {track_identifier}: {e}")
+
+            # If we get a "no active device" error and we have API backend available,
+            # try to transfer playback to an available device
+            if "no active device" in str(e).lower() and self.api_backend.is_available():
+                logger.info("[PLAYBACK SERVICE] No active device found, attempting to transfer playback")
+                try:
+                    transfer_result = self._transfer_playback_to_available_device(track_identifier, artist)
+                    if transfer_result.success:
+                        logger.info("[PLAYBACK SERVICE] Successfully transferred playback to available device")
+                        return transfer_result
+                except Exception as transfer_e:
+                    logger.error(f"[PLAYBACK SERVICE] Failed to transfer playback: {transfer_e}")
+
             return PlaybackResult(
                 success=False, action="play_track", backend=backend.backend_type if hasattr(backend, 'backend_type') else None,
                 error_type="PlaybackError", error_message=str(e)

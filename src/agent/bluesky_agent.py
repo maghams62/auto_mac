@@ -97,6 +97,47 @@ def _normalize_post(raw_post: Dict[str, Any]) -> Dict[str, Any]:
         "reply_count": raw_post.get("replyCount", 0),
         "quote_count": raw_post.get("quoteCount", 0),
     }
+
+    # Capture reply/thread metadata for proper conversation handling
+    reply_info = record.get("reply", {})
+    if reply_info:
+        parent = reply_info.get("parent", {})
+        root = reply_info.get("root", {})
+
+        data["parent_uri"] = parent.get("uri")
+        data["parent_cid"] = parent.get("cid")
+        data["reply_root_uri"] = root.get("uri")
+        data["reply_root_cid"] = root.get("cid")
+    else:
+        data["parent_uri"] = None
+        data["parent_cid"] = None
+        data["reply_root_uri"] = None
+        data["reply_root_cid"] = None
+
+    # Capture embed information (images, links, quotes, etc.)
+    embed = record.get("embed", {})
+    if embed:
+        data["embed"] = embed
+        embed_type = embed.get("$type")
+        if embed_type == "app.bsky.embed.images":
+            data["embed_type"] = "images"
+            data["embed_images"] = embed.get("images", [])
+        elif embed_type == "app.bsky.embed.external":
+            data["embed_type"] = "external"
+            data["embed_external"] = embed.get("external", {})
+        elif embed_type == "app.bsky.embed.record":
+            data["embed_type"] = "record"
+            data["embed_record"] = embed.get("record", {})
+        elif embed_type == "app.bsky.embed.recordWithMedia":
+            data["embed_type"] = "recordWithMedia"
+            data["embed_record"] = embed.get("record", {})
+            data["embed_media"] = embed.get("media", {})
+        else:
+            data["embed_type"] = embed_type
+    else:
+        data["embed"] = None
+        data["embed_type"] = None
+
     data["score"] = _score_post(data)
     data["url"] = _post_url(handle, data["uri"] or "")
     return data
@@ -471,11 +512,411 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
     }
 
 
+@tool
+def fetch_bluesky_following_feed(max_posts: int = 20) -> Dict[str, Any]:
+    """
+    Fetch recent posts from the authenticated user's following feed (timeline).
+
+    Args:
+        max_posts: Maximum number of posts to return (default 20, max 100).
+    """
+    limit = max(1, min(max_posts or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_timeline(limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky timeline error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # Timeline returns {"feed": [{"post": {...}, ...}]}
+    feed_items = raw.get("feed", [])
+    posts = []
+
+    for feed_item in feed_items:
+        # Feed items have structure: {"post": {...}, "reply": {...}, ...}
+        post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+
+    return {
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
+def fetch_bluesky_list_feed(list_uri: str, max_posts: int = 20) -> Dict[str, Any]:
+    """
+    Fetch posts from a specific Bluesky list.
+
+    Args:
+        list_uri: AT Protocol URI of the list (e.g., "at://did:plc:xyz/app.bsky.graph.list/abc123").
+        max_posts: Maximum number of posts to return (default 20, max 100).
+    """
+    if not list_uri or not list_uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "List URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    limit = max(1, min(max_posts or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_list_feed(list_uri=list_uri.strip(), limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky list feed error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # List feed returns {"feed": [{"post": {...}, ...}]}
+    feed_items = raw.get("feed", [])
+    posts = []
+
+    for feed_item in feed_items:
+        post_data = feed_item.get("post", feed_item)
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+
+    return {
+        "list_uri": list_uri.strip(),
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
+def list_bluesky_notifications(max_notifications: int = 20) -> Dict[str, Any]:
+    """
+    Fetch recent notifications (mentions, replies, likes, follows, etc.).
+
+    Args:
+        max_notifications: Maximum number of notifications to return (default 20, max 100).
+    """
+    limit = max(1, min(max_notifications or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.list_notifications(limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky notifications error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    notifications = raw.get("notifications", [])
+
+    # Normalize notifications - each has a "record" field with the notification data
+    normalized_notifications = []
+    for notification in notifications:
+        record = notification.get("record", {})
+        author = notification.get("author", {})
+
+        normalized = {
+            "uri": notification.get("uri"),
+            "cid": notification.get("cid"),
+            "type": record.get("$type", "").replace("app.bsky.notification.", ""),
+            "reason": notification.get("reason"),
+            "is_read": notification.get("isRead", False),
+            "indexed_at": notification.get("indexedAt"),
+            "author_handle": author.get("handle", ""),
+            "author_name": author.get("displayName") or author.get("handle", ""),
+            "reason_subject": notification.get("reasonSubject"),
+            "labels": notification.get("labels", []),
+        }
+
+        # For notifications about posts, include post details
+        if normalized["reason_subject"]:
+            try:
+                # Get the post details for context
+                post_raw = client.get_posts([normalized["reason_subject"]])
+                if post_raw.get("posts"):
+                    post_data = _normalize_post(post_raw["posts"][0])
+                    normalized["subject_post"] = post_data
+            except Exception:
+                # If post lookup fails, continue without it
+                pass
+
+        normalized_notifications.append(normalized)
+
+    return {
+        "count": len(normalized_notifications),
+        "notifications": normalized_notifications,
+    }
+
+
+@tool
+def reply_to_bluesky_post(uri: str, text: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Reply to a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to reply to.
+        text: Reply text content.
+        cid: Optional CID of the post to reply to (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    if not text or not text.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Reply text cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+    text = text.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.reply_to_post(text, uri, cid)
+
+        reply_uri = response.get("uri")
+        reply_cid = response.get("cid")
+
+        # Generate URL for the reply
+        handle = ""
+        if hasattr(client, "get_my_handle"):
+            try:
+                handle = client.get_my_handle() or ""
+            except Exception:
+                handle = ""
+
+        url = _post_url(handle, reply_uri) if reply_uri and handle else ""
+
+        return {
+            "success": True,
+            "uri": reply_uri,
+            "cid": reply_cid,
+            "url": url,
+            "message": f"Replied to post: {text[:50]}{'...' if len(text) > 50 else ''}",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky reply error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+
+@tool
+def like_bluesky_post(uri: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Like a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to like.
+        cid: Optional CID of the post to like (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.like_post(uri, cid)
+
+        return {
+            "success": True,
+            "uri": response.get("uri"),
+            "cid": response.get("cid"),
+            "message": "Post liked successfully.",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky like error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+
+@tool
+def repost_bluesky_post(uri: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Repost (boost) a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to repost.
+        cid: Optional CID of the post to repost (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.repost_post(uri, cid)
+
+        return {
+            "success": True,
+            "uri": response.get("uri"),
+            "cid": response.get("cid"),
+            "message": "Post reposted successfully.",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky repost error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+
 BLUESKY_AGENT_TOOLS = [
     search_bluesky_posts,
     get_bluesky_author_feed,
     summarize_bluesky_posts,
     post_bluesky_update,
+    fetch_bluesky_following_feed,
+    fetch_bluesky_list_feed,
+    list_bluesky_notifications,
+    reply_to_bluesky_post,
+    like_bluesky_post,
+    repost_bluesky_post,
 ]
 
 BLUESKY_AGENT_HIERARCHY = """
@@ -485,12 +926,18 @@ Bluesky Agent Hierarchy:
 LEVEL 1: Discovery
 └─ search_bluesky_posts(query, max_posts=10) → Search public posts for a query
 └─ get_bluesky_author_feed(actor=None, max_posts=10) → Get posts from specific author or authenticated user
+└─ fetch_bluesky_following_feed(max_posts=20) → Get timeline posts from followed accounts
+└─ fetch_bluesky_list_feed(list_uri, max_posts=20) → Get posts from a curated list
+└─ list_bluesky_notifications(max_notifications=20) → Get notifications (mentions, replies, likes)
 
 LEVEL 2: Summaries
 └─ summarize_bluesky_posts(query, lookback_hours=24, max_items=5, actor=None) → Gather + summarize top posts or author feed
 
-LEVEL 3: Publishing
-└─ post_bluesky_update(message) → Publish a post via AT Protocol
+LEVEL 3: Publishing & Interaction
+└─ post_bluesky_update(message) → Publish a new post via AT Protocol
+└─ reply_to_bluesky_post(uri, text, cid=None) → Reply to an existing post
+└─ like_bluesky_post(uri, cid=None) → Like a post
+└─ repost_bluesky_post(uri, cid=None) → Repost (boost) a post
 """
 
 

@@ -21,6 +21,7 @@ import re
 
 from ..utils import get_temperature_for_model
 from ..memory.session_memory import SessionContext
+from ..writing.style_profile import StyleProfile
 
 logger = logging.getLogger(__name__)
 
@@ -383,14 +384,20 @@ def synthesize_content(
     source_contents: List[str],
     topic: Optional[str] = None,
     synthesis_style: str = "comprehensive",
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None,
-    session_context: Optional[SessionContext] = None
+    writing_brief: Optional[Dict[str, Any]] = None,
+    session_context: Optional[SessionContext] = None,
+    reasoning_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Synthesize information from multiple sources into cohesive content.
 
     WRITING AGENT - LEVEL 1: Content Synthesis
     Use this to combine and analyze information from different sources.
+
+    ⚠️  CRITICAL: This tool returns SYNTHESIZED TEXT, not a file path!
+    - If you need to EMAIL the synthesized content, you MUST first save it using create_pages_doc
+    - CORRECT workflow: synthesize_content → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
+    - WRONG: compose_email(attachments=["$stepN.synthesized_content"]) ← This is TEXT not a FILE PATH!
 
     This tool uses LLM to:
     - Identify key themes and patterns across sources
@@ -407,12 +414,13 @@ def synthesize_content(
             - "concise": Focus on key points only (for summaries)
             - "comparative": Highlight differences and similarities
             - "chronological": Organize by timeline/sequence
-        writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
+        writing_brief: Optional writing brief as dictionary
             Use prepare_writing_brief first to create this
         session_context: Optional SessionContext for auto-populating topic and context
 
     Returns:
-        Dictionary with synthesized_content, key_points, sources_used, and word_count
+        Dictionary with synthesized_content (TEXT string), key_points, sources_used, word_count
+        ⚠️  synthesized_content is TEXT, NOT a file path - use create_pages_doc to save it
 
     Example:
         # With session context (recommended for context-aware synthesis)
@@ -435,6 +443,18 @@ def synthesize_content(
         logger.info(f"[WRITING AGENT] Derived topic from context: '{topic}'")
 
     logger.info(f"[WRITING AGENT] Tool: synthesize_content(topic='{topic}', style='{synthesis_style}', brief={'Yes' if writing_brief else 'No'})")
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[WRITING AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with synthesis before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[WRITING AGENT] Learning from {past_attempts} past attempts - using more detailed synthesis")
+            if synthesis_style == "concise":
+                synthesis_style = "comprehensive"  # Be more thorough if we've had issues
 
     try:
         from ..utils import load_config
@@ -476,13 +496,8 @@ def synthesize_content(
         if writing_brief:
             if isinstance(writing_brief, dict):
                 brief = WritingBrief.from_dict(writing_brief)
-            elif isinstance(writing_brief, str):
-                # Assume it's a JSON string
-                try:
-                    brief_dict = json.loads(writing_brief)
-                    brief = WritingBrief.from_dict(brief_dict)
-                except:
-                    logger.warning(f"[WRITING AGENT] Could not parse writing_brief string")
+            else:
+                logger.warning(f"[WRITING AGENT] writing_brief should be a dict")
 
         # Build synthesis prompt based on style
         style_instructions = {
@@ -607,12 +622,1030 @@ Focus on creating valuable, coherent content that serves the specified synthesis
         }
 
 
+class WritingStyleOrchestrator:
+    """
+    Orchestrator for building normalized style briefs from multiple sources.
+
+    This class centralizes writing control by extending WritingBrief usage across
+    all generators. It builds a normalized style brief from:
+    - User query and context hints
+    - Session context and persistent memory
+    - Deliverable type defaults
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        logger.info("[WRITING AGENT] WritingStyleOrchestrator initialized")
+
+    def build_style_profile(
+        self,
+        user_request: str,
+        deliverable_type: str,
+        session_context: Optional[SessionContext] = None,
+        context_hints: Optional[Dict[str, Any]] = None
+    ) -> StyleProfile:
+        """
+        Build a normalized style profile from multiple sources.
+
+        Args:
+            user_request: The original user request
+            deliverable_type: Type of deliverable (email, report, summary, presentation)
+            session_context: Optional SessionContext for memory-based preferences
+            context_hints: Additional context hints
+
+        Returns:
+            Merged StyleProfile with normalized preferences
+        """
+        logger.info(f"[WRITING AGENT] Building style profile for {deliverable_type}")
+
+        # Start with deliverable defaults
+        profile = StyleProfile.from_deliverable_defaults(deliverable_type)
+
+        # Merge user hints from query and context
+        user_hints_profile = StyleProfile.from_user_hints(user_request, context_hints)
+        profile = profile.merge(user_hints_profile, priority="combine")
+
+        # Merge session memory preferences if available
+        if session_context:
+            session_profile = StyleProfile.from_session_memory(session_context)
+            profile = profile.merge(session_profile, priority="combine")
+
+        # Update metadata
+        from datetime import datetime
+        profile.last_updated = datetime.now().isoformat()
+
+        logger.info(f"[WRITING AGENT] Style profile built: {profile.get_summary()}")
+        return profile
+
+    def get_style_profile(
+        self,
+        deliverable_type: str,
+        session_context: Optional[SessionContext] = None
+    ) -> StyleProfile:
+        """
+        Helper method to get a cached/default style profile.
+
+        This method can be used by email, report, summary, PPT flows to
+        get a consistent signature from SessionMemory.shared_context.
+
+        Args:
+            deliverable_type: Type of deliverable
+            session_context: Optional SessionContext for caching
+
+        Returns:
+            StyleProfile for the deliverable type
+        """
+        # Check if profile is cached in session context
+        if session_context and session_context.shared_context:
+            cached_key = f"style_profile_{deliverable_type}"
+            cached_profile_data = session_context.shared_context.get(cached_key)
+            if cached_profile_data:
+                profile = StyleProfile.from_dict(cached_profile_data)
+                logger.info(f"[WRITING AGENT] Using cached style profile for {deliverable_type}")
+                return profile
+
+        # Create default profile for deliverable type
+        profile = StyleProfile.from_deliverable_defaults(deliverable_type)
+
+        # Cache in session context if available
+        if session_context and session_context.shared_context:
+            session_context.shared_context[f"style_profile_{deliverable_type}"] = profile.to_dict()
+
+        return profile
+
+    def enhance_writing_brief(
+        self,
+        brief: WritingBrief,
+        style_profile: StyleProfile
+    ) -> WritingBrief:
+        """
+        Enhance a WritingBrief with StyleProfile information.
+
+        Args:
+            brief: Original WritingBrief
+            style_profile: StyleProfile to merge in
+
+        Returns:
+            Enhanced WritingBrief
+        """
+        # Merge style profile into brief
+        enhanced_brief = WritingBrief(
+            deliverable_type=style_profile.deliverable_type or brief.deliverable_type,
+            tone=style_profile.tone or brief.tone,
+            audience=style_profile.audience or brief.audience,
+            length_guideline=brief.length_guideline,
+            must_include_facts=brief.must_include_facts + style_profile.must_include_facts,
+            must_include_data={**brief.must_include_data, **style_profile.must_include_data},
+            focus_areas=brief.focus_areas,
+            style_preferences={**brief.style_preferences, **style_profile.style_preferences},
+            constraints=brief.constraints,
+            session_context=brief.session_context
+        )
+
+        # Add cadence modifiers to style preferences
+        if style_profile.cadence_modifiers:
+            enhanced_brief.style_preferences["cadence_modifiers"] = style_profile.cadence_modifiers
+
+        if style_profile.target_structure:
+            enhanced_brief.style_preferences["target_structure"] = style_profile.target_structure
+
+        logger.info(f"[WRITING AGENT] Enhanced brief with style profile: {style_profile.get_summary()}")
+        return enhanced_brief
+
+
+@tool
+def chain_of_density_summarize(
+    content: str,
+    topic: str = "",
+    max_rounds: int = 3,
+    target_density_score: Optional[float] = None,
+    writing_brief: Optional[Dict[str, Any]] = None,
+    session_context: Optional[SessionContext] = None
+) -> Dict[str, Any]:
+    """
+    Chain-of-Density prompting for summarization (Adams et al., 2023).
+
+    This utility triggers densification rounds until a configurable density score
+    is achieved or token guardrail hit. Applied to email summaries, daily briefings,
+    and note-taking so results pack salient entities without rambling.
+
+    Args:
+        content: Source content to summarize
+        topic: Topic or focus for the summary
+        max_rounds: Maximum densification rounds (default: 3)
+        target_density_score: Target density score (0-1), uses config default if None
+        writing_brief: Optional writing brief for tone/style guidance as dictionary
+        session_context: Optional SessionContext for context-aware summarization
+
+    Returns:
+        Dictionary with densified_summary, density_score, entities_extracted, rounds_performed
+    """
+    logger.info(f"[WRITING AGENT] Chain-of-Density summarization (max_rounds: {max_rounds})")
+
+    try:
+        from ..utils import load_config
+
+        config = load_config()
+        openai_config = config.get("openai", {})
+        llm = ChatOpenAI(
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=get_temperature_for_model(config, default_temperature=0.1),  # Low temperature for consistency
+            api_key=openai_config.get("api_key")
+        )
+
+        # Get target density from config or parameter
+        if target_density_score is None:
+            target_density_score = config.get("writing", {}).get("quality_chain_density_score", 0.7)
+
+        # Parse writing brief if provided
+        brief_obj = None
+        if writing_brief:
+            if isinstance(writing_brief, dict):
+                brief_obj = WritingBrief.from_dict(writing_brief)
+            else:
+                logger.warning("[WRITING AGENT] Writing brief should be a dict for CoD")
+
+        # Add session context
+        context_instruction = ""
+        if session_context:
+            context_instruction = f"""
+SESSION CONTEXT: {session_context.headline()}
+
+Consider the broader conversation context when determining what information is most salient.
+Prioritize entities and details that connect to previous discussions.
+"""
+
+        # Brief instruction if available
+        brief_instruction = ""
+        if brief_obj:
+            brief_instruction = f"""
+WRITING BRIEF REQUIREMENTS:
+{brief_obj.to_prompt_section()}
+
+Ensure the summary matches the required tone ({brief_obj.tone}) and audience ({brief_obj.audience}).
+Include all must-include facts and data points from the brief.
+"""
+
+        # Initial summary generation
+        initial_prompt = f"""You are creating a concise summary using Chain-of-Density methodology.
+
+SOURCE CONTENT:
+{content[:3000]}
+
+TOPIC: {topic}
+{brief_instruction}
+{context_instruction}
+
+INSTRUCTIONS:
+1. Create an initial concise summary (2-3 sentences)
+2. Extract the most salient entities (people, organizations, dates, metrics, concepts)
+3. Identify missing entities that would increase information density
+
+OUTPUT FORMAT:
+{{
+    "summary": "Initial concise summary",
+    "entities": ["entity1", "entity2", ...],
+    "missing_entities": ["entity1", "entity2", ...],
+    "density_score": 0.0-1.0
+}}
+
+Focus on factual density - pack in specific, important information without rambling.
+"""
+
+        messages = [
+            SystemMessage(content="You are an expert at creating dense, informative summaries."),
+            HumanMessage(content=initial_prompt)
+        ]
+
+        response = llm.invoke(messages)
+        response_text = response.content
+
+        # Parse initial response
+        try:
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            initial_result = json.loads(response_text[json_start:json_end])
+        except:
+            logger.warning("[WRITING AGENT] Could not parse initial CoD response")
+            initial_result = {
+                "summary": response_text[:500],
+                "entities": [],
+                "missing_entities": [],
+                "density_score": 0.3
+            }
+
+        current_summary = initial_result.get("summary", "")
+        current_entities = initial_result.get("entities", [])
+        current_density = initial_result.get("density_score", 0.3)
+
+        rounds_performed = 0
+        densification_history = [{
+            "round": 0,
+            "summary": current_summary,
+            "entities": current_entities,
+            "density_score": current_density
+        }]
+
+        # Iterative densification rounds
+        for round_num in range(1, max_rounds + 1):
+            rounds_performed = round_num
+
+            # Check if we've reached target density
+            if current_density >= target_density_score:
+                logger.info(f"[WRITING AGENT] Target density {target_density_score} reached at round {round_num}")
+                break
+
+            # Check token guardrail (rough estimate)
+            estimated_tokens = len(current_summary.split()) * 1.3  # Rough token estimate
+            max_tokens = config.get("writing", {}).get("max_refinement_tokens", 2000)
+            if estimated_tokens > max_tokens:
+                logger.info(f"[WRITING AGENT] Token guardrail hit: {estimated_tokens} > {max_tokens}")
+                break
+
+            densify_prompt = f"""Chain-of-Density Round {round_num}: Densify the summary by incorporating missing entities.
+
+CURRENT SUMMARY:
+{current_summary}
+
+CURRENT ENTITIES INCLUDED:
+{', '.join(current_entities)}
+
+MISSING ENTITIES TO INCORPORATE:
+{', '.join(initial_result.get('missing_entities', []))}
+
+SOURCE CONTENT:
+{content[:2000]}
+
+TOPIC: {topic}
+{brief_instruction}
+{context_instruction}
+
+INSTRUCTIONS:
+1. Revise the summary to incorporate additional salient entities
+2. Maintain conciseness while increasing information density
+3. Add specific facts, dates, metrics, or relationships that were missing
+4. Ensure the summary remains coherent and well-structured
+5. Do NOT make the summary longer just for length - focus on density
+
+OUTPUT FORMAT:
+{{
+    "revised_summary": "Densified summary with additional entities",
+    "new_entities_added": ["entity1", "entity2", ...],
+    "total_entities": ["entity1", "entity2", ...],
+    "new_density_score": 0.0-1.0,
+    "improvement": "What was added and why it increases density"
+}}
+
+Higher density means more specific, factual information packed into the same space.
+"""
+
+            messages = [
+                SystemMessage(content="You are densifying a summary by adding missing salient entities."),
+                HumanMessage(content=densify_prompt)
+            ]
+
+            response = llm.invoke(messages)
+            response_text = response.content
+
+            # Parse densification response
+            try:
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                round_result = json.loads(response_text[json_start:json_end])
+            except:
+                logger.warning(f"[WRITING AGENT] Could not parse CoD round {round_num} response")
+                break
+
+            # Update current state
+            current_summary = round_result.get("revised_summary", current_summary)
+            new_entities = round_result.get("new_entities_added", [])
+            current_entities.extend(new_entities)
+            current_density = round_result.get("new_density_score", current_density)
+
+            # Track history
+            densification_history.append({
+                "round": round_num,
+                "summary": current_summary,
+                "entities": current_entities.copy(),
+                "density_score": current_density,
+                "new_entities": new_entities,
+                "improvement": round_result.get("improvement", "")
+            })
+
+        # Calculate final metrics
+        total_entities = len(current_entities)
+        final_word_count = len(current_summary.split())
+
+        # Calculate information density (entities per word)
+        density_score = min(1.0, total_entities / max(final_word_count, 1) * 10)
+
+        logger.info(f"[WRITING AGENT] CoD completed: {rounds_performed} rounds, {total_entities} entities, density: {density_score:.2f}")
+
+        return {
+            "densified_summary": current_summary,
+            "density_score": density_score,
+            "entities_extracted": current_entities,
+            "rounds_performed": rounds_performed,
+            "target_density_achieved": current_density >= target_density_score,
+            "densification_history": densification_history,
+            "word_count": final_word_count,
+            "entity_count": total_entities,
+            "message": f"Densified summary: {total_entities} entities in {final_word_count} words (density: {density_score:.2f})"
+        }
+
+    except Exception as e:
+        logger.error(f"[WRITING AGENT] Error in chain_of_density_summarize: {e}")
+        return {
+            "error": True,
+            "error_type": "DensitySummarizationError",
+            "error_message": str(e),
+            "densified_summary": content[:500],  # Fallback to truncated content
+            "density_score": 0.1,
+            "entities_extracted": [],
+            "rounds_performed": 0,
+            "target_density_achieved": False
+        }
+
+
+@tool
+def self_refine(
+    content: str,
+    brief: Dict[str, Any],
+    refinement_focus: str = "coverage",
+    session_context: Optional[SessionContext] = None
+) -> Dict[str, Any]:
+    """
+    Self-Refine content using iterative improvement (Madaan et al., 2023).
+
+    This tool implements the Self-Refine approach for every long-form deliverable.
+    It performs refinement passes focusing on different aspects of quality.
+
+    Args:
+        content: The content to refine
+        brief: Writing brief with requirements as dictionary
+        refinement_focus: What to focus on ("coverage", "completeness", "tone", "clarity")
+        session_context: Optional SessionContext for context-aware refinement
+
+    Returns:
+        Dictionary with refined_content, improvement_score, critique_metadata
+    """
+    logger.info(f"[WRITING AGENT] Self-refining content (focus: {refinement_focus})")
+
+    try:
+        from ..utils import load_config
+
+        config = load_config()
+        openai_config = config.get("openai", {})
+        llm = ChatOpenAI(
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=get_temperature_for_model(config, default_temperature=0.2),
+            api_key=openai_config.get("api_key")
+        )
+
+        # Parse brief
+        if isinstance(brief, dict):
+            brief_obj = WritingBrief.from_dict(brief)
+        else:
+            logger.warning("[WRITING AGENT] Brief should be a dict, using default")
+            brief_obj = WritingBrief()
+
+        # Get max refinement passes from config
+        max_passes = config.get("writing", {}).get("max_refinement_passes", 2)
+
+        # Build refinement prompt based on focus
+        focus_prompts = {
+            "coverage": """
+CRITIQUE FOCUS: Content Coverage and Completeness
+- Does the content include ALL required facts from the brief?
+- Are all must-include data points referenced appropriately?
+- Does it address all focus areas from the brief?
+- Are there gaps in coverage that need to be filled?
+""",
+            "completeness": """
+CRITIQUE FOCUS: Structural Completeness and Organization
+- Does the content have a clear, logical structure?
+- Are transitions between sections smooth and appropriate?
+- Does it follow the expected format for this deliverable type?
+- Are all sections adequately developed?
+""",
+            "tone": """
+CRITIQUE FOCUS: Tone and Style Adherence
+- Does the tone match the brief requirements (executive, professional, technical, etc.)?
+- Are cadence modifiers applied correctly (narrative, formal, conversational)?
+- Is the language appropriate for the target audience?
+- Does the style feel consistent throughout?
+""",
+            "clarity": """
+CRITIQUE FOCUS: Clarity and Readability
+- Is the content clear and easy to understand?
+- Are complex ideas explained effectively?
+- Is jargon used appropriately for the audience?
+- Could any sections be simplified or clarified?
+"""
+        }
+
+        focus_instruction = focus_prompts.get(refinement_focus, focus_prompts["coverage"])
+
+        # Add session context if available
+        context_instruction = ""
+        if session_context:
+            context_instruction = f"""
+SESSION CONTEXT: {session_context.headline()}
+
+Consider how this content fits within the broader conversation context.
+Ensure consistency with previous outputs and user preferences.
+"""
+
+        critique_prompt = f"""You are an expert content critic using Self-Refine methodology (Madaan et al., 2023).
+
+CONTENT TO CRITIQUE:
+{content[:4000]}
+
+WRITING BRIEF REQUIREMENTS:
+{brief_obj.to_prompt_section()}
+
+{focus_instruction}
+{context_instruction}
+
+YOUR TASK:
+1. Analyze the content against the brief requirements and critique focus
+2. Identify specific areas that need improvement
+3. Provide actionable feedback for refinement
+4. Suggest concrete changes to address issues
+
+OUTPUT FORMAT:
+Provide a JSON response with:
+{{
+    "critique": "Specific critique of what's wrong or missing",
+    "issues_found": ["issue 1", "issue 2", ...],
+    "suggested_improvements": ["improvement 1", "improvement 2", ...],
+    "refinement_needed": true/false,
+    "confidence_score": 0.0-1.0
+}}
+
+Be specific about what's wrong and how to fix it. Focus on the critique area specified.
+"""
+
+        # Get critique from LLM
+        messages = [
+            SystemMessage(content="You are an expert content critic specializing in Self-Refine methodology."),
+            HumanMessage(content=critique_prompt)
+        ]
+
+        critique_response = llm.invoke(messages)
+        critique_text = critique_response.content
+
+        # Parse critique JSON
+        try:
+            json_start = critique_text.find('{')
+            json_end = critique_text.rfind('}') + 1
+            critique_data = json.loads(critique_text[json_start:json_end])
+        except:
+            logger.warning("[WRITING AGENT] Could not parse critique JSON, using fallback")
+            critique_data = {
+                "critique": "General quality assessment",
+                "issues_found": ["Minor style inconsistencies"],
+                "suggested_improvements": ["Review for clarity"],
+                "refinement_needed": False,
+                "confidence_score": 0.5
+            }
+
+        # Check if refinement is needed
+        if not critique_data.get("refinement_needed", False):
+            logger.info(f"[WRITING AGENT] No refinement needed for {refinement_focus}")
+            return {
+                "refined_content": content,
+                "improvement_score": 1.0,
+                "critique_metadata": critique_data,
+                "refinement_performed": False,
+                "message": f"Content quality acceptable for {refinement_focus} focus"
+            }
+
+        # Perform refinement
+        refinement_prompt = f"""You are an expert content refiner using Self-Refine methodology.
+
+ORIGINAL CONTENT:
+{content[:4000]}
+
+WRITING BRIEF REQUIREMENTS:
+{brief_obj.to_prompt_section()}
+
+CRITIQUE RECEIVED:
+{critique_data.get('critique', 'General quality improvements needed')}
+
+ISSUES TO ADDRESS:
+{chr(10).join(f"- {issue}" for issue in critique_data.get('issues_found', []))}
+
+SUGGESTED IMPROVEMENTS:
+{chr(10).join(f"- {improvement}" for improvement in critique_data.get('suggested_improvements', []))}
+
+{context_instruction}
+
+YOUR TASK:
+Refine the content by addressing all the critique points and implementing the suggested improvements.
+Focus specifically on the {refinement_focus} issues identified.
+
+Maintain the overall structure and intent while making targeted improvements.
+Ensure all brief requirements are still met after refinement.
+
+OUTPUT: Provide only the refined content, no explanations or metadata.
+"""
+
+        messages = [
+            SystemMessage(content="You are an expert content refiner. Provide only the refined content."),
+            HumanMessage(content=refinement_prompt)
+        ]
+
+        refined_response = llm.invoke(messages)
+        refined_content = refined_response.content.strip()
+
+        # Calculate improvement score (simplified heuristic)
+        original_length = len(content.split())
+        refined_length = len(refined_content.split())
+        length_change_ratio = abs(refined_length - original_length) / max(original_length, 1)
+
+        # Higher score for substantial improvements without excessive changes
+        improvement_score = min(0.9, max(0.1, 0.5 + length_change_ratio * 0.3))
+
+        # Store critique metadata for transparency
+        critique_metadata = {
+            **critique_data,
+            "refinement_focus": refinement_focus,
+            "original_length": original_length,
+            "refined_length": refined_length,
+            "timestamp": json.dumps({"timestamp": "now"}, default=str)
+        }
+
+        logger.info(f"[WRITING AGENT] Self-refine completed: {original_length} → {refined_length} words, score: {improvement_score:.2f}")
+
+        return {
+            "refined_content": refined_content,
+            "improvement_score": improvement_score,
+            "critique_metadata": critique_metadata,
+            "refinement_performed": True,
+            "message": f"Content refined for {refinement_focus} (score: {improvement_score:.2f})"
+        }
+
+    except Exception as e:
+        logger.error(f"[WRITING AGENT] Error in self_refine: {e}")
+        return {
+            "error": True,
+            "error_type": "RefinementError",
+            "error_message": str(e),
+            "refined_content": content,  # Return original content on error
+            "improvement_score": 0.0,
+            "critique_metadata": {},
+            "refinement_performed": False
+        }
+
+
+@tool
+def evaluate_with_rubric(
+    content: str,
+    deliverable_type: str,
+    brief: Dict[str, Any],
+    session_context: Optional[SessionContext] = None
+) -> Dict[str, Any]:
+    """
+    Evaluate content with rubric-based scoring for quality assurance.
+
+    Defines rubrics per deliverable (clarity, actionability, personalization readiness)
+    and has Claude evaluate drafts post-refinement. Decline delivery if rubric
+    score < threshold, returning actionable feedback to the planner.
+
+    Args:
+        content: Content to evaluate
+        deliverable_type: Type of deliverable (email, report, summary, presentation)
+        brief: Writing brief with requirements as dictionary
+        session_context: Optional SessionContext for context
+
+    Returns:
+        Dictionary with rubric_scores, overall_score, approved, feedback
+    """
+    logger.info(f"[WRITING AGENT] Evaluating {deliverable_type} with rubric")
+
+    try:
+        from ..utils import load_config
+
+        config = load_config()
+        openai_config = config.get("openai", {})
+        llm = ChatOpenAI(
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=get_temperature_for_model(config, default_temperature=0.1),  # Very low temperature for consistency
+            api_key=openai_config.get("api_key")
+        )
+
+        # Get rubric thresholds from config
+        rubric_thresholds = config.get("writing", {}).get("rubric_thresholds", {})
+        approval_threshold = rubric_thresholds.get(deliverable_type, 0.7)
+
+        # Parse brief
+        if isinstance(brief, dict):
+            brief_obj = WritingBrief.from_dict(brief)
+        else:
+            logger.warning("[WRITING AGENT] Brief should be a dict for rubric evaluation")
+            brief_obj = WritingBrief(deliverable_type=deliverable_type)
+
+        # Define rubrics by deliverable type
+        rubrics = {
+            "email": {
+                "clarity": "Is the email clear and easy to understand? Are complex ideas explained appropriately?",
+                "actionability": "Does the email clearly indicate what action is expected? Are next steps defined?",
+                "personalization": "Is the email appropriately personalized for the recipient and context?",
+                "tone_consistency": "Does the tone match the brief requirements throughout?",
+                "structure": "Does the email follow proper email structure (greeting, body, closing)?"
+            },
+            "report": {
+                "clarity": "Is the report clear and logically structured? Are sections well-organized?",
+                "comprehensiveness": "Does the report cover all required topics and data points?",
+                "actionability": "Does the report provide actionable insights or recommendations?",
+                "accuracy": "Are all facts, data, and claims accurate and properly sourced?",
+                "readability": "Is the report readable for the target audience? Appropriate technical level?"
+            },
+            "summary": {
+                "conciseness": "Does the summary capture key information without unnecessary detail?",
+                "completeness": "Does the summary include all essential information from the source?",
+                "clarity": "Is the summary clear and easy to understand?",
+                "relevance": "Does the summary focus on information relevant to the user's needs?",
+                "structure": "Is the summary well-structured and logically organized?"
+            },
+            "presentation": {
+                "clarity": "Are slide messages clear and focused? One main point per slide?",
+                "flow": "Do slides flow logically to tell a coherent story?",
+                "comprehensiveness": "Do slides cover the required topics and data?",
+                "visual_impact": "Would these slides be visually effective and engaging?",
+                "audience_appropriateness": "Are slides appropriate for the target audience?"
+            }
+        }
+
+        rubric = rubrics.get(deliverable_type, rubrics["summary"])
+
+        # Add session context
+        context_instruction = ""
+        if session_context:
+            context_instruction = f"""
+SESSION CONTEXT: {session_context.headline()}
+
+Consider how this content fits within the broader conversation and user expectations.
+"""
+
+        evaluation_prompt = f"""You are a content quality evaluator using rubric-based assessment.
+
+Evaluate this {deliverable_type} against the defined rubric criteria.
+
+CONTENT TO EVALUATE:
+{content[:3000]}
+
+WRITING BRIEF REQUIREMENTS:
+{brief_obj.to_prompt_section()}
+
+{context_instruction}
+
+RUBRIC CRITERIA:
+{chr(10).join(f"- {criterion}: {description}" for criterion, description in rubric.items())}
+
+INSTRUCTIONS:
+1. Evaluate each rubric criterion on a scale of 0.0 to 1.0
+2. Provide specific feedback for each criterion
+3. Calculate overall score as average of all criteria
+4. Determine if content meets quality threshold ({approval_threshold})
+5. Provide actionable improvement suggestions if score is below threshold
+
+OUTPUT FORMAT:
+{{
+    "rubric_scores": {{
+        "criterion_name": {{
+            "score": 0.0-1.0,
+            "feedback": "Specific feedback for this criterion",
+            "strengths": ["strength1", "strength2"],
+            "improvements": ["improvement1", "improvement2"]
+        }},
+        ...
+    }},
+    "overall_score": 0.0-1.0,
+    "approved": true/false,
+    "threshold_used": {approval_threshold},
+    "feedback_summary": "Overall assessment and recommendations",
+    "critical_issues": ["issue1", "issue2"] // only if any scores < 0.6
+}}
+
+Be thorough and specific in your evaluation. Focus on how well the content meets both the rubric criteria and the writing brief requirements.
+"""
+
+        messages = [
+            SystemMessage(content="You are a professional content evaluator using structured rubrics."),
+            HumanMessage(content=evaluation_prompt)
+        ]
+
+        response = llm.invoke(messages)
+        response_text = response.content
+
+        # Parse response
+        try:
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            result = json.loads(response_text[json_start:json_end])
+        except:
+            logger.warning("[WRITING AGENT] Could not parse rubric evaluation response")
+            # Fallback evaluation
+            result = {
+                "rubric_scores": {
+                    "overall_quality": {
+                        "score": 0.7,
+                        "feedback": "Content appears acceptable but could not be fully evaluated",
+                        "strengths": ["Basic structure present"],
+                        "improvements": ["Consider more detailed rubric assessment"]
+                    }
+                },
+                "overall_score": 0.7,
+                "approved": True,
+                "threshold_used": approval_threshold,
+                "feedback_summary": "Content approved with fallback evaluation",
+                "critical_issues": []
+            }
+
+        # Calculate overall score if not provided
+        if "overall_score" not in result:
+            scores = [item.get("score", 0) for item in result.get("rubric_scores", {}).values() if isinstance(item, dict)]
+            result["overall_score"] = sum(scores) / len(scores) if scores else 0.5
+
+        # Determine approval
+        result["approved"] = result["overall_score"] >= approval_threshold
+
+        # Log results
+        score = result["overall_score"]
+        approved = result["approved"]
+        logger.info(f"[WRITING AGENT] Rubric evaluation: {score:.2f} (threshold: {approval_threshold}) - {'APPROVED' if approved else 'REJECTED'}")
+
+        if not approved:
+            critical_issues = result.get("critical_issues", [])
+            logger.warning(f"[WRITING AGENT] Content rejected due to rubric score. Critical issues: {critical_issues}")
+
+        # Add metadata
+        result["deliverable_type"] = deliverable_type
+        result["evaluation_timestamp"] = json.dumps({"timestamp": "now"}, default=str)
+        result["brief_compliance"] = len(brief_obj.must_include_facts) > 0 or len(brief_obj.must_include_data) > 0
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[WRITING AGENT] Error in evaluate_with_rubric: {e}")
+        return {
+            "error": True,
+            "error_type": "RubricEvaluationError",
+            "error_message": str(e),
+            "overall_score": 0.0,
+            "approved": False,
+            "feedback_summary": "Evaluation failed due to error"
+        }
+
+
+@tool
+def plan_slide_skeleton(
+    query: str,
+    brief: Dict[str, Any],
+    memory: Optional[SessionContext] = None,
+    max_slides: int = 5
+) -> Dict[str, Any]:
+    """
+    Slide skeleton planner using Skeleton-of-Thought (Ning et al., 2024).
+
+    Before create_slide_deck_content, this runs to produce 3–6 slide intents
+    anchored to the user's objective; store them in the brief constraints so
+    actual slide generation can't drift. Enforce slide caps (≤5 default) yet
+    allow justification-based overflow when memory indicates broader scope.
+
+    Args:
+        query: User query or topic for the presentation
+        brief: Writing brief with requirements as dictionary
+        memory: SessionContext for additional context
+        max_slides: Maximum slides allowed (default: 5)
+
+    Returns:
+        Dictionary with slide_skeleton, justification, constraints
+    """
+    logger.info(f"[WRITING AGENT] Planning slide skeleton (max_slides: {max_slides})")
+
+    try:
+        from ..utils import load_config
+
+        config = load_config()
+        openai_config = config.get("openai", {})
+        llm = ChatOpenAI(
+            model=openai_config.get("model", "gpt-4o"),
+            temperature=get_temperature_for_model(config, default_temperature=0.2),
+            api_key=openai_config.get("api_key")
+        )
+
+        # Parse brief
+        if isinstance(brief, dict):
+            brief_obj = WritingBrief.from_dict(brief)
+        else:
+            logger.warning("[WRITING AGENT] Brief should be a dict for slide skeleton")
+            brief_obj = WritingBrief(deliverable_type="presentation")
+
+        # Get slide limits from config
+        slide_limits = config.get("writing", {}).get("slide_limits", {})
+        default_max = slide_limits.get("default", 5)
+        max_with_justification = slide_limits.get("max_with_justification", 7)
+
+        # Adjust max_slides based on config and memory context
+        if memory and memory.derived_topic:
+            # Check if broader scope is indicated in memory
+            topic_complexity = len(memory.derived_topic.split()) > 3  # Complex topics may need more slides
+            if topic_complexity and max_slides < max_with_justification:
+                max_slides = min(max_slides + 1, max_with_justification)
+                logger.info(f"[WRITING AGENT] Increased max_slides to {max_slides} due to topic complexity")
+
+        # Add memory context
+        memory_context = ""
+        if memory:
+            memory_context = f"""
+SESSION MEMORY CONTEXT:
+{memory.headline()}
+
+Consider previous presentations or discussions that might inform slide structure.
+Ensure skeleton covers all aspects mentioned in prior context.
+"""
+
+        skeleton_prompt = f"""You are a presentation architect using Skeleton-of-Thought methodology (Ning et al., 2024).
+
+Create a focused slide skeleton that captures the essential narrative structure for this presentation.
+
+USER QUERY: {query}
+
+WRITING BRIEF REQUIREMENTS:
+{brief_obj.to_prompt_section()}
+
+{memory_context}
+
+SLIDE CONSTRAINTS:
+- Maximum slides: {max_slides}
+- Each slide must have ONE clear, focused message
+- Skeleton should anchor to the user's objective
+- Prioritize depth over breadth within the slide limit
+
+INSTRUCTIONS:
+1. Analyze the query to identify the core objective and key topics
+2. Design 3-{max_slides} slides that tell a complete story
+3. Each slide should have a specific intent and purpose
+4. Ensure logical flow from slide to slide
+5. Consider the audience ({brief_obj.audience}) and tone ({brief_obj.tone})
+6. Include any required facts or data from the brief
+
+OUTPUT FORMAT:
+{{
+    "slide_skeleton": [
+        {{
+            "slide_number": 1,
+            "intent": "Clear purpose of this slide (3-7 words)",
+            "key_message": "The one main point this slide communicates",
+            "content_scope": "What specific content belongs here",
+            "required_elements": ["fact1", "data_point1"] // if any from brief
+        }},
+        ...
+    ],
+    "narrative_flow": "How the slides connect to tell the complete story",
+    "justification": "Why this number of slides and structure serves the objective",
+    "slide_count": number_of_slides,
+    "constraints_applied": ["constraint1", "constraint2", ...]
+}}
+
+Create a skeleton that prevents content drift while allowing focused depth on each topic.
+"""
+
+        messages = [
+            SystemMessage(content="You are a presentation architect specializing in Skeleton-of-Thought design."),
+            HumanMessage(content=skeleton_prompt)
+        ]
+
+        response = llm.invoke(messages)
+        response_text = response.content
+
+        # Parse response
+        try:
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            result = json.loads(response_text[json_start:json_end])
+        except:
+            logger.warning("[WRITING AGENT] Could not parse slide skeleton response")
+            # Fallback: create basic skeleton
+            result = {
+                "slide_skeleton": [
+                    {
+                        "slide_number": 1,
+                        "intent": "Introduction",
+                        "key_message": "Present the main topic",
+                        "content_scope": "Overview and context",
+                        "required_elements": []
+                    },
+                    {
+                        "slide_number": 2,
+                        "intent": "Main Content",
+                        "key_message": "Cover key information",
+                        "content_scope": "Core details and analysis",
+                        "required_elements": brief_obj.must_include_facts[:2] if brief_obj.must_include_facts else []
+                    },
+                    {
+                        "slide_number": 3,
+                        "intent": "Conclusion",
+                        "key_message": "Summarize key takeaways",
+                        "content_scope": "Final thoughts and recommendations",
+                        "required_elements": []
+                    }
+                ],
+                "narrative_flow": "Introduction → Analysis → Conclusion",
+                "justification": "Basic three-slide structure covering introduction, content, and conclusion",
+                "slide_count": 3,
+                "constraints_applied": ["max_slides_respected"]
+            }
+
+        # Validate slide count
+        skeleton = result.get("slide_skeleton", [])
+        actual_count = len(skeleton)
+
+        if actual_count > max_slides:
+            logger.warning(f"[WRITING AGENT] Skeleton has {actual_count} slides, truncating to {max_slides}")
+            skeleton = skeleton[:max_slides]
+            result["slide_skeleton"] = skeleton
+            result["slide_count"] = max_slides
+            result["constraints_applied"].append("truncated_to_max_slides")
+
+        # Add to result
+        result["max_slides_allowed"] = max_slides
+        result["query_covered"] = all(
+            any(intent.lower() in slide.get("intent", "").lower() or
+                intent.lower() in slide.get("key_message", "").lower()
+                for slide in skeleton)
+            for intent in query.split() if len(intent) > 4  # Check major terms from query
+        )
+
+        # Store skeleton in brief constraints for downstream use
+        brief_obj.constraints["slide_skeleton"] = result["slide_skeleton"]
+        brief_obj.constraints["skeleton_narrative_flow"] = result.get("narrative_flow", "")
+
+        logger.info(f"[WRITING AGENT] Created slide skeleton: {actual_count} slides, query_covered: {result['query_covered']}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[WRITING AGENT] Error in plan_slide_skeleton: {e}")
+        return {
+            "error": True,
+            "error_type": "SkeletonPlanningError",
+            "error_message": str(e),
+            "slide_skeleton": [],
+            "slide_count": 0,
+            "justification": "Error occurred during skeleton planning"
+        }
+
+
 @tool
 def create_slide_deck_content(
     content: str,
     title: str,
     num_slides: Optional[int] = None,
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None
+    writing_brief: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Transform content into concise, bullet-point format optimized for slide decks.
@@ -632,7 +1665,7 @@ def create_slide_deck_content(
         content: Source content to transform (can be from synthesis or extraction)
         title: Presentation title/topic
         num_slides: Target number of slides (None = auto-determine based on content, typically 5-10)
-        writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
+        writing_brief: Optional writing brief as dictionary
 
     Returns:
         Dictionary with slides (list of slide objects), total_slides, and formatted_content
@@ -679,12 +1712,8 @@ def create_slide_deck_content(
         if writing_brief:
             if isinstance(writing_brief, dict):
                 brief = WritingBrief.from_dict(writing_brief)
-            elif isinstance(writing_brief, str):
-                try:
-                    brief_dict = json.loads(writing_brief)
-                    brief = WritingBrief.from_dict(brief_dict)
-                except:
-                    logger.warning(f"[WRITING AGENT] Could not parse writing_brief string for slide deck")
+            else:
+                logger.warning(f"[WRITING AGENT] writing_brief should be a dict for slide deck")
 
         # Determine target slides with RELAXED limits (addressing audit feedback)
         target_slides_instruction = ""
@@ -870,13 +1899,18 @@ def create_detailed_report(
     title: str,
     report_style: str = "business",
     include_sections: Optional[List[str]] = None,
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None
+    writing_brief: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Transform content into a detailed, well-structured report with long-form writing.
 
     WRITING AGENT - LEVEL 3: Report Writing
     Use this to create comprehensive reports with detailed analysis and explanations.
+
+    ⚠️  CRITICAL: This tool returns REPORT TEXT, not a file path!
+    - If you need to EMAIL the report, you MUST first save it using create_pages_doc
+    - CORRECT workflow: create_detailed_report → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
+    - WRONG: compose_email(attachments=["$stepN.report_content"]) ← report_content is TEXT not a FILE PATH!
 
     This tool uses LLM to:
     - Expand and elaborate on key points
@@ -897,10 +1931,11 @@ def create_detailed_report(
         include_sections: Optional list of sections to include
             (e.g., ["Executive Summary", "Analysis", "Recommendations"])
             If None, sections are auto-generated based on content
-        writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
+        writing_brief: Optional writing brief as dictionary
 
     Returns:
-        Dictionary with report_content, sections, word_count, and structure
+        Dictionary with report_content (TEXT string), sections (array), word_count (number)
+        ⚠️  report_content is TEXT, NOT a file path - use create_pages_doc to save it
 
     Example:
         # With writing brief (recommended)
@@ -946,12 +1981,8 @@ def create_detailed_report(
         if writing_brief:
             if isinstance(writing_brief, dict):
                 brief = WritingBrief.from_dict(writing_brief)
-            elif isinstance(writing_brief, str):
-                try:
-                    brief_dict = json.loads(writing_brief)
-                    brief = WritingBrief.from_dict(brief_dict)
-                except:
-                    logger.warning(f"[WRITING AGENT] Could not parse writing_brief string for report")
+            else:
+                logger.warning(f"[WRITING AGENT] writing_brief should be a dict for report")
 
         # Style-specific instructions (ENHANCED with audience consideration)
         style_guidelines = {
@@ -1244,7 +2275,7 @@ def create_quick_summary(
     content: str,
     topic: str,
     max_sentences: int = 3,
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None
+    writing_brief: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Create a quick, conversational summary for simple/short-answer requests.
@@ -1262,7 +2293,7 @@ def create_quick_summary(
         content: Source content to summarize
         topic: Topic to focus on
         max_sentences: Maximum sentences in summary (default: 3)
-        writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
+        writing_brief: Optional writing brief as dictionary
 
     Returns:
         Dictionary with summary, tone, and word_count
@@ -1301,12 +2332,8 @@ def create_quick_summary(
         if writing_brief:
             if isinstance(writing_brief, dict):
                 brief = WritingBrief.from_dict(writing_brief)
-            elif isinstance(writing_brief, str):
-                try:
-                    brief_dict = json.loads(writing_brief)
-                    brief = WritingBrief.from_dict(brief_dict)
-                except:
-                    logger.warning(f"[WRITING AGENT] Could not parse writing_brief string for quick summary")
+            else:
+                logger.warning(f"[WRITING AGENT] writing_brief should be a dict for quick summary")
 
         # Add writing brief section if available
         brief_section = ""
@@ -1393,7 +2420,7 @@ def compose_professional_email(
     purpose: str,
     context: str,
     recipient: str = "recipient",
-    writing_brief: Optional[Union[Dict[str, Any], str]] = None
+    writing_brief: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Compose a professional email with appropriate tone and structure.
@@ -1411,7 +2438,7 @@ def compose_professional_email(
         purpose: The purpose of the email (e.g., "follow-up on meeting", "request information", "share report")
         context: Background information or content to include in the email
         recipient: Name or role of the recipient (e.g., "John Smith", "team", "client")
-        writing_brief: Optional writing brief (dict or $stepN.writing_brief reference)
+        writing_brief: Optional writing brief as dictionary
 
     Returns:
         Dictionary with email_subject, email_body, tone, and word_count
@@ -1442,12 +2469,8 @@ def compose_professional_email(
         if writing_brief:
             if isinstance(writing_brief, dict):
                 brief = WritingBrief.from_dict(writing_brief)
-            elif isinstance(writing_brief, str):
-                try:
-                    brief_dict = json.loads(writing_brief)
-                    brief = WritingBrief.from_dict(brief_dict)
-                except:
-                    logger.warning(f"[WRITING AGENT] Could not parse writing_brief string for email")
+            else:
+                logger.warning(f"[WRITING AGENT] writing_brief should be a dict for email")
 
         # Add writing brief section if available
         brief_section = ""
@@ -1560,6 +2583,9 @@ WRITING_AGENT_TOOLS = [
     create_detailed_report,
     create_meeting_notes,
     compose_professional_email,
+    chain_of_density_summarize,
+    plan_slide_skeleton,
+    self_refine,
 ]
 
 

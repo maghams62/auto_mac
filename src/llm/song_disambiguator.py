@@ -2,6 +2,7 @@
 LLM-powered song name disambiguation service.
 
 Uses OpenAI to resolve fuzzy/imprecise song names to canonical titles.
+Includes ambiguity checking and context-aware decision making.
 """
 
 import json
@@ -214,7 +215,7 @@ class SongDisambiguator:
         self.temperature = 0.3
         self.max_tokens = openai_cfg.get("max_tokens", 500)
 
-    def disambiguate(self, fuzzy_name: str) -> Dict[str, Any]:
+    def disambiguate(self, fuzzy_name: str, reasoning_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Resolve fuzzy song name to canonical name + artist using LLM.
 
@@ -226,17 +227,17 @@ class SongDisambiguator:
           * confidence: float (0.0-1.0) - Confidence score
           * reasoning: str - Explanation of the match
           * alternatives: List[Dict] - Alternative matches if ambiguous
-        
+
         Validation:
         - song_name must be non-empty string after disambiguation
         - confidence must be between 0.0 and 1.0
         - If confidence < 0.5, caller should consider fallback
-        
+
         Fallback Behavior:
         - If LLM call fails: Returns cleaned input with confidence 0.3
         - If LLM returns invalid JSON: Returns cleaned input with confidence 0.3
         - If song_name is empty after disambiguation: Uses cleaned input
-        
+
         Non-ASCII Handling:
         - Input is cleaned but preserved (no encoding conversion)
         - Output song_name/artist may contain non-ASCII characters
@@ -246,6 +247,7 @@ class SongDisambiguator:
             fuzzy_name: Fuzzy, partial, or imprecise song name
                        (e.g., "Viva la something", "that song called X")
                        Must be non-empty string
+            reasoning_context: Optional context with prior clarifications for learning
 
         Returns:
             Dictionary with shape:
@@ -262,6 +264,21 @@ class SongDisambiguator:
 
         # Clean up the input - remove common phrases
         cleaned_name = self._clean_song_name(fuzzy_name)
+
+        # Check for prior clarifications in context before LLM call
+        if reasoning_context:
+            prior_resolution = self._lookup_prior_resolution(cleaned_name, reasoning_context)
+            if prior_resolution:
+                logger.info(f"[SONG DISAMBIGUATOR] Using prior clarification: {cleaned_name} → {prior_resolution['song_name']}")
+                return {
+                    "song_name": prior_resolution["song_name"],
+                    "artist": prior_resolution["artist"],
+                    "confidence": prior_resolution.get("confidence", 1.0),  # User-confirmed = high confidence
+                    "reasoning": f"Previously clarified by user: '{prior_resolution.get('original_query', cleaned_name)}' → '{prior_resolution['song_name']}' by {prior_resolution['artist']}",
+                    "alternatives": [],
+                    "from_prior_clarification": True,
+                    "original_query": fuzzy_name
+                }
 
         try:
             # Determine which parameters to use based on model
@@ -348,6 +365,176 @@ class SongDisambiguator:
                 "alternatives": [],
                 "error": str(e),
             }
+
+    def _lookup_prior_resolution(self, cleaned_name: str, reasoning_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Look up prior user clarifications for similar queries.
+
+        Checks recent clarifications to see if user has previously resolved
+        a similar ambiguous query.
+
+        Args:
+            cleaned_name: The cleaned song name query
+            reasoning_context: Context containing clarification history
+
+        Returns:
+            Prior resolution dict if found, None otherwise
+        """
+        if not reasoning_context:
+            return None
+
+        # Check last resolution first (most recent)
+        last_resolution = reasoning_context.get("spotify_last_resolution")
+        if last_resolution:
+            original_query = last_resolution.get("original_query", "").lower()
+            cleaned_query = self._clean_song_name(original_query)
+
+            # Check for similarity (exact match or substring)
+            if (cleaned_query == cleaned_name or
+                cleaned_name in cleaned_query or
+                cleaned_query in cleaned_name):
+                logger.debug(f"[PRIOR RESOLUTION] Found exact match: '{original_query}' → '{last_resolution['song_name']}'")
+                return last_resolution
+
+        # Check clarification history for similar queries
+        clarifications = reasoning_context.get("spotify_clarifications", [])
+        for clarification in reversed(clarifications[-5:]):  # Check last 5 clarifications
+            original_query = clarification.get("original_query", "").lower()
+            cleaned_query = self._clean_song_name(original_query)
+
+            # Check for similarity
+            if (cleaned_query == cleaned_name or
+                cleaned_name in cleaned_query or
+                cleaned_query in cleaned_name):
+                logger.debug(f"[PRIOR RESOLUTION] Found historical match: '{original_query}' → '{clarification['resolved_song']}'")
+                return {
+                    "song_name": clarification["resolved_song"],
+                    "artist": clarification["resolved_artist"],
+                    "original_query": clarification["original_query"],
+                    "confidence": 1.0,  # User-confirmed
+                    "source": "historical_clarification"
+                }
+
+        return None
+
+    def check_ambiguity_and_decide(
+        self,
+        disambiguation_result: Dict[str, Any],
+        reasoning_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Perform LLM-powered ambiguity checking and decision making.
+
+        Analyzes disambiguation result + recent context to determine if the
+        agent should proceed with auto-playback or seek user clarification.
+
+        Args:
+            disambiguation_result: Result from disambiguate() method
+            reasoning_context: Context from session memory (recent attempts, clarifications, etc.)
+
+        Returns:
+            Decision dictionary with:
+            - should_clarify: bool - Whether to ask user for clarification
+            - confidence: float - Adjusted confidence after context analysis
+            - reasoning: str - Explanation of decision
+            - risk_factors: List[str] - Factors that contributed to ambiguity
+            - suggested_action: str - "auto_play", "clarify_with_user", or "reject"
+        """
+        logger.info("[AMBIGUITY CHECKER] Analyzing disambiguation result for clarification decision")
+
+        confidence = disambiguation_result.get("confidence", 0.5)
+        alternatives = disambiguation_result.get("alternatives", [])
+        song_name = disambiguation_result.get("song_name", "")
+        artist = disambiguation_result.get("artist")
+
+        # Initialize risk factors
+        risk_factors = []
+
+        # Risk factor 1: Low confidence
+        if confidence < 0.7:
+            risk_factors.append(f"low_confidence_{confidence:.2f}")
+
+        # Risk factor 2: Multiple alternatives
+        if len(alternatives) > 1:
+            risk_factors.append(f"multiple_alternatives_{len(alternatives)}")
+
+        # Risk factor 3: Very low confidence
+        if confidence < 0.5:
+            risk_factors.append("very_low_confidence")
+
+        # Risk factor 4: Recent failures or clarifications in context
+        recent_failures = 0
+        recent_clarifications = 0
+        if reasoning_context:
+            recent_music_attempts = reasoning_context.get("recent_music_attempts", [])
+            for attempt in recent_music_attempts[-3:]:  # Last 3 attempts
+                if not attempt.get("success", True):
+                    recent_failures += 1
+                if attempt.get("disambiguation", {}).get("needed_clarification", False):
+                    recent_clarifications += 1
+
+            if recent_failures > 0:
+                risk_factors.append(f"recent_failures_{recent_failures}")
+            if recent_clarifications > 0:
+                risk_factors.append(f"recent_clarifications_{recent_clarifications}")
+
+            # Risk factor 5: Conflicting with recent successful resolution
+            last_resolution = reasoning_context.get("spotify_last_resolution")
+            if last_resolution and last_resolution.get("original_query") != disambiguation_result.get("original", ""):
+                # Different query, check if we resolved something similar recently
+                if (last_resolution.get("resolved_song") == song_name and
+                    last_resolution.get("resolved_artist") != artist):
+                    risk_factors.append("conflicts_with_recent_resolution")
+
+        # Decision logic
+        should_clarify = False
+        suggested_action = "auto_play"
+        decision_reasoning = ""
+
+        if confidence < 0.5:
+            # Very low confidence - always clarify
+            should_clarify = True
+            suggested_action = "clarify_with_user"
+            decision_reasoning = f"Very low confidence ({confidence:.2f}) - user clarification needed"
+        elif confidence < 0.7 and len(alternatives) > 1:
+            # Moderate confidence but multiple options - clarify
+            should_clarify = True
+            suggested_action = "clarify_with_user"
+            decision_reasoning = f"Moderate confidence ({confidence:.2f}) with {len(alternatives)} alternatives - ambiguous"
+        elif recent_failures >= 2:
+            # Multiple recent failures - be more conservative
+            should_clarify = True
+            suggested_action = "clarify_with_user"
+            decision_reasoning = f"{recent_failures} recent playback failures - seeking clarification to avoid repeat errors"
+        elif len(risk_factors) >= 3:
+            # Multiple risk factors - clarify
+            should_clarify = True
+            suggested_action = "clarify_with_user"
+            decision_reasoning = f"Multiple risk factors: {', '.join(risk_factors[:3])}"
+
+        # Adjust confidence based on context
+        adjusted_confidence = confidence
+        if should_clarify:
+            # Reduce confidence to reflect uncertainty
+            adjusted_confidence = min(confidence, 0.6)
+
+        # For very clear cases, boost confidence slightly
+        if not should_clarify and confidence > 0.8 and len(alternatives) <= 1:
+            adjusted_confidence = min(confidence + 0.1, 0.95)
+
+        return {
+            "should_clarify": should_clarify,
+            "confidence": adjusted_confidence,
+            "reasoning": decision_reasoning,
+            "risk_factors": risk_factors,
+            "suggested_action": suggested_action,
+            "original_confidence": confidence,
+            "context_analysis": {
+                "recent_failures": recent_failures,
+                "recent_clarifications": recent_clarifications,
+                "total_risk_factors": len(risk_factors)
+            }
+        }
 
     def _clean_song_name(self, fuzzy_name: str) -> str:
         """

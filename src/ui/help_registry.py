@@ -102,15 +102,19 @@ class HelpRegistry:
             name="/files",
             type="slash_command",
             category="files",
-            description="File operations - search, organize, manage files",
-            long_description="Talk directly to the File Agent for document search, file organization, screenshots, and archiving.",
+            description="File operations - search, list, organize, manage files",
+            long_description="Talk directly to the File Agent for document search, directory listing, file organization, screenshots, and archiving.",
             examples=[
+                "/files list",  # NEW: Directory listing
+                "/files list guitar",  # NEW: Filtered listing
+                "/files show folder=finance",  # NEW: Folder-specific listing
                 "/files Find documents about AI",
+                "/files show all PDF documents",  # Semantic search
                 "/files Organize my PDFs by topic",
                 "/files Create a ZIP archive of all images",
                 "/files Take a screenshot"
             ],
-            tags=["file", "document", "search", "organize", "zip", "screenshot"],
+            tags=["file", "document", "search", "list", "organize", "zip", "screenshot"],
             related=["/folder", "/organize"],
             agent="file",
             icon="📁",

@@ -87,10 +87,28 @@
 - Reference Critic feedback captured in the reasoning trace when suggesting retries or alternative tools.
 - Prefer alternate tools over blind retries (e.g., switch from `search_documents` to `list_related_documents` when searching fails).
 
+## Writing Quality Assurance (CRITICAL - Apply to ALL Writing Tasks)
+**For ALL long-form content generation (reports, emails, presentations, summaries):**
+1. **Style Profile Management** - Always start with writing brief and style profile building
+2. **Self-Refine Pipeline** - Apply two refinement passes: coverage/completeness → tone adherence
+3. **Rubric Evaluation** - Use `evaluate_with_rubric()` to ensure quality meets thresholds
+4. **Quality Guardrails** - Decline delivery if rubric score < threshold; return actionable feedback
+
+**Enhanced Workflow Patterns:**
+- **Reports/Emails:** `prepare_writing_brief` → `synthesize_content` → `self_refine` (coverage) → `self_refine` (tone) → `evaluate_with_rubric` → `create_detailed_report` or `compose_professional_email` → `reply_to_user`
+- **Presentations:** `prepare_writing_brief` → `synthesize_content` → `plan_slide_skeleton` → `create_slide_deck_content` → `self_refine` → `evaluate_with_rubric` → `create_keynote` → `reply_to_user`
+- **Summaries:** Use `chain_of_density_summarize` for "comprehensive" or "detailed" requests to pack salient entities without rambling
+
+**Quality Metrics:**
+- Rubric thresholds: email (0.75), report (0.8), summary (0.7), presentation (0.75)
+- Self-Refine passes: configurable (default 2) with token guardrails
+- Chain-of-Density: target density score 0.7 with max 3 rounds
+
 ## Reasoning Trace & Memory Hooks
 - Include `deliveries` to mirror commitments tracked in the reasoning trace.
 - Add reminders in `post_check` to update `add_reasoning_entry` / `update_reasoning_entry` with attachments, IDs, or failure reasons.
 - Mention memory usage when relevant (e.g., "Use $memory.preferred_recipient" or "Check prior slide deck in trace before recreating").
+- Store style profiles in `SessionMemory.shared_context` for reuse and personalization.
 
 ## Parameter & Quoting Rules
 - Strings must use double quotes; escape interior quotes by doubling them.
@@ -108,6 +126,13 @@
 
 ## Tool Selection Rules
 
+**For Daily Agenda Queries:**
+- ✅ **For "how's my day", "what's on my schedule", "daily overview" requests:**
+  - Use `generate_day_overview` as the primary tool to aggregate calendar + reminders + email actions
+  - Apply natural language filters: "today", "tomorrow morning", "next 3 days", "this afternoon"
+  - Single step plan: `generate_day_overview(filters="...")` → `reply_to_user`
+  - If user wants to create missing calendar events, follow up with `create_calendar_event`
+
 **For Document Listing vs Search:**
 - ✅ **Use `list_related_documents` when:**
   - User asks to "show all", "list all", "find all [type] files"
@@ -122,13 +147,17 @@
   
 - Recognize listing intent from keywords: "all", "show all", "list all", "find all"
 
-**For Slide Deck Creation (IMPORTANT!):**
-- ✅ **ALWAYS use Writing Agent for text-based slide decks:**
+**For Slide Deck Creation (IMPORTANT! - Enhanced with Skeleton Planning):**
+- ✅ **ALWAYS use Writing Agent for text-based slide decks with Skeleton-of-Thought planning:**
   - When user says "create a slide deck on [topic]"
   - When user wants a presentation from documents or web content
-  - Workflow: `extract/search` → `synthesize_content` (if multiple sources) → `create_slide_deck_content` → `create_keynote`
+  - **NEW WORKFLOW:** `extract/search` → `synthesize_content` → `plan_slide_skeleton` → `create_slide_deck_content` → `create_keynote`
+  - **Skeleton Planning (CRITICAL):** Run `plan_slide_skeleton()` BEFORE `create_slide_deck_content` to produce 3-6 slide intents anchored to user objectives
+  - Skeleton enforces slide caps (≤5 default) but allows overflow when memory indicates broader scope
+  - Stores skeleton in brief constraints so slide generation can't drift
   - Writing Agent transforms content into concise bullets (5-7 words each)
   - ❌ DON'T pass raw text directly to `create_keynote` - it makes poor slides!
+  - ❌ DON'T skip skeleton planning - it prevents content drift!
 
 - ✅ Use `create_keynote_with_images` when:
   - User wants screenshots IN a slide deck
@@ -157,6 +186,18 @@
   - User wants comparison or analysis across sources
   - Need to remove redundancy from multiple sources
   - Choose synthesis_style: comprehensive (reports), concise (summaries), comparative, or chronological
+
+**For Advanced Summarization (CRITICAL - Use Chain-of-Density!):**
+- ✅ **ALWAYS use `chain_of_density_summarize` when:**
+  - User requests "comprehensive" or "detailed" summaries
+  - User asks for summaries with "key points", "important details", or "salient information"
+  - Task involves packing "salient entities" without rambling
+  - Applied to email summaries, daily briefings, and note-taking
+- ✅ **Chain-of-Density workflow:**
+  - Extracts most salient entities (people, organizations, dates, metrics, concepts)
+  - Iteratively densifies by incorporating missing entities
+  - Achieves configurable density score with token guardrails
+  - Example: `chain_of_density_summarize(content="$step1.synthesized_content", topic="NVDA Analysis", max_rounds=3)`
 
 **For Meeting Notes:**
 - ✅ **Use `create_meeting_notes` when:**
@@ -331,6 +372,76 @@
   - ❌ **NEVER** pass an empty emails_data dict to summarize_emails
   - ❌ **NEVER** confuse sender name with sender email (both work, but preserve what user provided)
   - ✅ **ALWAYS** thread the full read_* tool output to summarize_emails
+
+- ⚠️ **CRITICAL: Handle empty email results:**
+  - If read_* returns no emails (empty list), DO NOT proceed with summarize/report/email steps
+  - CORRECT workflow when no emails found:
+    ```
+    Step 1: read_latest_emails(count=3)
+    Step 2: reply_to_user(message="No emails found in your inbox")
+    ```
+  - ❌ WRONG: Proceeding with create_detailed_report when no emails exist
+  - ❌ WRONG: Creating and emailing a report about "no emails"
+
+**For Email Summarization + Report Generation + Email Delivery (CRITICAL!):**
+- ✅ **When user wants to EMAIL a report of email summaries:**
+  ```
+  Correct workflow (5 steps):
+  Step 1: read_latest_emails(count=3)
+  Step 2: summarize_emails(emails_data=$step1)
+  Step 3: create_detailed_report(content=$step2.summary, title="Email Summary Report")
+  Step 4: create_pages_doc(title="Email Summary Report", content=$step3.report_content)
+  Step 5: compose_email(subject="Email Summary Report", attachments=["$step4.pages_path"], send=true)
+  ```
+  
+- ⚠️ **CRITICAL RULES for Report + Email workflows:**
+  - ❌ **NEVER** use `$stepN.report_content` as an email attachment - it's TEXT not a FILE PATH
+  - ❌ **NEVER** use `$stepN.synthesized_content` as an email attachment - it's TEXT not a FILE PATH
+  - ✅ **ALWAYS** use create_pages_doc to save the report to a file BEFORE emailing
+  - ✅ **THEN** use `$stepN.pages_path` from create_pages_doc as the attachment
+  
+- 📋 **Complete example:**
+  - User: "Summarize my last 3 emails and email that to me"
+    ```
+    Step 1: read_latest_emails(count=3, mailbox="INBOX")
+    Step 2: summarize_emails(emails_data=$step1, focus=None)
+    Step 3: create_detailed_report(content=$step2.summary, title="Email Summary Report", report_style="business")
+    Step 4: create_pages_doc(title="Email Summary Report", content=$step3.report_content)
+    Step 5: compose_email(subject="Email Summary Report", body="Please find your email summary attached.", attachments=["$step4.pages_path"], send=true)
+    Step 6: reply_to_user(message="Email summary report has been sent to your email")
+    ```
+
+- ⚠️ **What NOT to do:**
+  - ❌ WRONG: `compose_email(attachments=["$step3.report_content"])` - report_content is TEXT not a path!
+  - ❌ WRONG: `compose_email(attachments=["$step2.summary"])` - summary is TEXT not a path!
+  - ❌ WRONG: Skipping create_pages_doc and trying to attach report_content directly
+
+**For Email Summarization + Report + Email Workflow (THE EXACT SCENARIO THAT WAS FAILING!):**
+- ✅ **When user wants email summary as a REPORT and wants it EMAILED:**
+  1. **Read emails** using appropriate read_* tool
+  2. **Summarize** using `summarize_emails(emails_data=$step1, focus=...)`
+  3. **Create report** using `create_detailed_report(content=$step2.summary, title="Email Summary Report")`
+  4. ⚠️ **CRITICAL: SAVE TO FILE** using `create_pages_doc(title="Email Summary Report", content=$step3.report_content)`
+  5. **Email** using `compose_email(subject="...", body="...", attachments=["$step4.pages_path"], send=true)`
+  6. **Reply** to user confirming completion
+
+- 📋 **Complete example: "Summarize my last 3 emails and convert it into a report and email that to me"**
+  ```
+  Step 1: read_latest_emails(count=3, mailbox="INBOX")
+  Step 2: summarize_emails(emails_data=$step1, focus=None)
+  Step 3: create_detailed_report(content=$step2.summary, title="Email Summary Report", report_style="business")
+  Step 4: create_pages_doc(title="Email Summary Report", content=$step3.report_content)  ← CRITICAL STEP!
+  Step 5: compose_email(subject="Email Summary Report", body="Please find attached your email summary report.", attachments=["$step4.pages_path"], send=true)
+  Step 6: reply_to_user(message="Email summary report created and sent successfully")
+  ```
+
+- ⚠️ **CRITICAL mistakes to avoid:**
+  - ❌ **NEVER** pass `$step4.report_content` directly to compose_email attachments - it's TEXT not a FILE
+  - ❌ **NEVER** skip the `create_pages_doc` step when user wants to email a report
+  - ❌ **NEVER** continue workflow if step1 returns count=0 or empty emails array
+  - ✅ **ALWAYS** save report content to file using `create_pages_doc` BEFORE emailing
+  - ✅ **ALWAYS** validate that emails were found before creating report
+  - ✅ attachments parameter accepts ONLY file paths, never text content
 
 **For Real-Time Information Queries (CRITICAL!):**
 - ✅ **ALWAYS use `google_search` for queries requiring current/real-time information:**
@@ -1162,3 +1273,37 @@ See the agent-scoped library in [examples/README.md](./examples/README.md) for d
 - File operations use filename patterns (e.g., `*VS_Survey*`) and do NOT search document content
 
 See [examples/file/02_example_rag_summaries_new.md](./examples/file/02_example_rag_summaries_new.md) for complete RAG pipeline examples with content-based semantic queries.
+
+## Semantic Knowledge Retrieval
+
+**CRITICAL: Plan retrieval → extraction → synthesis; never guess document contents.**
+
+### Tool Choice Heuristics
+
+**Prefer `list_related_documents` for "show/list/find all …" requests; stick to `search_documents` for single best match.**
+
+**Always pull raw text before summarizing or extracting structure (extract_section with section="all" unless user is specific).**
+
+**Use `create_meeting_notes` to transform unstructured notes into decisions/tasks; it already returns structured arrays.**
+
+**When combining >1 source, feed text list into `synthesize_content` and choose `synthesis_style` (concise, comparative, etc.) to match user's verb ("compare", "how has it changed", "overview").**
+
+### State Management
+
+**Cache files / doc_path outputs in plan context so later steps reference $stepN.path. Executor already tracks artifacts; include them in post_check validations.**
+
+### Fallback & Recovery
+
+**If `search_documents` returns NotFoundError, ask user for alternative phrasing or call `list_related_documents` with broader query—documented in prompts/task_decomposition.md but reinforce it in your new instructions.**
+
+**For multi-match intent, iterate over top results until downstream step yields content; guard loops with post_check like "If extracted_text empty, re-run extract_section on next file."**
+
+### Output Polish
+
+**Use `chain_of_density_summarize` for user-facing bullet lists; include density_score in reply when helpful ("Density score 0.72 — captures key entities.").**
+
+**Translate `create_meeting_notes.action_items` into Markdown checkboxes in `reply_to_user` to make UI pop.**
+
+### Grouping Folders/Files
+
+**When user references categories (e.g., "GitHub tabs"), route through `list_related_documents` to get top group, then describe how to open each path. No hardcoded folder mappings—let semantic grouping drive selection.**

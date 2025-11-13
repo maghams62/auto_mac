@@ -158,6 +158,35 @@ def test_files_command_routing():
         f"Expected demo root in params, got: {params}"
     assert msg is not None, "Expected demo root message"
 
+    # Test 9: Simple list routes to list_documents
+    tool, params, msg = handler._route_files_command("list")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+    assert params.get("filter") is None, f"Expected no filter, got: {params.get('filter')}"
+    assert params.get("folder_path") == "/Users/test/tests/data/test_docs", \
+        f"Expected demo root folder, got: {params.get('folder_path')}"
+
+    # Test 10: Show routes to list_documents
+    tool, params, msg = handler._route_files_command("show")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+
+    # Test 11: Browse routes to list_documents
+    tool, params, msg = handler._route_files_command("browse")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+
+    # Test 12: Empty command routes to list_documents
+    tool, params, msg = handler._route_files_command("")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+
+    # Test 13: List with filter
+    tool, params, msg = handler._route_files_command("list guitar")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+    assert params.get("filter") == "guitar", f"Expected filter='guitar', got: {params.get('filter')}"
+
+    # Test 14: Show with folder filter
+    tool, params, msg = handler._route_files_command("show folder=finance")
+    assert tool == "list_documents", f"Expected list_documents, got: {tool}"
+    assert params.get("filter") == "folder=finance", f"Expected filter='folder=finance', got: {params.get('filter')}"
+
     print("✅ Files command routing tests passed")
 
 

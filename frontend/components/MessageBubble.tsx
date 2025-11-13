@@ -2,22 +2,25 @@
 
 import React, { memo, useMemo, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Message } from "@/lib/useWebSocket";
+import { Message, PlanState } from "@/lib/useWebSocket";
 import { formatTimestamp } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { messageEntrance } from "@/lib/motion";
 import ArtifactCard from "./ArtifactCard";
 import CollapsibleMessage from "./CollapsibleMessage";
 import FileList from "./FileList";
+import DocumentList from "./DocumentList";
 import StatusRow from "./StatusRow";
 import TimelineStep from "./TimelineStep";
 import SummaryCanvas from "./SummaryCanvas";
 import TaskCompletionCard from "./TaskCompletionCard";
+import BlueskyNotificationCard from "./BlueskyNotificationCard";
 import { useToast } from "@/lib/useToast";
 
 interface MessageBubbleProps {
   message: Message;
   index: number;
+  planState?: PlanState | null;
 }
 
 // Helper function to detect and render URLs as clickable links
@@ -85,7 +88,7 @@ function renderMessageWithLinks(text: string, isUser: boolean): React.ReactNode 
   return parts.length > 0 ? <>{parts}</> : (isUser ? <span className="font-mono text-sm">{text}</span> : text);
 }
 
-const MessageBubble = memo(function MessageBubble({ message, index }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, index, planState }: MessageBubbleProps) {
   const { addToast } = useToast();
   const [isCanvasOpen, setIsCanvasOpen] = useState(false);
   const isUser = message.type === "user";
@@ -93,7 +96,8 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
   const isError = message.type === "error";
   const isStatus = message.type === "status";
   const isPlan = message.type === "plan";
-  const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan;
+  const isBlueskyNotification = message.type === "bluesky_notification";
+  const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan && !isBlueskyNotification;
   
   // Detect if message contains a summary (has separator pattern)
   const summaryData = useMemo(() => {
@@ -211,53 +215,65 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
 
   return (
     <motion.div
-      initial="hidden"
-      animate="visible"
-      variants={messageEntrance}
       className={cn("flex w-full mb-2 group", isUser ? "justify-end" : "justify-start")}
+      initial={{ y: 12, opacity: 0, filter: "blur(12px)" }}
+      animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+      transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1], delay: index * 0.03 }}
       whileHover={{ scale: 1.01 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
     >
-      <div
+      <motion.div
+        layout
         className={cn(
-          "max-w-[80%] rounded-lg px-5 py-3 backdrop-blur-glass shadow-inset-border",
-          isUser && "bg-glass-user",
-          isAssistant && "bg-glass-assistant",
-          isSystem && "bg-glass-assistant",
-          isError && "bg-glass-assistant border border-danger-border",
-          isStatus && "bg-glass-assistant opacity-75",
-          isPlan && "bg-glass-assistant"
+          "max-w-[80%] rounded-2xl px-5 py-4",
+          isUser && "bg-gradient-to-br from-white/5 via-white/2 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isAssistant && "bg-gradient-to-br from-white/5 via-white/2 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isSystem && "bg-gradient-to-br from-white/3 via-white/1 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isError && "bg-gradient-to-br from-red-500/5 via-red-500/2 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isStatus && "bg-gradient-to-br from-white/3 via-white/1 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isPlan && "bg-gradient-to-br from-white/5 via-white/2 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+          isBlueskyNotification && "bg-gradient-to-br from-blue-500/5 via-blue-500/2 to-transparent shadow-[0_12px_30px_rgba(0,0,0,0.35)]"
         )}
+        initial={{ y: 8, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.25, ease: "easeOut", delay: index * 0.05 }}
       >
         {/* Message header */}
-        <div className="flex items-center justify-between mb-2 relative">
+        <div className="flex items-center justify-between mb-3 relative">
           <span className={cn(
-            "text-xs font-medium uppercase tracking-wider",
-            isAssistant && "text-text-muted font-medium",
-            isUser && "text-text-muted font-medium",
+            "text-sm font-semibold uppercase tracking-wide",
+            isAssistant && "text-text-primary",
+            isUser && "text-text-primary",
             isSystem && "text-text-muted",
             isError && "text-accent-danger",
             isStatus && "text-text-muted",
-            isPlan && "text-text-muted"
+            isPlan && "text-text-primary",
+            isBlueskyNotification && "text-blue-400"
           )}>
             {isUser && "You"}
-            {isAssistant && "Assistant"}
+            {isAssistant && "Cerebro"}
             {isSystem && "System"}
             {isError && "Error"}
             {isStatus && "Status"}
             {isPlan && "Plan"}
+            {isBlueskyNotification && "Bluesky"}
           </span>
-          <span className="text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150" style={{ color: "rgba(255, 255, 255, 0.45)", fontSize: "12px" }}>
+          <motion.span
+            className="text-xs font-medium text-white/35"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, ease: "easeOut", delay: (index * 0.03) + 0.2 }}
+          >
             {formatTimestamp(message.timestamp)}
-          </span>
+          </motion.span>
         </div>
 
         {/* Plan content - show task breakdown */}
-        {isPlan && message.steps && message.steps.length > 0 && (
+        {isPlan && (message.steps && message.steps.length > 0 || planState) && (
           <TimelineStep
             steps={message.steps}
             goal={message.goal}
             activeStepIndex={isPlanExecuting ? 0 : undefined}
+            planState={planState}
           />
         )}
 
@@ -267,11 +283,11 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
             <CollapsibleMessage
               content={message.message}
               className={cn(
-                "leading-[1.4]",
+                "leading-[1.5] text-[15px]",
                 isAssistant && "text-text-primary font-medium",
-                isUser && "text-text-primary",
-                isSystem && "text-text-primary",
-                isError && "text-accent-danger"
+                isUser && "text-text-primary font-medium",
+                isSystem && "text-text-primary font-medium",
+                isError && "text-accent-danger font-medium"
               )}
             >
               {renderMessageWithLinks(message.message || "", isUser)}
@@ -317,6 +333,33 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
           />
         )}
 
+        {/* Bluesky Notification Card - Interactive notification display */}
+        {(isSystem || isAssistant) && message.type === "bluesky_notification" && message.bluesky_notification && (
+          <BlueskyNotificationCard
+            notification={message.bluesky_notification}
+            onAction={(action, uri, url) => {
+              if (action === "open" && url) {
+                // Open the post in browser using the correct URL
+                window.open(url, '_blank');
+              } else if (action === "reply" && uri) {
+                // Send reply command to chat input
+                const command = `/bluesky reply "${uri}" ""`;
+                // We need to access the chat input somehow - this would need a prop or context
+                // For now, we'll dispatch a custom event that the chat interface can listen to
+                window.dispatchEvent(new CustomEvent('bluesky-action', {
+                  detail: { action: 'prefill-input', command }
+                }));
+              } else if ((action === "like" || action === "repost") && uri) {
+                // Send like/repost command directly
+                const command = `/bluesky ${action} ${uri}`;
+                window.dispatchEvent(new CustomEvent('bluesky-action', {
+                  detail: { action: 'send-command', command }
+                }));
+              }
+            }}
+          />
+        )}
+
         {/* Status indicator */}
         {isStatus && message.status && (
           <StatusRow status={message.status} className="mt-2" />
@@ -344,7 +387,16 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
           />
         )}
 
-        {/* Artifact cards (only show if no file list) */}
+        {/* File list (for search results) */}
+        {isAssistant && message.files && message.files.length > 0 && (
+          <FileList
+            files={message.files}
+            summaryBlurb={message.message}
+            totalCount={undefined} // Could be extracted from raw result if needed
+          />
+        )}
+
+        {/* Artifact cards (only show if no file list or document list) */}
         {isAssistant && artifacts.length > 0 && !message.files && (
           <div className="mt-3 space-y-2">
             {artifacts.map((artifact, idx) => (
@@ -357,8 +409,8 @@ const MessageBubble = memo(function MessageBubble({ message, index }: MessageBub
             ))}
           </div>
         )}
-      </div>
-      
+      </motion.div>
+
       {/* Summary Canvas */}
       {summaryData && (
         <SummaryCanvas

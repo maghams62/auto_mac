@@ -155,7 +155,78 @@ Thought 8: Close with user-facing summary.
 Action: reply_to_user {"message": "Email sent with Tesla_Q4.pdf attached. Summary saved to Notes (Finance)."}
 Observation: {"status": "delivered"}
 
-### 4. NVIDIA Stock Deck Delivery
+### 4. Email Summary → Report → Email Workflow (CRITICAL PATTERN!)
+**User Goal:** "Summarize my last 3 emails and convert it into a report and email that to me."
+
+**⚠️ CRITICAL WORKFLOW:** This demonstrates the proper pattern for creating reports and emailing them as attachments.
+
+**Plan Extract:**
+```json
+{
+  "goal": "Summarize last 3 emails, create report, email as attachment",
+  "steps": [
+    {"id": 1, "action": "read_latest_emails", "parameters": {"count": 3, "mailbox": "INBOX"}, "dependencies": [], "reasoning": "Retrieve the last 3 emails", "expected_output": "emails_data with emails list", "post_check": "Check if count > 0. If 0, skip to step 7", "deliveries": []},
+    {"id": 2, "action": "summarize_emails", "parameters": {"emails_data": "$step1", "focus": null}, "dependencies": [1], "reasoning": "Create AI summary of email contents", "expected_output": "summary text", "post_check": "Verify summary is not empty", "deliveries": []},
+    {"id": 3, "action": "create_detailed_report", "parameters": {"content": "$step2.summary", "title": "Email Summary Report", "report_style": "business"}, "dependencies": [2], "reasoning": "Transform summary into formatted report", "expected_output": "report_content (TEXT)", "post_check": "Verify report_content exists and is not empty", "deliveries": []},
+    {"id": 4, "action": "create_pages_doc", "parameters": {"title": "Email Summary Report", "content": "$step3.report_content"}, "dependencies": [3], "reasoning": "CRITICAL: Save report TEXT to FILE for email attachment", "expected_output": "pages_path (FILE PATH)", "post_check": "Verify pages_path is a valid file path", "deliveries": ["attach_documents"]},
+    {"id": 5, "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "me", "attachments": ["$step4.pages_path"], "send": true}, "dependencies": [4], "reasoning": "Email the report as attachment using FILE PATH from step 4", "expected_output": "status sent", "post_check": "Confirm email sent successfully", "deliveries": ["send_email", "attach_documents"]},
+    {"id": 6, "action": "reply_to_user", "parameters": {"message": "Email summary report created and sent successfully. Summarized 3 emails."}, "dependencies": [5], "reasoning": "Confirm completion to user", "expected_output": "User notified", "post_check": "None", "deliveries": []}
+  ],
+  "complexity": "complex"
+}
+```
+
+**⚠️ COMMON MISTAKES TO AVOID:**
+- ❌ **WRONG:** `compose_email(attachments=["$step3.report_content"])` - This passes TEXT content as filename!
+- ✅ **CORRECT:** `create_pages_doc` → `compose_email(attachments=["$step4.pages_path"])` - This passes a FILE PATH
+- ❌ **WRONG:** Skipping the `create_pages_doc` step entirely
+- ✅ **CORRECT:** Always save report content to file before emailing as attachment
+- ❌ **WRONG:** Continuing workflow when step 1 returns count=0 (no emails)
+- ✅ **CORRECT:** Check email count and stop gracefully if empty
+
+**ReAct Trace Highlights:**
+Thought 1: Retrieve the last 3 emails from inbox.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Read last 3 emails", "action": "read_latest_emails", "parameters": {"count": 3, "mailbox": "INBOX"}, "outcome": "pending"}
+Observation: {"entry_id": "exec-501"}
+Action: read_latest_emails {"count": 3, "mailbox": "INBOX"}
+Observation: {"emails": [{"sender": "alice@example.com", "subject": "Project Update", "date": "Nov 11", "content": "..."}], "count": 3, "message": "Retrieved 3 emails"}
+Action: update_reasoning_entry {"entry_id": "exec-501", "outcome": "success", "evidence": ["Retrieved 3 emails"]}
+Observation: {"status": "updated"}
+Thought 2: Generate AI-powered summary of the emails.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Summarize email contents", "action": "summarize_emails", "parameters": {"emails_data": {"emails": [...], "count": 3}, "focus": null}, "outcome": "pending"}
+Observation: {"entry_id": "exec-502"}
+Action: summarize_emails {"emails_data": {"emails": [...], "count": 3}, "focus": null}
+Observation: {"summary": "Summary of 3 emails:\n\n1. Alice - Project Update: Progress on Q4 deliverables...\n2. Bob - Meeting Reminder: Team sync tomorrow at 2pm...\n3. Carol - Budget Review: Final numbers for approval...", "email_count": 3}
+Action: update_reasoning_entry {"entry_id": "exec-502", "outcome": "success", "evidence": ["Generated summary for 3 emails"]}
+Observation: {"status": "updated"}
+Thought 3: Transform summary into formal business report.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Create detailed report from summary", "action": "create_detailed_report", "parameters": {"content": "Summary of 3 emails...", "title": "Email Summary Report", "report_style": "business"}, "outcome": "pending"}
+Observation: {"entry_id": "exec-503"}
+Action: create_detailed_report {"content": "Summary of 3 emails...", "title": "Email Summary Report", "report_style": "business"}
+Observation: {"report_content": "# Email Summary Report\n\n## Executive Summary\nThis report summarizes...", "sections": [...], "total_word_count": 450}
+Action: update_reasoning_entry {"entry_id": "exec-503", "outcome": "success", "evidence": ["Created 450-word report"]}
+Observation: {"status": "updated"}
+Thought 4: CRITICAL - Save report TEXT to FILE before emailing.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Save report to Pages document for email attachment", "action": "create_pages_doc", "parameters": {"title": "Email Summary Report", "content": "# Email Summary Report..."}, "commitments": ["attach_documents"], "outcome": "pending"}
+Observation: {"entry_id": "exec-504"}
+Action: create_pages_doc {"title": "Email Summary Report", "content": "# Email Summary Report..."}
+Observation: {"pages_path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.pages", "message": "Pages document created successfully"}
+Action: update_reasoning_entry {"entry_id": "exec-504", "outcome": "success", "evidence": ["Saved to /Users/.../Email_Summary_Report.pages"], "attachments": [{"type": "file", "path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.pages", "status": "available"}]}
+Observation: {"status": "updated"}
+Thought 5: Email the report using FILE PATH from step 4.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Email report as attachment", "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached...", "recipient": "me", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.pages"], "send": true}, "commitments": ["send_email", "attach_documents"], "outcome": "pending"}
+Observation: {"entry_id": "exec-505"}
+Action: compose_email {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "user@example.com", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.pages"], "send": true}
+Observation: {"status": "sent", "message": "Email sent successfully"}
+Action: update_reasoning_entry {"entry_id": "exec-505", "outcome": "success", "evidence": ["Email sent with attachment"]}
+Observation: {"status": "updated"}
+Thought 6: Confirm completion to user.
+Action: reply_to_user {"message": "Email summary report created and sent successfully. Summarized 3 emails from Alice, Bob, and Carol."}
+Observation: {"status": "delivered"}
+
+**KEY INSIGHT:** The `create_pages_doc` step (step 4) is CRITICAL - it converts TEXT to FILE PATH. Without it, the email attachment validation will fail because you cannot attach text content directly.
+
+### 5. NVIDIA Stock Deck Delivery
 **User Goal:** "Fetch NVIDIA's latest price, build a slide deck, and email it to me."
 
 **Plan Extract:**
@@ -4960,6 +5031,1020 @@ When using `prepare_writing_brief`, extract personality cues:
 - "for my boss", "board meeting" → `"executive"` and concise
 - "explain it simply", "ELI5" → `"conversational"` with examples
 - Default (no cues) → `"conversational"` (Claude's natural style)
+
+---
+
+### Daily Overview Examples
+
+#### 1. Simple Today Query: "how's my day looking today?"
+**Plan Extract:**
+```json
+{
+  "goal": "Provide comprehensive overview of today's schedule and action items",
+  "steps": [
+    {
+      "id": 1,
+      "action": "generate_day_overview",
+      "parameters": {"filters": "today"},
+      "dependencies": [],
+      "reasoning": "Aggregate calendar events, reminders, and email actions for today",
+      "expected_output": "Structured overview with meetings, todos, and email action items",
+      "post_check": "Verify overview contains expected sections (meetings, reminders, email_action_items)",
+      "deliveries": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**ReAct Trace:**
+```
+Thought: User wants a daily overview. Use generate_day_overview tool with "today" filter to aggregate calendar, reminders, and emails.
+
+Action: generate_day_overview
+Action Input: {"filters": "today"}
+
+Observation: {
+  "summary": "Your today includes: 3 meetings, 2 reminders, 5 email actions",
+  "time_window": {"include_today": true, "days_ahead": 1, "email_window_hours": 18},
+  "sections": {
+    "meetings": {
+      "count": 3,
+      "items": [
+        {"title": "Team Standup", "start_time": "2024-01-15T09:00:00", "location": "Conference Room A"},
+        {"title": "Client Review", "start_time": "2024-01-15T14:00:00", "attendees": ["client@company.com"]},
+        {"title": "Project Planning", "start_time": "2024-01-15T16:00:00"}
+      ]
+    },
+    "reminders": {
+      "count": 2,
+      "items": [
+        {"title": "Submit expense report", "due_date": "2024-01-15T17:00:00"},
+        {"title": "Call dentist", "notes": "Confirm appointment time"}
+      ]
+    },
+    "email_action_items": {
+      "count": 5,
+      "items": [
+        {"type": "meeting", "subject": "Schedule Q1 Planning", "sender": "boss@company.com"},
+        {"type": "action", "subject": "Review contract draft", "sender": "legal@company.com"}
+      ]
+    }
+  }
+}
+
+Thought: Overview generated successfully. Format the response to highlight key items and suggest any calendar backfill opportunities.
+
+Final Answer: Your day includes 3 meetings, 2 reminders, and 5 email actions requiring attention.
+
+**Meetings:**
+- 9:00 AM: Team Standup (Conference Room A)
+- 2:00 PM: Client Review (with client@company.com)
+- 4:00 PM: Project Planning
+
+**Reminders:**
+- Submit expense report (due 5:00 PM)
+- Call dentist (confirm appointment time)
+
+**Email Actions:**
+- Schedule Q1 Planning (from boss@company.com) - Meeting request
+- Review contract draft (from legal@company.com) - Action required
+
+I notice a meeting request from your boss about Q1 Planning that doesn't appear in your calendar. Would you like me to create a calendar event for this?
+```
+
+#### 2. Filtered Time Query: "what's on my plate this afternoon?"
+**Plan Extract:**
+```json
+{
+  "goal": "Show afternoon schedule and action items",
+  "steps": [
+    {
+      "id": 1,
+      "action": "generate_day_overview",
+      "parameters": {"filters": "this afternoon"},
+      "dependencies": [],
+      "reasoning": "Filter overview to afternoon time window (12-6 PM)",
+      "expected_output": "Time-filtered overview focusing on afternoon activities",
+      "post_check": "Verify time filtering applied correctly",
+      "deliveries": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+#### 3. Multi-day Planning: "what's happening next 3 days?"
+**Plan Extract:**
+```json
+{
+  "goal": "Provide 3-day overview of schedule and commitments",
+  "steps": [
+    {
+      "id": 1,
+      "action": "generate_day_overview",
+      "parameters": {"filters": "next 3 days"},
+      "dependencies": [],
+      "reasoning": "Aggregate across 3-day window for planning purposes",
+      "expected_output": "Extended overview with calendar backfill suggestions",
+      "post_check": "Check for calendar backfill opportunities in suggestions",
+      "deliveries": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+**ReAct Trace:**
+```
+Thought: User wants 3-day overview. Use generate_day_overview with "next 3 days" filter and check for backfill opportunities.
+
+Action: generate_day_overview
+Action Input: {"filters": "next 3 days"}
+
+Observation: {
+  "summary": "Your next 3 days include: 8 meetings, 4 reminders, 12 email actions",
+  "calendar_backfill_suggestions": {
+    "count": 2,
+    "items": [
+      {
+        "type": "email_meeting_commitment",
+        "title": "Weekly Team Sync",
+        "suggested_event": {
+          "title": "Weekly Team Sync",
+          "start_time": "2024-01-17T10:00:00",
+          "end_time": "2024-01-17T11:00:00",
+          "confidence": "medium"
+        },
+        "reason": "Meeting commitment found in email but no calendar event exists"
+      }
+    ]
+  }
+}
+
+Thought: Overview shows backfill opportunity. Offer to create the suggested calendar event.
+
+Final Answer: Your next 3 days are quite busy with 8 meetings, 4 reminders, and 12 email actions.
+
+**Calendar Backfill Suggestion:**
+I found a meeting commitment in your emails for "Weekly Team Sync" on Wednesday at 10 AM that doesn't have a calendar event yet. Would you like me to add this to your calendar?
+
+**Key Meetings This Week:**
+- Today: Client Review (2 PM), Project Planning (4 PM)
+- Tomorrow: Design Review (11 AM), Stakeholder Meeting (3 PM)
+- Wednesday: Weekly Team Sync (10 AM - suggested), Architecture Review (2 PM)
+
+**Urgent Reminders:**
+- Submit Q4 report (due tomorrow)
+- Book flight for conference (due Friday)
+
+**High-Priority Email Actions:**
+- Respond to vendor proposal (from procurement@company.com)
+- Schedule customer demo (from sales@company.com)
+```
+
+---
+
+## Writing Quality Enhancement Examples (NEW)
+
+### Executive Stock Brief with Densified Summary
+**User Goal:** "Give me a comprehensive executive summary of NVDA's Q4 performance"
+
+**Enhanced Plan with Style Profile & Chain-of-Density:**
+```json
+{
+  "goal": "Create executive stock brief using densified summary",
+  "steps": [
+    {
+      "id": 1,
+      "action": "prepare_writing_brief",
+      "parameters": {
+        "user_request": "comprehensive executive summary of NVDA Q4 performance",
+        "deliverable_type": "summary",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [],
+      "reasoning": "Extract executive tone requirements and must-include data points",
+      "expected_output": "Writing brief with executive tone and NVDA focus areas",
+      "post_check": "Verify brief includes 'executive' tone and 'NVDA' focus areas"
+    },
+    {
+      "id": 2,
+      "action": "WritingStyleOrchestrator.build_style_profile",
+      "parameters": {
+        "user_request": "comprehensive executive summary of NVDA Q4 performance",
+        "deliverable_type": "summary",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1],
+      "reasoning": "Merge user hints (executive, comprehensive) with session memory preferences",
+      "expected_output": "StyleProfile with executive tone and high density requirements",
+      "post_check": "Check style profile includes executive cadence modifiers"
+    },
+    {
+      "id": 3,
+      "action": "google_search",
+      "parameters": {"query": "NVDA Q4 2024 earnings results", "num_results": 5},
+      "dependencies": [],
+      "reasoning": "Gather current NVDA performance data for densification",
+      "expected_output": "Search results with NVDA earnings data",
+      "post_check": "Verify results contain NVDA-specific financial metrics"
+    },
+    {
+      "id": 4,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step3.results"],
+        "topic": "NVDA Q4 Executive Summary",
+        "synthesis_style": "comprehensive",
+        "writing_brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1, 2, 3],
+      "reasoning": "Synthesize search results into cohesive executive summary with key metrics and insights",
+      "expected_output": "Comprehensive summary containing key NVDA metrics and insights",
+      "post_check": "Verify summary includes revenue/growth figures and executive-level analysis"
+    },
+    {
+      "id": 5,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "$step4.synthesized_content\n\nTailored to your executive briefing preference."
+      },
+      "dependencies": [4],
+      "reasoning": "Deliver personalized executive summary with style attribution",
+      "expected_output": "User receives executive-style summary with personalization note",
+      "post_check": "Confirm style attribution is included"
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+### Personalized Email Leveraging Stored Tone Preference
+**User Goal:** "Send a follow-up email to the client about the project proposal"
+
+**Enhanced Plan with Memory-Driven Personalization:**
+```json
+{
+  "goal": "Send personalized email using stored tone preferences",
+  "steps": [
+    {
+      "id": 1,
+      "action": "prepare_writing_brief",
+      "parameters": {
+        "user_request": "follow-up email to client about project proposal",
+        "deliverable_type": "email",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [],
+      "reasoning": "Extract email requirements and pull client communication history",
+      "expected_output": "Brief with client focus areas and stored tone preferences",
+      "post_check": "Verify brief includes client-specific focus areas"
+    },
+    {
+      "id": 2,
+      "action": "WritingStyleOrchestrator.build_style_profile",
+      "parameters": {
+        "user_request": "follow-up email to client about project proposal",
+        "deliverable_type": "email",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1],
+      "reasoning": "Merge user request with stored client communication preferences",
+      "expected_output": "StyleProfile incorporating client's preferred communication style",
+      "post_check": "Check session memory for client tone preferences"
+    },
+    {
+      "id": 3,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["Project proposal details", "Previous client communications"],
+        "topic": "Client follow-up context",
+        "writing_brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1, 2],
+      "reasoning": "Combine proposal details with client communication history",
+      "expected_output": "Synthesized context matching client's communication preferences",
+      "post_check": "Verify synthesis includes both proposal and relationship context"
+    },
+    {
+      "id": 4,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step3.synthesized_content"],
+        "topic": "Client Communication",
+        "synthesis_style": "comprehensive",
+        "writing_brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1, 3],
+      "reasoning": "Further refine and synthesize content to match client's preferred communication style",
+      "expected_output": "Content refined to match stored client tone preferences",
+      "post_check": "Verify content reflects personalization aspects"
+    },
+    {
+      "id": 5,
+      "action": "evaluate_with_rubric",
+      "parameters": {
+        "content": "$step4.synthesized_content",
+        "deliverable_type": "email",
+        "brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [4],
+      "reasoning": "Evaluate email quality against personalization and clarity rubrics",
+      "expected_output": "Rubric scores ensuring personalization readiness meets threshold",
+      "post_check": "Verify overall_score >= 0.75 for email approval"
+    },
+    {
+      "id": 6,
+      "action": "compose_professional_email",
+      "parameters": {
+        "purpose": "Follow up on project proposal",
+        "context": "$step4.refined_content",
+        "recipient": "client@company.com",
+        "writing_brief": "$step1.writing_brief",
+        "send": true
+      },
+      "dependencies": [5],
+      "reasoning": "Compose and send personalized email only if rubric approval granted",
+      "expected_output": "Professional email sent with personalization",
+      "post_check": "Verify email sent successfully",
+      "deliveries": ["send_email"]
+    },
+    {
+      "id": 7,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Personalized follow-up email sent to client. Tailored to your established communication preferences with this client."
+      },
+      "dependencies": [6],
+      "reasoning": "Confirm delivery and surface personalization attribution",
+      "expected_output": "User informed of successful personalized email delivery",
+      "post_check": "Include personalization attribution in response"
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+### PPT Synthesized from Memory-Backed Skeleton
+**User Goal:** "Create a presentation about our Q4 strategy for the leadership team"
+
+**Enhanced Plan with Skeleton-of-Thought:**
+```json
+{
+  "goal": "Create leadership presentation with skeleton planning",
+  "steps": [
+    {
+      "id": 1,
+      "action": "prepare_writing_brief",
+      "parameters": {
+        "user_request": "Q4 strategy presentation for leadership team",
+        "deliverable_type": "presentation",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [],
+      "reasoning": "Extract executive audience requirements and strategy focus areas",
+      "expected_output": "Brief with executive audience and Q4 strategy emphasis",
+      "post_check": "Verify brief includes 'executive' audience and 'leadership' tone"
+    },
+    {
+      "id": 2,
+      "action": "WritingStyleOrchestrator.build_style_profile",
+      "parameters": {
+        "user_request": "Q4 strategy presentation for leadership team",
+        "deliverable_type": "presentation",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1],
+      "reasoning": "Build executive presentation style profile with leadership team preferences",
+      "expected_output": "StyleProfile with executive cadence and strategic focus",
+      "post_check": "Check for executive tone and leadership audience settings"
+    },
+    {
+      "id": 3,
+      "action": "search_documents",
+      "parameters": {"query": "Q4 strategy leadership presentation"},
+      "dependencies": [],
+      "reasoning": "Locate existing strategy documents and leadership materials",
+      "expected_output": "Paths to relevant Q4 strategy documents",
+      "post_check": "Verify documents contain strategy and leadership content"
+    },
+    {
+      "id": 4,
+      "action": "create_slide_deck_content",
+      "parameters": {
+        "content": "$step3.documents",
+        "title": "Q4 Strategy Presentation for Leadership Team",
+        "num_slides": 5,
+        "writing_brief": "$step1.writing_brief"
+      },
+      "dependencies": [1, 2, 3],
+      "reasoning": "Transform strategy documents into concise slide deck content for leadership",
+      "expected_output": "Slide deck content with key messages and bullet points",
+      "post_check": "Verify content covers strategy topics and fits slide format"
+    },
+    {
+      "id": 5,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step3.doc_path"],
+        "topic": "Q4 Strategy Synthesis",
+        "writing_brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [1, 3, 4],
+      "reasoning": "Synthesize strategy content within skeleton constraints",
+      "expected_output": "Synthesized content aligned with slide skeleton intents",
+      "post_check": "Verify synthesis addresses skeleton slide requirements"
+    },
+    {
+      "id": 6,
+      "action": "create_slide_deck_content",
+      "parameters": {
+        "content": "$step5.synthesized_content",
+        "title": "Q4 Strategy Leadership Presentation",
+        "num_slides": "$step4.slide_count",
+        "writing_brief": "$step1.writing_brief"
+      },
+      "dependencies": [4, 5],
+      "reasoning": "Generate slides constrained by skeleton to prevent drift from leadership objectives",
+      "expected_output": "Slide content following skeleton structure and intents",
+      "post_check": "Verify slides align with skeleton intents and constraints"
+    },
+    {
+      "id": 7,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step6.slides"],
+        "topic": "Executive Strategy Presentation",
+        "synthesis_style": "comprehensive",
+        "writing_brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [6],
+      "reasoning": "Refine slides for executive tone adherence and leadership appropriateness",
+      "expected_output": "Slides refined for executive presentation quality",
+      "post_check": "Verify content improved executive tone consistency"
+    },
+    {
+      "id": 8,
+      "action": "evaluate_with_rubric",
+      "parameters": {
+        "content": "$step7.synthesized_content",
+        "deliverable_type": "presentation",
+        "brief": "$step1.writing_brief",
+        "session_context": "$step0.session_context"
+      },
+      "dependencies": [7],
+      "reasoning": "Evaluate presentation quality against executive communication rubrics",
+      "expected_output": "Rubric approval for leadership presentation quality",
+      "post_check": "Verify overall_score >= 0.75 for presentation approval"
+    },
+    {
+      "id": 9,
+      "action": "create_keynote",
+      "parameters": {
+        "slides_content": "$step7.refined_content",
+        "title": "Q4 Strategy Leadership Presentation"
+      },
+      "dependencies": [8],
+      "reasoning": "Create Keynote presentation only if quality evaluation passes",
+      "expected_output": "Keynote file path for leadership presentation",
+      "post_check": "Verify Keynote file created successfully",
+      "deliveries": ["create_presentation"]
+    },
+    {
+      "id": 10,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Leadership presentation created with skeleton-guided structure. Tailored to executive audience preferences and Q4 strategy objectives."
+      },
+      "dependencies": [9],
+      "reasoning": "Confirm presentation creation and surface memory-backed personalization",
+      "expected_output": "User receives confirmation with personalization attribution",
+      "post_check": "Include skeleton planning and personalization notes"
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+---
+
+# Claude RAG Toolkit
+
+## Document & Embedding Stack Overview
+
+**Existing Infrastructure:**
+- FAISS-backed DocumentIndexer normalizes embeddings and records file_mtime for each chunk (src/documents/indexer.py line 214)
+- search_documents and list_related_documents wrap retrieval with parameter-tuned search (src/agent/file_agent.py line 24, line 721)
+- synthesize_content and chain_of_density_summarize provide post-retrieval reasoning (src/agent/writing_agent.py line 383, line 756)
+- create_meeting_notes extracts tasks/decisions from raw text (src/agent/writing_agent.py line 2126)
+- LlamaIndex worker wired in for multi-doc RAG (src/orchestrator/llamaindex_worker.py line 18)
+
+## Level 1 (Smart Find) — Single Action + Reply
+
+**"Find my latest note…"** ⇒ search_documents(query="latest Cerebro OS note"), then emphasize doc_path, metadata.page_count, and optionally note newest chunk's file_mtime can hint at recency.
+
+**"Show docs where I talked about…"** ⇒ list_related_documents(query="agent orchestration loops", max_results=10) and surface returned files array in reply. Prefer list_related_documents whenever intent is "show/list/find all" to avoid hallucinated fan-out.
+
+### Example: Single Document Retrieval
+
+```json
+{
+  "goal": "Surface user's best explanation of tool hierarchies",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {"query": "best explanation of tool hierarchies"},
+      "dependencies": [],
+      "reasoning": "Semantic search over indexed notes finds most relevant doc chunk.",
+      "expected_output": "doc_path pointing at the note",
+      "post_check": "Verify doc_path exists on disk",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Here's the file I found: $step1.doc_path\nPreview:\n$step1.content_preview"
+      },
+      "dependencies": [1],
+      "reasoning": "Return match with teaser so user can open it.",
+      "expected_output": "User receives file path + preview",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+### Example: Multi-Document Listing
+
+```json
+{
+  "goal": "Show all documents about agent orchestration patterns",
+  "steps": [
+    {
+      "id": 1,
+      "action": "list_related_documents",
+      "parameters": {"query": "agent orchestration loops", "max_results": 10},
+      "dependencies": [],
+      "reasoning": "Find multiple relevant documents for user to browse",
+      "expected_output": "files array with metadata",
+      "post_check": "Ensure files array not empty",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Found {$step1.total_results} documents about agent orchestration:\n{$step1.files[*].path}\n\nOpen any of these to explore further."
+      },
+      "dependencies": [1],
+      "reasoning": "Surface the document list for user browsing",
+      "expected_output": "User sees available documents",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "simple"
+}
+```
+
+## Level 2 (Find → Summarize) — Add Content Step After Retrieval
+
+**Single doc summary:** search_documents → extract_section(doc_path="$step1.doc_path", section="all") → chain_of_density_summarize(content="$step2.extracted_text", topic="latest Cerebro OS note", max_rounds=2) → reply_to_user with bullets. Chain-of-density keeps summary dense enough for demos.
+
+**Cross-doc rollup:** swap search_documents for list_related_documents, loop through top 3 paths with extract_section, pass collected text list into synthesize_content(source_contents=[...], synthesis_style="concise"), then either feed that into chain_of_density_summarize for extra polish or reply directly.
+
+**Prompt insert:** "When user requests summary, pull source text with extract_section first. Only then call chain_of_density_summarize (dense bullet output) or synthesize_content (multi-source merges). Never summarize empty content."
+
+### Example: Single Document Summary
+
+```json
+{
+  "goal": "Summarize the latest Cerebro OS note",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {"query": "latest Cerebro OS note"},
+      "dependencies": [],
+      "reasoning": "Find the most recent Cerebro OS documentation",
+      "expected_output": "doc_path to Cerebro OS note",
+      "post_check": "Verify doc_path exists",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.doc_path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract full text content for summarization",
+      "expected_output": "extracted_text from the document",
+      "post_check": "Ensure extracted_text length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "chain_of_density_summarize",
+      "parameters": {
+        "content": "$step2.extracted_text",
+        "topic": "latest Cerebro OS note",
+        "max_rounds": 2
+      },
+      "dependencies": [2],
+      "reasoning": "Create dense bullet-point summary of the Cerebro OS content",
+      "expected_output": "densified_summary with key entities",
+      "post_check": "Verify density_score >= 0.7",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Here's a summary of the latest Cerebro OS note:\n\n$step3.densified_summary\n\nDensity score: {$step3.density_score}"
+      },
+      "dependencies": [3],
+      "reasoning": "Present the dense summary to user",
+      "expected_output": "User receives structured summary",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+### Example: Cross-Document Synthesis
+
+```json
+{
+  "goal": "Overview of all TriAir demo notes",
+  "steps": [
+    {
+      "id": 1,
+      "action": "list_related_documents",
+      "parameters": {"query": "TriAir demo notes", "max_results": 3},
+      "dependencies": [],
+      "reasoning": "Find top 3 most relevant TriAir demo documents",
+      "expected_output": "files array with TriAir docs",
+      "post_check": "Ensure at least 1 file found",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.files[0].path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract content from first TriAir document",
+      "expected_output": "text content from first doc",
+      "post_check": "Verify extracted_text not empty",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.files[1].path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract content from second TriAir document",
+      "expected_output": "text content from second doc",
+      "post_check": "Verify extracted_text not empty",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step2.extracted_text", "$step3.extracted_text"],
+        "synthesis_style": "concise",
+        "topic": "TriAir demo overview"
+      },
+      "dependencies": [2, 3],
+      "reasoning": "Combine and deduplicate content from multiple TriAir docs",
+      "expected_output": "synthesized overview text",
+      "post_check": "Verify synthesized_content length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 5,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Here's an overview of TriAir demo notes across {$step1.total_results} documents:\n\n$step4.synthesized_content"
+      },
+      "dependencies": [4],
+      "reasoning": "Present the synthesized overview",
+      "expected_output": "User receives consolidated summary",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+## Level 3 (Find → Extract Structure) — Reuse Writing Agent's Structured Outputs
+
+**Checklist/TODO extraction:** search_documents (or list_related_documents + iterate) → extract_section(section="all") → create_meeting_notes(content=..., meeting_title="Cerebro OS notes") → reply_to_user with action_items rendered as checkboxes.
+
+**Decision recall / comparisons:** same retrieval pipeline, but call synthesize_content(..., synthesis_style="comparative") or reuse decisions array from create_meeting_notes. For "What constraints did I write down…", reference discussion_points and decisions keys directly.
+
+**Reasoning hint:** "If first document lacks actionable items, iterate through additional matches; stop once you surface non-empty action_items."
+
+### Example: Task Extraction from Meeting Notes
+
+```json
+{
+  "goal": "Extract outstanding tasks from TriAir demo notes",
+  "steps": [
+    {
+      "id": 1,
+      "action": "list_related_documents",
+      "parameters": {"query": "TriAir demo notes"},
+      "dependencies": [],
+      "reasoning": "User wants tasks across multiple notes",
+      "expected_output": "files array",
+      "post_check": "Ensure files not empty",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.files[0].path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Grab full note text for analysis",
+      "expected_output": "extracted_text",
+      "post_check": "Confirm extracted_text length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "create_meeting_notes",
+      "parameters": {
+        "content": "$step2.extracted_text",
+        "meeting_title": "TriAir demos",
+        "include_action_items": true
+      },
+      "dependencies": [2],
+      "reasoning": "Use structured note taker to pull tasks/decisions",
+      "expected_output": "action_items array",
+      "post_check": "If action_items empty, consider next file",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Outstanding scenarios:\n- ☐ $step3.action_items[0].item\n- ☐ $step3.action_items[1].item"
+      },
+      "dependencies": [3],
+      "reasoning": "Return checklist",
+      "expected_output": "User sees tasks",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+### Example: Decision Analysis from Notes
+
+```json
+{
+  "goal": "What constraints did I write down for the Cerebro OS project?",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {"query": "Cerebro OS constraints"},
+      "dependencies": [],
+      "reasoning": "Find documents discussing Cerebro OS constraints",
+      "expected_output": "doc_path to relevant document",
+      "post_check": "Verify doc_path exists",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.doc_path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract full document content",
+      "expected_output": "extracted_text",
+      "post_check": "Ensure extracted_text not empty",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "create_meeting_notes",
+      "parameters": {
+        "content": "$step2.extracted_text",
+        "meeting_title": "Cerebro OS Planning",
+        "include_decisions": true
+      },
+      "dependencies": [2],
+      "reasoning": "Extract structured decisions and constraints",
+      "expected_output": "decisions array with constraints",
+      "post_check": "Verify decisions array populated",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Here are the constraints I found in the Cerebro OS notes:\n\n**Decisions Made:**\n$step3.decisions[*].decision\n\n**Discussion Points:**\n$step3.discussion_points[*].point"
+      },
+      "dependencies": [3],
+      "reasoning": "Present structured constraints and decisions",
+      "expected_output": "User sees organized constraints",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "medium"
+}
+```
+
+## Level 4 (Find → Synthesize → Save/Send) — Extend Level 2/3 Flows with File Creation/Mail Tools
+
+**"Create a one-page summary … save to Desktop":** retrieval/summarize pipeline → create_pages_doc(content="$step3.densified_summary", output_path="~/Desktop/Cerebro Overview.pages") → reply_to_user referencing saved path.
+
+**Email variant:** append compose_email(subject="Cerebro OS pitch", body="$step3.densified_summary", recipient="$memory.preferred_recipient", send=false) before final reply so commitments stay explicit.
+
+**Guidance:** "Whenever user says save or email, add explicit delivery steps: write file (create_pages_doc / create_keynote) → verify path in post_check → delivery tool (compose_email etc.) → reply_to_user summarizing status."
+
+### Example: Create and Save Summary Document
+
+```json
+{
+  "goal": "Create a one-page summary of Cerebro OS and save to Desktop",
+  "steps": [
+    {
+      "id": 1,
+      "action": "search_documents",
+      "parameters": {"query": "Cerebro OS overview"},
+      "dependencies": [],
+      "reasoning": "Find the main Cerebro OS documentation",
+      "expected_output": "doc_path to Cerebro OS docs",
+      "post_check": "Verify doc_path exists",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.doc_path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract full content for summary creation",
+      "expected_output": "extracted_text",
+      "post_check": "Ensure extracted_text length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "chain_of_density_summarize",
+      "parameters": {
+        "content": "$step2.extracted_text",
+        "topic": "Cerebro OS Overview",
+        "max_rounds": 3
+      },
+      "dependencies": [2],
+      "reasoning": "Create dense summary suitable for one-page document",
+      "expected_output": "densified_summary",
+      "post_check": "Verify density_score >= 0.7",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "create_pages_doc",
+      "parameters": {
+        "content": "$step3.densified_summary",
+        "output_path": "~/Desktop/Cerebro_OS_Overview.pages"
+      },
+      "dependencies": [3],
+      "reasoning": "Save the summary as a Pages document on Desktop",
+      "expected_output": "pages_path to created document",
+      "post_check": "Verify file exists at pages_path",
+      "deliveries": ["create_document"]
+    },
+    {
+      "id": 5,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "Created a one-page summary of Cerebro OS and saved it to your Desktop at: $step4.pages_path\n\nThe summary includes key features and architecture decisions with a density score of {$step3.density_score}."
+      },
+      "dependencies": [4],
+      "reasoning": "Confirm document creation and provide file location",
+      "expected_output": "User receives confirmation and file path",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "complex"
+}
+```
+
+### Example: Synthesize and Email Report
+
+```json
+{
+  "goal": "Create overview of agent orchestration and email it to me",
+  "steps": [
+    {
+      "id": 1,
+      "action": "list_related_documents",
+      "parameters": {"query": "agent orchestration patterns", "max_results": 3},
+      "dependencies": [],
+      "reasoning": "Find multiple documents about agent orchestration",
+      "expected_output": "files array with relevant docs",
+      "post_check": "Ensure at least 1 file found",
+      "deliveries": []
+    },
+    {
+      "id": 2,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.files[0].path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract content from first orchestration document",
+      "expected_output": "extracted_text",
+      "post_check": "Verify extracted_text not empty",
+      "deliveries": []
+    },
+    {
+      "id": 3,
+      "action": "extract_section",
+      "parameters": {"doc_path": "$step1.files[1].path", "section": "all"},
+      "dependencies": [1],
+      "reasoning": "Extract content from second orchestration document",
+      "expected_output": "extracted_text",
+      "post_check": "Verify extracted_text not empty",
+      "deliveries": []
+    },
+    {
+      "id": 4,
+      "action": "synthesize_content",
+      "parameters": {
+        "source_contents": ["$step2.extracted_text", "$step3.extracted_text"],
+        "synthesis_style": "comprehensive",
+        "topic": "Agent Orchestration Overview"
+      },
+      "dependencies": [2, 3],
+      "reasoning": "Combine and deduplicate content from multiple sources",
+      "expected_output": "synthesized_content",
+      "post_check": "Verify synthesized_content length > 0",
+      "deliveries": []
+    },
+    {
+      "id": 5,
+      "action": "chain_of_density_summarize",
+      "parameters": {
+        "content": "$step4.synthesized_content",
+        "topic": "Agent Orchestration Patterns",
+        "max_rounds": 2
+      },
+      "dependencies": [4],
+      "reasoning": "Create dense final summary for email",
+      "expected_output": "densified_summary",
+      "post_check": "Verify density_score >= 0.7",
+      "deliveries": []
+    },
+    {
+      "id": 6,
+      "action": "compose_email",
+      "parameters": {
+        "subject": "Agent Orchestration Overview",
+        "body": "$step5.densified_summary",
+        "recipient": "$memory.preferred_recipient",
+        "send": true
+      },
+      "dependencies": [5],
+      "reasoning": "Email the synthesized overview to user",
+      "expected_output": "email sent successfully",
+      "post_check": "Verify email delivery confirmation",
+      "deliveries": ["send_email"]
+    },
+    {
+      "id": 7,
+      "action": "reply_to_user",
+      "parameters": {
+        "message": "I've synthesized an overview of agent orchestration patterns from {$step1.total_results} documents and emailed it to you at $memory.preferred_recipient.\n\nThe summary covers key patterns and best practices with a density score of {$step5.density_score}."
+      },
+      "dependencies": [6],
+      "reasoning": "Confirm email delivery and summarize what was sent",
+      "expected_output": "User receives delivery confirmation",
+      "post_check": "None",
+      "deliveries": []
+    }
+  ],
+  "complexity": "complex"
+}
+```
 
 ---
 

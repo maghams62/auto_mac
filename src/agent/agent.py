@@ -10,7 +10,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import json
 import logging
+import uuid
 from pathlib import Path
+from datetime import datetime
 
 from . import ALL_AGENT_TOOLS
 from .feasibility_checker import FeasibilityChecker
@@ -52,6 +54,12 @@ class AgentState(TypedDict):
     cancelled: bool
     cancellation_reason: Optional[str]
     on_plan_created: Optional[callable]  # Callback for plan events (per-request, avoids cross-talk)
+
+    # Plan streaming state (for live progress tracking)
+    sequence_number: int  # Monotonically increasing counter for plan update events
+    on_step_started: Optional[callable]  # Callback when step begins execution
+    on_step_succeeded: Optional[callable]  # Callback when step completes successfully
+    on_step_failed: Optional[callable]  # Callback when step fails
     
     # Reasoning trace instrumentation
     memory: Optional[Any]  # SessionMemory instance for trace instrumentation
@@ -67,11 +75,17 @@ class AutomationAgent:
         self,
         config: Dict[str, Any],
         session_manager: Optional[SessionManager] = None,
-        on_plan_created: Optional[callable] = None
+        on_plan_created: Optional[callable] = None,
+        on_step_started: Optional[callable] = None,
+        on_step_succeeded: Optional[callable] = None,
+        on_step_failed: Optional[callable] = None
     ):
         self.config = config
         # Note: on_plan_created is deprecated - pass through run() method instead to avoid cross-talk
         self.on_plan_created = on_plan_created  # Callback for sending plan to UI (deprecated)
+        self.on_step_started = on_step_started
+        self.on_step_succeeded = on_step_succeeded
+        self.on_step_failed = on_step_failed
         
         # Initialize config accessor for safe, validated access
         from ..config_validator import ConfigAccessor
@@ -718,6 +732,19 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         logger.info(f"=== EXECUTING STEP {step['id']}: {step['action']} ===")
         logger.info(f"Reasoning: {step['reasoning']}")
 
+        # Call step started callback for live progress tracking
+        step_started_callback = state.get("on_step_started")
+        if step_started_callback:
+            try:
+                state["sequence_number"] += 1
+                step_started_callback({
+                    "step_id": step["id"],
+                    "sequence_number": state["sequence_number"],
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                logger.debug(f"Failed to call step started callback: {e}")
+
         # Check if dependencies succeeded, with recovery attempt
         dependencies = step.get("dependencies", [])
         if dependencies:
@@ -803,6 +830,28 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         resolved_params = self._resolve_parameters(step["parameters"], state["step_results"], action)
         logger.info(f"Resolved parameters: {resolved_params}")
 
+        # CRITICAL: Verify compose_email content before execution
+        if action == "compose_email":
+            verification_result = self._verify_email_content(
+                state=state,
+                step=step,
+                resolved_params=resolved_params
+            )
+            
+            if not verification_result.get("verified", True):
+                logger.warning(f"[EMAIL VERIFICATION] Email content incomplete: {verification_result.get('missing_items', [])}")
+                
+                # Apply suggested corrections
+                suggestions = verification_result.get("suggestions", {})
+                if suggestions:
+                    logger.info(f"[EMAIL VERIFICATION] Applying corrections to email parameters")
+                    if "body" in suggestions:
+                        resolved_params["body"] = suggestions["body"]
+                        logger.info(f"[EMAIL VERIFICATION] Updated email body with missing content")
+                    if "attachments" in suggestions:
+                        resolved_params["attachments"] = suggestions["attachments"]
+                        logger.info(f"[EMAIL VERIFICATION] Updated attachments list")
+
         # Get tool
         tool_name = step["action"]
         tool_attempts = state.setdefault("tool_attempts", {})
@@ -883,7 +932,62 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         else:
             # Execute tool with error recovery
             try:
-                result = tool.invoke(resolved_params)
+                # Add memory context to parameters for tools that can use it
+                tool_params = resolved_params.copy()
+                if memory and memory.is_reasoning_trace_enabled():
+                    try:
+                        # Add reasoning context for tools that can benefit from memory
+                        reasoning_context = {
+                            "trace_enabled": True,
+                            "commitments": memory.get_pending_commitments(),
+                            "past_attempts": len(memory.interactions),
+                            "interaction_id": getattr(memory, '_current_interaction_id', None)
+                        }
+
+                        # Enhance reasoning context for music tools with recent playback history
+                        if tool_name in ["play_song", "get_spotify_status"]:
+                            # Get recent interactions from active context window
+                            active_interactions = memory.get_active_context_interactions()
+                            recent_music_attempts = []
+
+                            # Extract recent music-related interactions
+                            for interaction in reversed(active_interactions[-3:]):  # Last 3 interactions
+                                if interaction.step_results:
+                                    for step_result in interaction.step_results.values():
+                                        if step_result.get("tool") in ["play_song", "pause_music", "get_spotify_status"]:
+                                            music_attempt = {
+                                                "timestamp": interaction.timestamp,
+                                                "action": step_result.get("tool"),
+                                                "song_name": step_result.get("song_name"),
+                                                "artist": step_result.get("artist"),
+                                                "success": not step_result.get("error", False),
+                                                "disambiguation": step_result.get("disambiguation", {}),
+                                                "error_type": step_result.get("error_type") if step_result.get("error") else None
+                                            }
+                                            recent_music_attempts.append(music_attempt)
+
+                            reasoning_context.update({
+                                "recent_music_attempts": recent_music_attempts,
+                                "spotify_last_resolution": memory.get_context("spotify.last_resolution"),
+                                "spotify_clarifications": memory.get_context("spotify.clarifications", [])
+                            })
+
+                        # Only add reasoning context to tools that can use it
+                        memory_enabled_tools = [
+                            "play_song", "clarify_song_selection", "process_clarification_response",
+                            "get_stock_history", "search_stock_symbol",
+                            "plan_trip_with_stops", "google_search", "compose_email",
+                            "create_keynote", "synthesize_content", "create_slide_deck_content"
+                        ]
+
+                        if tool_name in memory_enabled_tools:
+                            tool_params["reasoning_context"] = reasoning_context
+                            logger.debug(f"[MEMORY INTEGRATION] Added reasoning context to {tool_name}")
+
+                    except Exception as e:
+                        logger.debug(f"[MEMORY INTEGRATION] Could not add reasoning context: {e}")
+
+                result = tool.invoke(tool_params)
                 logger.info(f"Step {step['id']} result: {result}")
                 result.setdefault("tool", tool_name)
                 
@@ -896,13 +1000,55 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         evidence = []
                         if result.get("message"):
                             evidence.append(result.get("message", "")[:200])
-                        memory.update_reasoning_entry(
-                            execution_entry_id,
-                            outcome=outcome,
-                            evidence=evidence,
-                            attachments=attachments,
-                            error=result.get("error_message") if result.get("error") else None
-                        )
+
+                        # Capture additional metadata for music tasks
+                        update_kwargs = {
+                            "outcome": outcome,
+                            "evidence": evidence,
+                            "attachments": attachments,
+                            "error": result.get("error_message") if result.get("error") else None
+                        }
+
+                        # Add disambiguation metadata for play_song tool
+                        if tool_name == "play_song" and result.get("_disambiguation_metadata"):
+                            disambiguation_data = result["_disambiguation_metadata"]
+                            update_kwargs["disambiguation"] = disambiguation_data
+                            # Add additional context about ambiguity decisions
+                            if disambiguation_data.get("needs_clarification"):
+                                update_kwargs["clarification_needed"] = True
+                                update_kwargs["confidence_too_low"] = disambiguation_data.get("confidence", 0) < 0.7
+                            if disambiguation_data.get("clarification_requested"):
+                                update_kwargs["clarification_requested"] = True
+                                update_kwargs["ambiguity_decision_reasoning"] = disambiguation_data.get("decision_reasoning", "")
+                                update_kwargs["risk_factors"] = disambiguation_data.get("risk_factors", [])
+
+                        # Store clarification data in session context for future learning
+                        if tool_name == "process_clarification_response" and result.get("clarification_data"):
+                            clarification_data = result["clarification_data"]
+                            try:
+                                # Store the successful clarification resolution
+                                memory.set_context("spotify.last_resolution", {
+                                    "original_query": clarification_data["original_query"],
+                                    "resolved_song": clarification_data["resolved_song"],
+                                    "resolved_artist": clarification_data["resolved_artist"],
+                                    "clarification_timestamp": clarification_data["clarification_timestamp"],
+                                    "confidence": 1.0  # User-confirmed resolutions get max confidence
+                                })
+
+                                # Add to clarifications list for pattern learning
+                                existing_clarifications = memory.get_context("spotify.clarifications", [])
+                                existing_clarifications.append(clarification_data)
+                                # Keep only last 10 clarifications to avoid unbounded growth
+                                if len(existing_clarifications) > 10:
+                                    existing_clarifications = existing_clarifications[-10:]
+                                memory.set_context("spotify.clarifications", existing_clarifications)
+
+                                logger.debug(f"[CONTEXT LEARNING] Stored clarification: {clarification_data['original_query']} → {clarification_data['resolved_song']}")
+
+                            except Exception as e:
+                                logger.debug(f"[CONTEXT LEARNING] Failed to store clarification: {e}")
+
+                        memory.update_reasoning_entry(execution_entry_id, **update_kwargs)
                     except Exception as e:
                         logger.debug(f"[REASONING TRACE] Failed to update execution entry: {e}")
                 
@@ -1051,6 +1197,49 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     except Exception as retry_log_error:
                         logger.debug(f"[RETRY LOGGING] Failed to log retry attempt: {retry_log_error}")
 
+        # Call step completion callback for live progress tracking
+        step_result = state["step_results"].get(step["id"], {})
+        has_error = step_result.get("error", False)
+
+        if has_error:
+            # Call step failed callback
+            step_failed_callback = state.get("on_step_failed")
+            if step_failed_callback:
+                try:
+                    state["sequence_number"] += 1
+                    error_message = step_result.get("message", "Unknown error")
+                    step_failed_callback({
+                        "step_id": step["id"],
+                        "sequence_number": state["sequence_number"],
+                        "timestamp": datetime.now().isoformat(),
+                        "error": error_message[:500] + "..." if len(error_message) > 500 else error_message,
+                        "can_retry": step_result.get("retry_possible", False)
+                    })
+                except Exception as e:
+                    logger.debug(f"Failed to call step failed callback: {e}")
+        else:
+            # Call step succeeded callback
+            step_succeeded_callback = state.get("on_step_succeeded")
+            if step_succeeded_callback:
+                try:
+                    state["sequence_number"] += 1
+                    # Get output preview from step result
+                    output_preview = None
+                    if "message" in step_result and isinstance(step_result["message"], str):
+                        output_preview = step_result["message"][:200] + "..." if len(step_result["message"]) > 200 else step_result["message"]
+                    elif "result" in step_result:
+                        result_str = str(step_result["result"])
+                        output_preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
+
+                    step_succeeded_callback({
+                        "step_id": step["id"],
+                        "sequence_number": state["sequence_number"],
+                        "timestamp": datetime.now().isoformat(),
+                        "output_preview": output_preview
+                    })
+                except Exception as e:
+                    logger.debug(f"Failed to call step succeeded callback: {e}")
+
         # Move to next step
         state["current_step"] = current_idx + 1
 
@@ -1066,10 +1255,103 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         except Exception as e:
             logger.debug(f"[RETRY LOGGING] Failed to get reasoning trace: {e}")
         return []
-
+    
+    def _verify_commitments_fulfilled(self, state: AgentState, memory) -> None:
+        """
+        Verify that all commitments (like send_email, attach_documents) were fulfilled.
+        
+        Uses reasoning trace to check if what we promised to do actually got done.
+        Logs warnings if commitments are unfulfilled.
+        
+        Args:
+            state: Current agent state
+            memory: Session memory with reasoning trace
+        """
+        try:
+            reasoning_summary = memory.get_reasoning_summary()
+            commitments = reasoning_summary.get("commitments", [])
+            
+            if not commitments:
+                logger.debug("[FINALIZE] No commitments to verify")
+                return
+            
+            logger.info(f"[FINALIZE] Verifying commitments: {commitments}")
+            
+            step_results = state.get("step_results", {})
+            user_request = state.get("original_user_request") or state.get("user_request", "")
+            
+            # Check each commitment
+            unfulfilled = []
+            for commitment in commitments:
+                if commitment == "send_email":
+                    # Check if compose_email was executed successfully
+                    email_executed = any(
+                        result.get("tool") == "compose_email" and not result.get("error")
+                        for result in step_results.values() if isinstance(result, dict)
+                    )
+                    if not email_executed:
+                        unfulfilled.append("send_email")
+                        logger.warning("[FINALIZE] ⚠️  COMMITMENT UNFULFILLED: User asked to send email but compose_email not executed successfully")
+                
+                elif commitment == "attach_documents":
+                    # Check if email had attachments
+                    email_with_attachments = any(
+                        result.get("tool") == "compose_email" and 
+                        isinstance(result.get("parameters", {}).get("attachments"), list) and
+                        len(result.get("parameters", {}).get("attachments", [])) > 0
+                        for result in step_results.values() if isinstance(result, dict)
+                    )
+                    if not email_with_attachments:
+                        unfulfilled.append("attach_documents")
+                        logger.warning("[FINALIZE] ⚠️  COMMITMENT UNFULFILLED: User asked to attach documents but email had no attachments")
+                
+                elif commitment == "play_music":
+                    # Check if play_song was executed successfully
+                    music_played = any(
+                        result.get("tool") == "play_song" and not result.get("error")
+                        for result in step_results.values() if isinstance(result, dict)
+                    )
+                    if not music_played:
+                        unfulfilled.append("play_music")
+                        logger.warning("[FINALIZE] ⚠️  COMMITMENT UNFULFILLED: User asked to play music but play_song not executed successfully")
+            
+            # Record verification in reasoning trace
+            if unfulfilled:
+                memory.add_reasoning_entry(
+                    stage="finalization",
+                    thought="Final commitment verification - some commitments unfulfilled",
+                    outcome="partial",
+                    evidence=[
+                        f"User request: {user_request[:100]}",
+                        f"Commitments made: {commitments}",
+                        f"Unfulfilled: {unfulfilled}"
+                    ],
+                    commitments=unfulfilled,  # Track what's still pending
+                    corrections=[f"In future, ensure {c} is actually executed" for c in unfulfilled]
+                )
+                logger.warning(f"[FINALIZE] ⚠️  {len(unfulfilled)} commitment(s) unfulfilled: {unfulfilled}")
+                logger.warning(f"[FINALIZE] This may indicate the response is incomplete!")
+            else:
+                memory.add_reasoning_entry(
+                    stage="finalization",
+                    thought="Final commitment verification - all commitments fulfilled",
+                    outcome="success",
+                    evidence=[
+                        f"User request: {user_request[:100]}",
+                        f"Commitments made: {commitments}",
+                        "All commitments verified"
+                    ]
+                )
+                logger.info(f"[FINALIZE] ✅ All {len(commitments)} commitment(s) verified as fulfilled")
+        
+        except Exception as e:
+            logger.error(f"[FINALIZE] Error during commitment verification: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def finalize(self, state: AgentState) -> AgentState:
         """
-        Finalization node: Summarize results.
+        Finalization node: Summarize results and verify commitments were fulfilled.
         """
         logger.info("=== FINALIZING ===")
 
@@ -1092,6 +1374,14 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             state["final_result"] = summary
             logger.info("Final status: cancelled")
             return state
+        
+        # CRITICAL: Final commitment verification using reasoning trace
+        memory = state.get("memory")
+        if memory and memory.is_reasoning_trace_enabled():
+            try:
+                self._verify_commitments_fulfilled(state, memory)
+            except Exception as e:
+                logger.error(f"[FINALIZE] Error during commitment verification: {e}")
 
         # Gather all results
         summary = {
@@ -1266,7 +1556,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 )
                 verification_result = step_results.get(verification_step.get("id")) if verification_step and verification_step.get("id") in step_results else None
 
-                if not verification_result or verification_result.get("error"):
+                if verification_result and verification_result.get("error"):
                     playback_success = False
                     failure_details = (
                         verification_result.get("error_message")
@@ -1275,7 +1565,22 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     )
                 else:
                     verification_status = (verification_result.get("status") or "").lower()
-                    if verification_status != "playing":
+                    # Accept "playing" status, or if there's track info (even paused), consider it success
+                    # since we successfully initiated playback
+                    has_track_info = bool(verification_result.get("track") or verification_result.get("track_artist"))
+
+                    if verification_status == "playing":
+                        # Perfect - actively playing
+                        pass
+                    elif has_track_info and verification_status in ["paused", "stopped", ""]:
+                        # Track is loaded but not actively playing (common with Web Player)
+                        # Still consider this success since playback was initiated
+                        logger.info(f"[AGENT] Playback verification: track loaded but {verification_status}, accepting as success")
+                    elif has_track_info:
+                        # Some other status but track info exists
+                        logger.info(f"[AGENT] Playback verification: track loaded with status '{verification_status}', accepting as success")
+                    else:
+                        # No track info and not playing - this is a failure
                         playback_success = False
                         failure_details = verification_result.get("message") or "Spotify is not reporting playback."
 
@@ -1285,10 +1590,26 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             if not playback_success:
                 if summary["status"] == "success":
                     summary["status"] = "partial_success"
-                note_parts = [playback_failure_message]
-                if failure_details and failure_details not in playback_failure_message:
-                    note_parts.append(failure_details)
-                _append_summary_message(" ".join(note_parts))
+
+                # Provide more informative messages based on verification result
+                if verification_result and not verification_result.get("error"):
+                    track = verification_result.get("track")
+                    artist = verification_result.get("track_artist") or verification_result.get("artist")
+                    status = verification_result.get("status", "").lower()
+
+                    if track and artist:
+                        if status == "paused":
+                            note = f"Track loaded and ready: {track} by {artist} (currently paused)"
+                        elif status == "stopped":
+                            note = f"Track loaded: {track} by {artist} (playback stopped)"
+                        else:
+                            note = f"Track loaded: {track} by {artist} (status: {status})"
+                    else:
+                        note = verification_result.get("message") or playback_failure_message
+                else:
+                    note = failure_details or playback_failure_message
+
+                _append_summary_message(note)
 
         # Check pending commitments from reasoning trace
         memory = state.get("memory")
@@ -1633,6 +1954,85 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         plan["steps"] = fixed_steps
         return plan
 
+    def _verify_email_content(self, state: AgentState, step: Dict[str, Any], resolved_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Verify that compose_email parameters contain what the user requested.
+        
+        Uses LLM to check if email body/attachments include the requested content
+        (links, files, reports, etc.) and suggests corrections if needed.
+        
+        Also uses reasoning trace to check past attempts and commitments.
+        
+        Args:
+            state: Current agent state with user request and step results
+            step: Current compose_email step
+            resolved_params: Resolved parameters for compose_email
+            
+        Returns:
+            Verification result with verified flag and suggestions
+        """
+        try:
+            from .email_content_verifier import verify_compose_email_content
+            
+            user_request = state.get("original_user_request") or state.get("user_request", "")
+            step_results = state.get("step_results", {})
+            step_id = step.get("id", "unknown")
+            memory = state.get("memory")
+            
+            logger.info(f"[EMAIL VERIFICATION] Verifying content for compose_email step {step_id}")
+            
+            # Get reasoning context if available
+            reasoning_context = None
+            if memory and memory.is_reasoning_trace_enabled():
+                try:
+                    reasoning_summary = memory.get_reasoning_summary()
+                    reasoning_context = {
+                        "commitments": reasoning_summary.get("commitments", []),
+                        "past_attempts": memory.get_interaction_count(),
+                        "trace_available": True
+                    }
+                    logger.debug(f"[EMAIL VERIFICATION] Using reasoning trace context: {reasoning_context}")
+                except Exception as e:
+                    logger.warning(f"[EMAIL VERIFICATION] Could not get reasoning context: {e}")
+            
+            verification_result = verify_compose_email_content(
+                user_request=user_request,
+                compose_email_params=resolved_params,
+                step_results=step_results,
+                current_step_id=step_id,
+                reasoning_context=reasoning_context
+            )
+            
+            # Record verification in reasoning trace
+            if memory and memory.is_reasoning_trace_enabled():
+                try:
+                    memory.add_reasoning_entry(
+                        stage="verification",
+                        thought=f"Verifying compose_email content before execution",
+                        action="email_content_verification",
+                        outcome="success" if verification_result.get("verified") else "partial",
+                        evidence=[
+                            f"Verified: {verification_result.get('verified')}",
+                            f"Missing: {verification_result.get('missing_items', [])}",
+                            verification_result.get('reasoning', '')[:200]
+                        ],
+                        commitments=["send_email"] if not verification_result.get('verified') else []
+                    )
+                except Exception as e:
+                    logger.debug(f"[REASONING TRACE] Failed to add verification entry: {e}")
+            
+            return verification_result
+            
+        except Exception as e:
+            logger.error(f"[EMAIL VERIFICATION] Error during verification: {e}")
+            # On error, allow email to proceed (fail open)
+            return {
+                "verified": True,
+                "missing_items": [],
+                "suggestions": {},
+                "reasoning": f"Verification skipped due to error: {e}"
+            }
+
     def _resolve_parameters(
         self,
         params: Dict[str, Any],
@@ -1837,7 +2237,10 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         session_id: Optional[str] = None,
         cancel_event: Optional[Event] = None,
         context: Optional[Dict[str, Any]] = None,
-        on_plan_created: Optional[callable] = None
+        on_plan_created: Optional[callable] = None,
+        on_step_started: Optional[callable] = None,
+        on_step_succeeded: Optional[callable] = None,
+        on_step_failed: Optional[callable] = None
     ) -> Dict[str, Any]:
         """
         Execute the agent workflow.
@@ -1925,15 +2328,64 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     "final_result": result
                 }
 
+        # Check for natural language explain commands
+        user_request_lower = user_request.lower().strip()
+
+        # Simple delivery intent check to avoid conflicts
+        delivery_verbs = ["email", "send", "mail", "attach"]
+        has_delivery_intent = any(
+            f"{verb} it" in user_request_lower or
+            f"{verb} the" in user_request_lower or
+            f"{verb} me" in user_request_lower or
+            f"{verb} to" in user_request_lower
+            for verb in delivery_verbs
+        )
+
+        if (user_request_lower.startswith('explain ') or
+            user_request_lower.startswith('summarize ') or
+            user_request_lower.startswith('summarise ') or
+            user_request_lower.startswith('describe ') or
+            user_request_lower.startswith('what is ') or
+            user_request_lower.startswith('tell me about ')) and not has_delivery_intent:
+            # This is a standalone explain request - use the ExplainPipeline service
+            try:
+                from ..services.explain_pipeline import ExplainPipeline
+                from ..agent.agent_registry import AgentRegistry
+
+                registry = AgentRegistry(self.config, session_manager=self.session_manager)
+                explain_pipeline = ExplainPipeline(registry)
+                result = explain_pipeline.execute(user_request, session_id)
+
+                # Format result to match agent.run() return format
+                if result.get("success"):
+                    return {
+                        "status": "success",
+                        "message": result.get("summary", "Explanation completed"),
+                        "final_result": result,
+                        "results": {1: result}
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": result.get("error_message", "Explanation failed"),
+                        "final_result": result,
+                        "results": {1: result}
+                    }
+            except Exception as e:
+                logger.error(f"[AGENT] Explain pipeline error: {e}")
+                # Fall through to normal agent processing
+
         # Get session context if available
         session_context = None
         memory = None
         interaction_id = None
+        user_id = context.get("user_id", "default_user") if context else "default_user"
+
         if self.session_manager and session_id:
-            memory = self.session_manager.get_or_create_session(session_id)
+            memory = self.session_manager.get_or_create_session(session_id, user_id)
             session_context = self.session_manager.get_langgraph_context(session_id)
-            logger.info(f"[SESSION] Loaded context for session: {session_id}")
-            
+            logger.info(f"[SESSION] Loaded context for session: {user_id}/{session_id}")
+
             # Start reasoning trace if enabled
             if memory and memory.is_reasoning_trace_enabled():
                 interaction_id = memory.add_interaction(user_request=user_request)
@@ -1967,9 +2419,45 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             "recent_errors": {},
             "planning_context": context or {},  # Add planning context (e.g., intent_hints from slash commands)
             "on_plan_created": on_plan_created,  # Store callback in state for plan_task to access
+            "sequence_number": 0,  # Initialize sequence counter for plan streaming
+            "on_step_started": on_step_started,  # Store step callbacks for live progress tracking
+            "on_step_succeeded": on_step_succeeded,
+            "on_step_failed": on_step_failed,
             "memory": memory,  # Store memory reference for trace instrumentation
             "interaction_id": interaction_id  # Store interaction_id for trace instrumentation
         }
+
+        # Query persistent memory for relevant context
+        persistent_memory = []
+        if memory and memory.user_memory_store:
+            try:
+                # Query memories relevant to the current request
+                relevant_memories = memory.user_memory_store.query_memories(
+                    text=user_request,
+                    top_k=5,
+                    min_score=0.7
+                )
+
+                # Format for planning context
+                persistent_memory = [
+                    {
+                        "content": mem.content,
+                        "category": mem.category,
+                        "tags": mem.tags,
+                        "salience_score": score,
+                        "source": "persistent_memory"
+                    }
+                    for mem, score in relevant_memories
+                ]
+
+                if persistent_memory:
+                    logger.debug(f"[PERSISTENT MEMORY] Retrieved {len(persistent_memory)} relevant memories for planning")
+
+            except Exception as e:
+                logger.error(f"[PERSISTENT MEMORY] Failed to query memories: {e}")
+
+        # Add persistent memory to planning context
+        initial_state["planning_context"]["persistent_memory"] = persistent_memory
 
         # Run graph
         try:

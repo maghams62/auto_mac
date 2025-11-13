@@ -819,10 +819,55 @@ def list_related_documents(query: str, max_results: int = 10) -> Dict[str, Any]:
         }
 
 
+@tool
+def list_documents(filter: Optional[str] = None, folder_path: Optional[str] = None,
+                  max_results: int = 20) -> Dict[str, Any]:
+    """
+    List indexed documents with optional filtering.
+
+    FILE AGENT - LEVEL 1: Document Discovery
+    Use this when the user wants to browse or list their indexed documents.
+    Shows a directory-style listing of all indexed documents with metadata.
+
+    Args:
+        filter: Text to filter documents by (name, folder, or semantic query)
+        folder_path: Specific folder path to list documents from
+        max_results: Maximum number of documents to return (default: 20)
+
+    Returns:
+        Dictionary with:
+        - type: "document_list"
+        - message: Summary message
+        - documents: List of document entries with name, path, size, modified, preview
+        - total_count: Total number of documents found
+        - has_more: Boolean indicating if there are more results
+    """
+    logger.info(f"[DOCUMENT LIST] Tool: list_documents(filter='{filter}', folder_path='{folder_path}', max_results={max_results})")
+
+    try:
+        from src.services.document_listing import DocumentListingService
+        from src.utils import load_config
+
+        config = load_config()
+        service = DocumentListingService(config)
+
+        return service.list_documents(filter, folder_path, max_results)
+
+    except Exception as e:
+        logger.error(f"[DOCUMENT LIST] Error in list_documents: {e}")
+        return {
+            "error": True,
+            "error_type": "ListError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
 # File Agent Tool Registry
 FILE_AGENT_TOOLS = [
     search_documents,
     list_related_documents,
+    list_documents,
     extract_section,
     take_screenshot,
     organize_files,

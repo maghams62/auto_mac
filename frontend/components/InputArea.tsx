@@ -183,7 +183,7 @@ export default function InputArea({
               </div>
               {filteredSlashCommands.length === 0 && (
                 <div className="text-center text-xs text-text-muted py-4">
-                  No commands match "{slashQuery}"
+                  No commands match &quot;{slashQuery}&quot;
                 </div>
               )}
               {filteredSlashCommands.map((command, index) => {
@@ -231,7 +231,7 @@ export default function InputArea({
         )}
 
         <motion.div
-          className="group relative rounded-2xl border border-glass bg-glass backdrop-blur-glass px-4 py-3 flex items-end gap-3 focus-within:border-accent-primary focus-within:shadow-glow-primary transition-all shadow-inset-border"
+          className="group relative rounded-3xl bg-glass-elevated backdrop-blur-glass px-3 py-2 flex items-end gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] focus-within:shadow-[0_0_25px_rgba(var(--accent-primary-rgb),0.35)] transition-all duration-200 ease-out"
           whileFocus={{ scale: 1.01 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
         >
@@ -254,7 +254,7 @@ export default function InputArea({
             placeholder="Message Cerebro..."
             disabled={disabled}
             autoFocus
-            className="flex-1 bg-transparent text-text-primary placeholder-text-subtle resize-none outline-none text-[15px] leading-[1.4] max-h-[200px] focus:outline-none focus:ring-2 focus:ring-accent-primary/50 focus:ring-offset-0 focus:ring-offset-transparent"
+            className="flex-1 bg-transparent text-text-primary placeholder-text-subtle resize-none outline-none text-[15px] leading-[1.5] max-h-[200px] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_rgba(var(--accent-primary-rgb),0.45)] caret-accent-primary caret-transition"
             rows={1}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -266,15 +266,18 @@ export default function InputArea({
 
           <div className="flex items-center gap-2">
             {isProcessing && onStop && (
-              <button
+              <motion.button
                 onClick={onStop}
-                className="rounded-lg p-2 text-xs font-medium transition-colors text-text-muted hover:text-text-primary hover:bg-glass-hover focus:outline-none focus:ring-2 focus:ring-accent-primary/50"
+                className="rounded-lg p-2.5 text-sm font-semibold transition-all duration-200 ease-out text-text-muted hover:text-text-primary hover:bg-gradient-to-r hover:from-accent-primary/20 hover:via-accent-primary/10 hover:to-transparent hover:shadow-[0_8px_20px_rgba(var(--accent-primary-rgb),0.25)] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_rgba(var(--accent-primary-rgb),0.45)]"
                 title="Stop"
+                whileHover={{ scale: 1.06 }}
+                whileTap={{ scale: 0.95 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M6 6h12v12H6z" />
                 </svg>
-              </button>
+              </motion.button>
             )}
 
             {onVoiceRecord && (
@@ -282,20 +285,20 @@ export default function InputArea({
                 onClick={onVoiceRecord}
                 disabled={disabled || isProcessing}
                 className={cn(
-                  "rounded-full p-3 transition-all relative focus:outline-none focus:ring-2 focus:ring-accent-primary/50",
+                  "rounded-full p-3 transition-all duration-200 ease-out relative focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_rgba(var(--accent-primary-rgb),0.45)] shadow-soft",
                   isRecording
-                    ? "bg-accent-danger/10 text-accent-danger cursor-pointer shadow-lg"
+                    ? "bg-accent-danger/15 text-accent-danger cursor-pointer shadow-glow-primary"
                     : disabled || isProcessing
-                    ? "text-text-muted opacity-40 cursor-not-allowed"
-                    : "text-text-muted hover:text-text-primary hover:bg-glass-hover cursor-pointer"
+                    ? "text-text-muted opacity-40 cursor-not-allowed bg-surface/50"
+                    : "text-text-muted hover:text-text-primary hover:bg-gradient-to-r hover:from-accent-primary/20 hover:via-accent-primary/10 hover:to-transparent hover:shadow-[0_8px_20px_rgba(var(--accent-primary-rgb),0.25)] cursor-pointer"
                 )}
                 title={isRecording ? "Stop recording" : "Start voice recording"}
                 aria-label={isRecording ? "Stop voice recording" : "Start voice recording"}
                 aria-pressed={isRecording}
-                whileHover={!disabled && !isProcessing ? { scale: 1.05 } : {}}
+                whileHover={!disabled && !isProcessing ? { scale: 1.06 } : {}}
                 whileTap={!disabled && !isProcessing ? { scale: 0.95 } : {}}
                 animate={isRecording ? {
-                  scale: [1, 1.1, 1],
+                  scale: [1, 1.08, 1],
                   transition: {
                     duration: 1.5,
                     repeat: Infinity,
@@ -372,16 +375,29 @@ export default function InputArea({
               </motion.button>
             )}
 
-            <button
+            <motion.button
               onClick={handleSend}
               disabled={!input.trim() || disabled || isProcessing}
               className={cn(
-                "rounded-lg p-2 transition-colors focus:outline-none focus:ring-2 focus:ring-accent-primary/50",
+                "rounded-lg p-2.5 transition-all duration-200 ease-out focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_rgba(var(--accent-primary-rgb),0.45)]",
                 !input.trim() || disabled || isProcessing
-                  ? "text-text-muted opacity-40 cursor-not-allowed"
-                  : "text-text-primary hover:bg-glass-hover cursor-pointer"
+                  ? "text-text-muted opacity-40 cursor-not-allowed bg-surface/50"
+                  : "text-accent-primary hover:bg-gradient-to-r hover:from-accent-primary/20 hover:via-accent-primary/10 hover:to-transparent hover:shadow-[0_8px_20px_rgba(var(--accent-primary-rgb),0.25)] cursor-pointer shadow-soft"
               )}
               title="Send"
+              whileHover={!input.trim() || disabled || isProcessing ? {} : { scale: 1.06 }}
+              whileTap={!input.trim() || disabled || isProcessing ? {} : { scale: 0.95 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              animate={isProcessing ? {
+                boxShadow: [
+                  "0 0 15px rgba(139, 92, 246, 0.4), 0 0 30px rgba(139, 92, 246, 0.2)",
+                  "0 0 25px rgba(139, 92, 246, 0.6), 0 0 50px rgba(139, 92, 246, 0.3)",
+                  "0 0 15px rgba(139, 92, 246, 0.4), 0 0 30px rgba(139, 92, 246, 0.2)"
+                ]
+              } : {}}
+              style={isProcessing ? {
+                boxShadow: "0 0 15px rgba(139, 92, 246, 0.4), 0 0 30px rgba(139, 92, 246, 0.2)"
+              } : {}}
             >
               <svg
                 className="w-5 h-5"
@@ -392,11 +408,11 @@ export default function InputArea({
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2}
+                  strokeWidth={2.5}
                   d="M5 12h14M12 5l7 7-7 7"
                 />
               </svg>
-            </button>
+            </motion.button>
           </div>
         </motion.div>
       </div>

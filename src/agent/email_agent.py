@@ -91,6 +91,27 @@ def compose_email(
                 invalid_attachments.append(str(att_path))
                 continue
             
+            # CRITICAL: Detect if someone is passing report/document CONTENT instead of a file path
+            # This is a common planning error where $stepN.report_content is used instead of $stepN.pages_path
+            if len(att_path) > 500 or '\n\n' in att_path or att_path.count('\n') > 10:
+                logger.error(f"[EMAIL AGENT] ⚠️  PLANNING ERROR DETECTED: Attachment appears to be TEXT CONTENT, not a FILE PATH!")
+                logger.error(f"[EMAIL AGENT] ⚠️  First 200 chars: {att_path[:200]}...")
+                logger.error(f"[EMAIL AGENT] ⚠️  This likely means the planner used '$stepN.report_content' or '$stepN.synthesized_content' instead of a file path")
+                logger.error(f"[EMAIL AGENT] ⚠️  CORRECT workflow: create_detailed_report → create_pages_doc → compose_email(attachments=['$stepN.pages_path'])")
+                invalid_attachments.append(att_path[:100] + "... [CONTENT NOT FILE PATH]")
+                return {
+                    "error": True,
+                    "error_type": "PlanningError",
+                    "error_message": (
+                        "Attachment validation failed: You provided TEXT CONTENT instead of a FILE PATH. "
+                        "To email a report, you must first save it to a file using create_pages_doc. "
+                        "Correct workflow: create_detailed_report → create_pages_doc → compose_email(attachments=['$stepN.pages_path']). "
+                        "The attachment field expects file paths (e.g., '/path/to/file.pages'), not document content."
+                    ),
+                    "retry_possible": True,
+                    "hint": "Use create_pages_doc to save report_content to a file, then attach the pages_path"
+                }
+            
             # Convert to absolute path
             try:
                 abs_path = os.path.abspath(os.path.expanduser(att_path))
@@ -262,17 +283,134 @@ def read_latest_emails(
         # Limit count to reasonable maximum
         count = min(count, 50)
 
+        # DIAGNOSTIC: Test Mail.app accessibility first
+        logger.info("[EMAIL AGENT] Testing Mail.app accessibility...")
+        if not mail_reader.test_mail_access():
+            logger.error("[EMAIL AGENT] Mail.app accessibility test failed")
+            return {
+                "error": True,
+                "error_type": "MailAppInaccessible",
+                "error_message": (
+                    "Cannot access Mail.app. Please ensure:\n"
+                    "1. Mail.app is running\n"
+                    "2. Automation permissions are granted in System Settings > Privacy & Security > Automation\n"
+                    "3. Allow your terminal/Python app to control Mail.app"
+                ),
+                "retry_possible": True,
+                "diagnostic_suggestion": "Check if Mail.app is running and automation permissions are granted"
+            }
+
+        # DIAGNOSTIC: Check if mailbox exists
+        logger.info(f"[EMAIL AGENT] Checking if mailbox '{mailbox}' exists...")
+        try:
+            # Escape strings for AppleScript (same logic as MailReader._escape_applescript_string)
+            escaped_mailbox = mailbox.replace('"', '\\"')
+            account_clause = ""
+            if account_email:
+                escaped_account = account_email.replace('"', '\\"')
+                account_clause = f' of account "{escaped_account}"'
+
+            test_script = f'''
+            tell application "Mail"
+                try
+                    set targetMailbox to mailbox "{escaped_mailbox}"{account_clause}
+                    return "EXISTS"
+                on error errMsg
+                    return "ERROR: " & errMsg
+                end try
+            end tell
+            '''
+
+            import subprocess
+            result = subprocess.run(
+                ['osascript', '-e', test_script],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode != 0 or "ERROR:" in result.stdout.strip():
+                logger.warning(f"[EMAIL AGENT] Mailbox existence check failed for '{mailbox}'{f' in account {account_email}' if account_email else ''}: {result.stdout.strip()}")
+                # Don't block the read - continue and let the actual fetch fail if mailbox truly doesn't exist
+        except Exception as e:
+            logger.warning(f"[EMAIL AGENT] Could not verify mailbox existence: {e}")
+
+        logger.info(f"[EMAIL AGENT] Reading {count} latest emails from mailbox '{mailbox}'...")
         emails = mail_reader.read_latest_emails(
             count=count,
             account_name=account_email,  # SECURITY: Constrain to configured account
             mailbox_name=mailbox
         )
 
+        # DIAGNOSTIC: Provide detailed status based on results
+        email_count = len(emails)
+        if email_count == 0:
+            logger.warning(f"[EMAIL AGENT] No emails found in mailbox '{mailbox}'")
+
+            # Try to get mailbox count for better diagnostics
+            try:
+                count_script = f'''
+                tell application "Mail"
+                    try
+                        set targetMailbox to mailbox "{mailbox}"
+                        set allMessages to messages of targetMailbox
+                        return count of allMessages as string
+                    on error
+                        return "0"
+                    end try
+                end tell
+                '''
+
+                result = subprocess.run(
+                    ['osascript', '-e', count_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if result.returncode == 0:
+                    try:
+                        actual_count = int(result.stdout.strip())
+                        if actual_count > 0:
+                            logger.warning(f"[EMAIL AGENT] Mailbox contains {actual_count} emails but read_latest_emails returned 0")
+                            return {
+                                "error": True,
+                                "error_type": "EmailReadFailure",
+                                "error_message": f"Mailbox '{mailbox}' contains {actual_count} emails but failed to read any. This may indicate a parsing issue.",
+                                "retry_possible": True,
+                                "diagnostic_info": {
+                                    "mailbox": mailbox,
+                                    "account": account_email,
+                                    "expected_count": actual_count,
+                                    "actual_count": 0
+                                }
+                            }
+                        else:
+                            logger.info(f"[EMAIL AGENT] Mailbox '{mailbox}' is confirmed to be empty")
+                    except ValueError:
+                        pass
+            except Exception as e:
+                logger.debug(f"[EMAIL AGENT] Could not get mailbox count: {e}")
+
+            return {
+                "error": True,
+                "error_type": "NoEmailsFound",
+                "error_message": f"No emails found in mailbox '{mailbox}'. The mailbox may be empty or there may be permission/access issues.",
+                "retry_possible": True,
+                "diagnostic_info": {
+                    "mailbox": mailbox,
+                    "account": account_email,
+                    "requested_count": count
+                }
+            }
+
+        logger.info(f"[EMAIL AGENT] Successfully retrieved {email_count} emails from mailbox '{mailbox}'")
         return {
             "emails": emails,
-            "count": len(emails),
+            "count": email_count,
             "mailbox": mailbox,
-            "account": account_email
+            "account": account_email,
+            "success": True
         }
 
     except Exception as e:

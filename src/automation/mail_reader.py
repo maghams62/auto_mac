@@ -44,19 +44,41 @@ class MailReader:
             List of email dictionaries with sender, subject, date, content
         """
         logger.info(f"[MAIL READER] Reading {count} latest emails from {mailbox_name}")
+        if account_name:
+            logger.info(f"[MAIL READER] Using account: {account_name}")
 
         try:
+            # Build the AppleScript
             script = self._build_read_latest_script(count, account_name, mailbox_name)
+            logger.debug(f"[MAIL READER] Generated AppleScript ({len(script)} chars): {script[:200]}...")
+
+            # Execute the AppleScript
+            logger.info(f"[MAIL READER] Executing AppleScript to read emails...")
             result = self._execute_applescript(script)
 
+            logger.info(f"[MAIL READER] AppleScript result length: {len(result) if result else 0} chars")
             if result:
-                emails = self._parse_email_list(result)
-                logger.info(f"[MAIL READER] Retrieved {len(emails)} emails")
-                return emails
-            return []
+                logger.debug(f"[MAIL READER] Raw AppleScript output: {result[:500]}...")
+                if len(result) > 500:
+                    logger.debug(f"[MAIL READER] ... (truncated, total {len(result)} chars)")
+            else:
+                logger.warning("[MAIL READER] AppleScript returned empty result")
+                return []
+
+            # Parse the email list
+            logger.info("[MAIL READER] Parsing email list from AppleScript output...")
+            emails = self._parse_email_list(result)
+            logger.info(f"[MAIL READER] Successfully parsed {len(emails)} emails")
+
+            if emails:
+                logger.info(f"[MAIL READER] Sample email data: sender='{emails[0].get('sender', 'N/A')[:50]}', subject='{emails[0].get('subject', 'N/A')[:50]}'")
+            else:
+                logger.warning("[MAIL READER] Parsed email list is empty despite non-empty AppleScript result")
+
+            return emails
 
         except Exception as e:
-            logger.error(f"[MAIL READER] Error reading latest emails: {e}")
+            logger.error(f"[MAIL READER] Error reading latest emails: {e}", exc_info=True)
             return []
 
     def read_emails_by_sender(
@@ -296,7 +318,10 @@ end tell
             f.write(script)
             script_file = f.name
 
+        logger.debug(f"[MAIL READER] Created AppleScript temp file: {script_file}")
+
         try:
+            logger.debug(f"[MAIL READER] Running osascript with timeout=30s...")
             result = subprocess.run(
                 ['osascript', script_file],
                 capture_output=True,
@@ -304,39 +329,79 @@ end tell
                 timeout=30,
             )
 
+            logger.debug(f"[MAIL READER] osascript return code: {result.returncode}")
+
             if result.returncode == 0:
-                return result.stdout.strip()
+                stdout = result.stdout.strip()
+                stderr = result.stderr.strip()
+
+                if stderr:
+                    logger.warning(f"[MAIL READER] AppleScript produced stderr but succeeded: {stderr}")
+
+                logger.debug(f"[MAIL READER] AppleScript succeeded, stdout length: {len(stdout)} chars")
+                return stdout
             else:
-                logger.error(f"[MAIL READER] AppleScript error: {result.stderr}")
+                stderr = result.stderr.strip()
+                stdout = result.stdout.strip()
+
+                logger.error(f"[MAIL READER] AppleScript failed (code {result.returncode})")
+                if stdout:
+                    logger.error(f"[MAIL READER] AppleScript stdout: {stdout}")
+                if stderr:
+                    logger.error(f"[MAIL READER] AppleScript stderr: {stderr}")
+
                 return ""
 
+        except subprocess.TimeoutExpired:
+            logger.error("[MAIL READER] AppleScript timed out after 30 seconds")
+            return ""
+        except Exception as e:
+            logger.error(f"[MAIL READER] Error executing AppleScript: {e}", exc_info=True)
+            return ""
         finally:
             # Clean up temp file
             try:
                 os.unlink(script_file)
-            except:
-                pass
+                logger.debug(f"[MAIL READER] Cleaned up temp file: {script_file}")
+            except Exception as e:
+                logger.warning(f"[MAIL READER] Failed to clean up temp file {script_file}: {e}")
 
     def _parse_email_list(self, raw_output: str) -> List[Dict[str, Any]]:
         """Parse AppleScript output into list of email dictionaries."""
         emails = []
 
         if not raw_output:
+            logger.warning("[MAIL READER] Cannot parse empty raw output")
             return emails
+
+        logger.debug(f"[MAIL READER] Parsing raw output, length: {len(raw_output)} chars")
+        logger.debug(f"[MAIL READER] Raw output preview: {raw_output[:200]}...")
 
         # Split by email delimiter
         email_blocks = raw_output.split("EMAILSTART|||")
+        logger.debug(f"[MAIL READER] Found {len(email_blocks)} email blocks after splitting by 'EMAILSTART|||'")
 
-        for block in email_blocks:
-            if "|||EMAILEND" not in block:
+        valid_blocks = 0
+        for i, block in enumerate(email_blocks):
+            if not block.strip():
+                logger.debug(f"[MAIL READER] Skipping empty block {i}")
                 continue
+
+            if "|||EMAILEND" not in block:
+                logger.warning(f"[MAIL READER] Block {i} missing EMAILEND delimiter: {block[:100]}...")
+                continue
+
+            valid_blocks += 1
+            logger.debug(f"[MAIL READER] Processing valid block {i} (length: {len(block)} chars)")
 
             try:
                 # Remove the end delimiter
                 block = block.replace("|||EMAILEND", "")
+                logger.debug(f"[MAIL READER] Block {i} after removing EMAILEND: {block[:100]}...")
 
                 # Split by field delimiter
                 parts = block.split("|||")
+                logger.debug(f"[MAIL READER] Block {i} split into {len(parts)} parts")
 
                 if len(parts) >= 4:
                     sender = parts[0].strip()
@@ -344,23 +409,37 @@ end tell
                     date_str = parts[2].strip()
                     content = parts[3].strip() if len(parts) > 3 else ""
 
+                    logger.debug(f"[MAIL READER] Block {i} - sender: '{sender[:50]}', subject: '{subject[:50]}', date: '{date_str}', content length: {len(content)}")
+
                     # Clean up content (remove excessive whitespace)
                     content = ' '.join(content.split())
 
                     # Truncate very long content
                     if len(content) > 2000:
+                        logger.debug(f"[MAIL READER] Truncating content from {len(content)} to 2000 chars")
                         content = content[:2000] + "... [truncated]"
 
-                    emails.append({
+                    email_dict = {
                         "sender": sender,
                         "subject": subject,
                         "date": date_str,
                         "content": content,
                         "content_preview": content[:200] + "..." if len(content) > 200 else content
-                    })
+                    }
+
+                    emails.append(email_dict)
+                    logger.debug(f"[MAIL READER] Successfully parsed email {len(emails)} from block {i}")
+                else:
+                    logger.warning(f"[MAIL READER] Block {i} has only {len(parts)} parts, expected >= 4: {parts}")
             except Exception as e:
-                logger.warning(f"[MAIL READER] Error parsing email block: {e}")
+                logger.error(f"[MAIL READER] Error parsing email block {i}: {e}", exc_info=True)
                 continue
+
+        logger.info(f"[MAIL READER] Parsing complete: {valid_blocks} valid blocks processed, {len(emails)} emails extracted")
+
+        if valid_blocks > 0 and len(emails) == 0:
+            logger.error("[MAIL READER] CRITICAL: Found valid blocks but no emails were parsed!")
+            logger.error(f"[MAIL READER] Raw output that failed to parse: {raw_output}")
 
         return emails
 

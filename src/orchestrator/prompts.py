@@ -11,7 +11,23 @@ Your role is to analyze goals and create structured, executable plans using ONLY
 2. NEVER invent or assume tools exist (like "list_files", "create_folder", "create_directory")
 3. READ the tool descriptions carefully - some tools are COMPLETE and do everything in one step
 4. If a tool says "COMPLETE" or "STANDALONE", don't break it into sub-steps
-5. **LLM-Driven Parameter Extraction**: Extract ALL parameters from the user's natural language query
+5. **CRITICAL - Email Attachments Workflow**: To email a report/document as an attachment:
+   ⚠️  NEVER use report_content/synthesized_content directly as attachments - these are TEXT not FILES
+   ✅  CORRECT workflow: create_detailed_report → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
+   ✅  CORRECT workflow: synthesize_content → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
+   ✅  File-creating tools that return file paths: create_pages_doc (pages_path), create_keynote (keynote_path), create_keynote_with_images (keynote_path)
+   ❌  WRONG: compose_email(attachments=["$stepN.report_content"]) - report_content is TEXT not a FILE PATH
+   ❌  WRONG: compose_email(attachments=["$stepN.synthesized_content"]) - this is TEXT not a FILE PATH
+   ❌  WRONG: compose_email(attachments=["$stepN.summary"]) - summary is TEXT not a FILE PATH
+   - If user wants to EMAIL a report: MUST include create_pages_doc step BEFORE compose_email
+   - attachments parameter ONLY accepts file paths (strings ending in .pdf, .pages, .key, .txt, etc.)
+6. **CRITICAL - Validate Intermediate Results**: Before proceeding with dependent steps:
+   - If read_latest_emails returns {"count": 0} or {"emails": []}, STOP and inform user "No emails found"
+   - If search_documents returns error=true, STOP and inform user
+   - If any step returns empty/no data and subsequent steps depend on it, STOP gracefully
+   - Never continue workflow if critical data is missing
+   - Add conditional logic: "If step N returns empty, skip steps N+1, N+2 and go directly to reply_to_user"
+7. **LLM-Driven Parameter Extraction**: Extract ALL parameters from the user's natural language query
    - NO hardcoded values - use your reasoning to parse the query
    - For trip planning: extract origin, destination, stop counts, times from the query text
    - Handle variations and abbreviations using your knowledge
@@ -25,7 +41,12 @@ Your role is to analyze goals and create structured, executable plans using ONLY
    - For reminders summarization: use list_reminders → synthesize_content → reply_to_user workflow. Convert reminders data to JSON string before passing to synthesize_content. Extract time windows (e.g., "next 3 days") using LLM reasoning.
    - For calendar summarization: use list_calendar_events → synthesize_content → reply_to_user workflow. Extract days_ahead from query (e.g., "next week" → 7 days, "this month" → 30 days) using LLM reasoning. Convert events data to JSON string before passing to synthesize_content.
    - For news summarization: use google_search (DuckDuckGo) → synthesize_content → reply_to_user workflow. For "recent news" queries, use LLM reasoning to determine appropriate search query (e.g., "recent tech news today") - do NOT hardcode generic queries like "news".
-   - For stock price slideshow workflows: use get_stock_price → synthesize_content → create_slide_deck_content → create_keynote → compose_email workflow. CRITICAL: Stock price data alone is minimal - ALWAYS include synthesize_content step to enrich stock data with context, trends, and additional information before creating slides. This ensures slideshow has substantial content (3-5 slides) rather than just raw price data.
+   - For stock price slideshow workflows: use get_stock_history → synthesize_content → create_slide_deck_content → create_keynote → compose_email workflow. CRITICAL:
+    * Use get_stock_history (NOT get_stock_price) for historical analysis over time periods
+    * Pass $stepN.formatted_summary to synthesize_content for detailed price data with dates
+    * Example: synthesize_content(source_contents=["$step2.formatted_summary"], topic="Stock Analysis")
+    * The formatted_summary field contains actual prices, dates, volumes, and % changes - use it for data-driven analysis!
+    * ALWAYS include synthesize_content step to enrich stock data with context before creating slides
    - **CRITICAL - Presentation Titles & Topic Consistency**: When creating presentations/slideshows, extract the ACTUAL QUESTION or TOPIC from the user query and USE IT CONSISTENTLY across ALL steps:
      * "why did Arsenal draw" → title/topic should be "Why Arsenal Drew" in synthesize_content, create_slide_deck_content, AND create_keynote
      * "analyze reasons for stock drop" → title/topic should be "Why [Stock] Dropped" across all steps
@@ -266,6 +287,21 @@ def format_notes_section(notes: list) -> str:
             lines.append(f"{i}. {str(note)}")
 
     return "\n".join(lines) + "\n"
+
+
+def format_existing_plan_section(plan: list, completed_steps: list) -> str:
+    """Format existing plan showing what's been completed."""
+    if not plan:
+        return ""
+
+    lines = ["Existing Plan (preserve completed steps):"]
+    for step in plan:
+        step_id = step.get("id", "unknown")
+        status = "✓ COMPLETED" if step_id in completed_steps else "○ Pending"
+        lines.append(f"  {status} {step_id}: {step.get('title', 'N/A')}")
+
+    return "\n".join(lines) + "\n"
+
 
 
 def format_existing_plan_section(plan: list, completed_steps: list) -> str:

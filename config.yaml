@@ -104,6 +104,14 @@ documents:
     - ".docx"
     - ".txt"
 
+  # Image types to index
+  supported_image_types:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".gif"
+    - ".webp"
+
   # Index refresh interval (in seconds, -1 to disable auto-refresh)
   refresh_interval: 3600
 
@@ -115,9 +123,51 @@ search:
   # Similarity threshold (0-1, higher = more strict)
   similarity_threshold: 0.45
 
+# Images Configuration
+images:
+  # Enable/disable image indexing and search
+  enabled: true
+
+  # Caption generation model (for MVP, we'll use a simple approach)
+  caption_model: "blip-base"  # Options: blip-base, blip-large, or openai-vision
+
+  # Embedding model for semantic search
+  embedding_model: "clip-vit-base-patch32"  # CLIP model for vision-text alignment
+
+  # Thumbnail settings
+  thumbnail:
+    max_size: 256  # Maximum thumbnail dimension in pixels
+    quality: 85    # JPEG quality (1-100)
+    cache_dir: "data/cache/thumbnails"
+
+  # Search settings
+  search:
+    top_k: 5  # Number of image results to return
+
+# Universal Search Configuration
+universal_search:
+  # Enable/disable the Command-K universal search feature
+  enabled: true
+
+  # Maximum results to return (default: 10)
+  max_results: 10
+
+  # Frontend debounce delay in milliseconds (default: 200)
+  debounce_ms: 200
+
+  # Maximum characters in snippet context (default: 150)
+  highlight_context: 150
+
+  # Security settings
+  security:
+    # Rate limit per second per client
+    rate_limit_per_second: 10
+    # Only return results from allowed directories
+    allowed_paths_only: true
+
 # Email Configuration
 email:
-  account_email: "spamstuff062@gmail.com"  # YOUR email account - used for READING emails (SECURITY: only reads from this account)
+  account_email: "Google"  # YOUR email ACCOUNT NAME in Mail.app (not email address) - used for READING emails (SECURITY: only reads from this account)
   default_recipient: "spamstuff062@gmail.com"  # Default email address when user says "email to me"
   default_subject_prefix: "[Auto-generated]"
   signature: "\n\n---\nSent via Cerebro OS"
@@ -269,6 +319,13 @@ bluesky:
   default_search_limit: 10             # Default number of posts to return for search
   default_query: ""                    # Optional fallback query when none provided (leave empty to require explicit query)
 
+  # Notification Service Configuration
+  notifications_enabled: true          # Enable/disable real-time notifications
+  notification_poll_interval_seconds: 60  # How often to poll for new notifications (30-300 recommended)
+  max_notifications_per_poll: 20       # Maximum notifications to fetch per poll cycle
+  enable_timeline_mentions: true       # Monitor timeline for @mentions (may increase API usage)
+  enable_notifications: true           # Monitor official notifications (mentions, replies, likes, follows)
+
 # Voice Configuration
 voice:
   default_voice: "alloy"               # Default TTS voice: alloy, echo, fable, onyx, nova, shimmer
@@ -305,3 +362,60 @@ vision:
     - plan_trip_with_stops
     - launch_app
     - send_whatsapp_message
+
+# Writing Agent Configuration
+writing:
+  # Refinement settings
+  max_refinement_passes: 2              # Maximum Self-Refine passes per deliverable
+  max_refinement_tokens: 2000           # Token guardrail for refinement operations
+
+  # Style profiles and defaults
+  default_tones:
+    executive: "professional, strategic, high-level"
+    technical: "precise, detailed, accurate"
+    conversational: "friendly, clear, approachable"
+    formal: "structured, comprehensive, authoritative"
+
+  # Slide deck constraints
+  slide_limits:
+    default: 5                         # Default maximum slides
+    max_with_justification: 7          # Maximum when memory indicates broader scope
+
+  # Quality assurance thresholds
+  rubric_thresholds:
+    email: 0.75                        # Minimum score for email approval
+    report: 0.8                        # Minimum score for report approval
+    summary: 0.7                       # Minimum score for summary approval
+    presentation: 0.75                 # Minimum score for presentation approval
+
+  # Chain-of-Density settings
+  quality_chain_density_score: 0.7     # Target density score for CoD summarization
+
+# Persistent User Memory Configuration
+# Enables long-term memory across sessions with semantic search
+persistent_memory:
+  enabled: true  # Enable persistent memory (default: false for privacy)
+  directory: "data/user_memory"  # Storage directory for user memory data
+  embedding_model: "text-embedding-3-small"  # OpenAI embedding model
+  retention:
+    max_memories_per_user: 1000  # Maximum memories per user
+    default_ttl_days: 365  # Default time-to-live for memories (days)
+    cleanup_interval_days: 30  # How often to clean up expired memories
+  extraction:
+    similarity_threshold: 0.87  # Cosine similarity threshold for deduplication
+    min_confidence: 0.7  # Minimum confidence to store extracted memories
+    max_per_interaction: 3  # Maximum memories to extract per interaction
+  search:
+    top_k_default: 5  # Default number of memories to retrieve
+    min_score_default: 0.7  # Default minimum similarity score
+
+# Knowledge Providers Configuration
+# Enables external knowledge sources for factual information retrieval
+knowledge_providers:
+  enabled: true  # Enable knowledge providers (default: true)
+  wiki_lookup:
+    enabled: true  # Enable Wikipedia lookup (default: true)
+    cache_dir: "data/cache/knowledge"  # Directory for caching knowledge responses
+    cache_ttl_hours: 24  # Cache time-to-live in hours
+    timeout_seconds: 10  # Request timeout for external API calls
+    max_retries: 2  # Maximum retry attempts for failed requests

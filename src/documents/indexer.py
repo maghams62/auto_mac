@@ -14,6 +14,7 @@ from openai import OpenAI
 from tqdm import tqdm
 
 from .parser import DocumentParser
+from .image_indexer import ImageIndexer
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,15 @@ class DocumentIndexer:
 
         # Document parser
         self.parser = DocumentParser(config)
+
+        # Image indexer (only if images are enabled)
+        self.image_indexer = None
+        if config.get('images', {}).get('enabled', False):
+            try:
+                self.image_indexer = ImageIndexer(config)
+                logger.info("Image indexer initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize image indexer: {e}")
 
         # Initialize index
         self._initialize_index()
@@ -229,9 +239,25 @@ class DocumentIndexer:
 
         logger.info(f"Successfully indexed {indexed_count} documents")
 
-        # Save index
+        # Index images if enabled
+        images_indexed = 0
+        if self.image_indexer:
+            logger.info("Starting image indexing...")
+            for folder in folders:
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Indexing cancelled during image indexing")
+                    break
+
+                images_indexed += self.image_indexer.index_folder(folder)
+
+            # Save image index
+            self.image_indexer.save_index()
+            logger.info(f"Successfully indexed {images_indexed} images")
+
+        # Save document index
         self.save_index()
 
+        logger.info(f"Indexing complete: {indexed_count} documents, {images_indexed} images")
         return indexed_count
 
     def _create_chunks(self, parsed_doc: Dict[str, Any]) -> List[Dict[str, Any]]:

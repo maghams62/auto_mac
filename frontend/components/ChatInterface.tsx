@@ -13,18 +13,26 @@ import RecordingIndicator from "./RecordingIndicator";
 import SpotifyPlayer from "./SpotifyPlayer";
 import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
 import logger from "@/lib/logger";
-import StartupOverlay from "./StartupOverlay";
+import { usePlanTelemetry } from "@/lib/usePlanTelemetry";
 import Header from "./Header";
-import { motion } from "framer-motion";
+import PlanProgressRail from "./PlanProgressRail";
+import ActiveStepChip from "./ActiveStepChip";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { useBootContext } from "@/components/BootProvider";
 
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
 
 export default function ChatInterface() {
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
   const wsUrl = useMemo(() => getWebSocketUrl("/ws/chat"), []);
-  const { messages: allMessages, isConnected, sendMessage, sendCommand } = useWebSocket(wsUrl);
-  const [bootOverlayVisible, setBootOverlayVisible] = useState(true);
-  const [minDelayComplete, setMinDelayComplete] = useState(false);
+  const { messages: allMessages, isConnected, connectionState, lastError, planState, sendMessage, sendCommand } = useWebSocket(wsUrl);
+  const { bootPhase, assetsLoaded, signalBootComplete, signalBootError } = useBootContext();
+  const [planRailCollapsed, setPlanRailCollapsed] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+
+  // Plan telemetry tracking
+  const { getAnalytics } = usePlanTelemetry(planState);
   
   // Limit messages to prevent performance issues with very long conversations
   // Must be defined immediately after allMessages to avoid temporal dead zone issues
@@ -153,7 +161,6 @@ export default function ChatInterface() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [inputValue, setInputValue] = useState("");
   const [showHelpOverlay, setShowHelpOverlay] = useState(false);
   const [showShortcutsOverlay, setShowShortcutsOverlay] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -242,7 +249,7 @@ export default function ChatInterface() {
       // Voice recording shortcuts (Space to toggle, Escape to stop)
       if (e.code === "Space" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         // Only handle space if not in an input field and not composing
-        const activeElement = document.activeElement;
+        const activeElement = document.activeElement as HTMLElement;
         const isInputField = activeElement?.tagName === "TEXTAREA" ||
                             activeElement?.tagName === "INPUT" ||
                             activeElement?.contentEditable === "true";
@@ -285,33 +292,53 @@ export default function ChatInterface() {
     }
   }, [inputValue]);
 
-  // Minimum display delay so the animation is visible but not lingering
+  // Signal boot completion when WebSocket is connected (assets are already loaded by this point)
   useEffect(() => {
-    const delayTimer = window.setTimeout(() => setMinDelayComplete(true), 800);
-    return () => window.clearTimeout(delayTimer);
-  }, []);
-
-  // Fallback: ensure overlay disappears even if backend connection fails
-  useEffect(() => {
-    const fallbackTimer = window.setTimeout(() => {
-      setBootOverlayVisible(false);
-    }, 5000);
-    return () => window.clearTimeout(fallbackTimer);
-  }, []);
-
-  // Hide overlay shortly after connection is ready (respecting minimum delay)
-  // Add a brief delay to show the "Ready" state before transitioning
-  useEffect(() => {
-    if (!isConnected || !minDelayComplete || !bootOverlayVisible) {
-      return;
+    if (connectionState === "connected" && bootPhase !== "ready") {
+      signalBootComplete();
     }
-    const readyTimer = window.setTimeout(() => setBootOverlayVisible(false), 600);
-    return () => window.clearTimeout(readyTimer);
-  }, [isConnected, minDelayComplete, bootOverlayVisible]);
+    // TEMPORARY: Force boot completion after 3 seconds for debugging
+    else if (bootPhase === "websocket") {
+      const timer = setTimeout(() => {
+        console.log("🔧 TEMPORARY: Forcing boot completion");
+        signalBootComplete();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [connectionState, bootPhase, signalBootComplete]);
+
+  // Signal boot error when WebSocket connection fails permanently
+  useEffect(() => {
+    if (connectionState === "error" && bootPhase !== "error") {
+      signalBootError(lastError || "WebSocket connection failed");
+    }
+  }, [connectionState, bootPhase, lastError, signalBootError]);
+
+  // Handle Bluesky notification actions
+  useEffect(() => {
+    const handleBlueskyAction = (event: CustomEvent) => {
+      const { action, command } = event.detail;
+      if (action === 'prefill-input' && command) {
+        setInputValue(command);
+      } else if (action === 'send-command' && command) {
+        sendMessage(command);
+      }
+    };
+
+    window.addEventListener('bluesky-action', handleBlueskyAction as EventListener);
+    return () => {
+      window.removeEventListener('bluesky-action', handleBlueskyAction as EventListener);
+    };
+  }, [sendMessage, setInputValue]);
 
   return (
     <>
-      <StartupOverlay show={bootOverlayVisible} />
+      {/* Plan Progress Rail */}
+      <PlanProgressRail
+        planState={planState}
+        isCollapsed={planRailCollapsed}
+        onToggleCollapse={() => setPlanRailCollapsed(!planRailCollapsed)}
+      />
 
       {/* Screen reader announcements */}
       <div
@@ -330,127 +357,227 @@ export default function ChatInterface() {
           onClearSession={() => sendCommand("clear")}
           onShowHelp={() => setShowHelpOverlay(true)}
         />
-      {/* Main chat area - centered, no sidebars */}
-      <div className="flex-1 flex flex-col w-full max-w-3xl mx-auto px-4 sm:px-6" role="region" aria-label="Chat conversation">
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0 py-2">
-          {!hasMessages ? (
-            <motion.div
-              className="flex-1 flex items-center justify-center"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
-            >
-              <motion.div
-                className="text-center max-w-2xl glass rounded-2xl p-6 shadow-elevated backdrop-blur-glass"
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.6, delay: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
-                whileHover={{ scale: 1.02 }}
-              >
-                {/* Animated logo */}
-                <motion.div
-                  className="mb-4 flex justify-center"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ duration: 0.5, delay: 0.6, type: "spring", bounce: 0.3 }}
-                >
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-primary-hover flex items-center justify-center shadow-lg">
-                    <motion.span
-                      className="text-2xl font-bold text-white"
-                      animate={{ rotate: [0, -5, 5, 0] }}
-                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                    >
-                      C
-                    </motion.span>
-                  </div>
-                </motion.div>
-
-                <motion.h1
-                  className="text-4xl font-semibold mb-3 text-text-primary"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.6, delay: 0.8 }}
-                >
-                  Cerebro OS
-                </motion.h1>
-
-                <motion.p
-                  className="text-text-muted text-lg mb-6"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.6, delay: 1.0 }}
-                >
-                  How can I help you today?
-                </motion.p>
-
-                {/* Pulsing hint */}
-                <motion.div
-                  className="text-xs text-text-subtle"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.6, delay: 1.2 }}
-                >
-                  <motion.span
-                    animate={{ opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  >
-                    Press ⌘K or click to start typing
-                  </motion.span>
-                </motion.div>
-              </motion.div>
-            </motion.div>
-          ) : (
-            <div
-              ref={messagesContainerRef}
-              className="flex-1 overflow-y-auto space-y-2 min-h-0 relative"
-              role="log"
-              aria-live="polite"
-              aria-label="Chat messages"
-            >
-              {messages.map((message, index) => (
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1 w-full px-6 sm:px-8 lg:px-12" role="region" aria-label="Chat conversation">
+            <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
+              <div className="flex-1 min-h-0 flex flex-col justify-end gap-6 py-6 sm:py-8 lg:py-10">
                 <div
-                  key={index}
-                  ref={(el) => {
-                    if (el) {
-                      messageRefs.current.set(index, el);
-                    } else {
-                      messageRefs.current.delete(index);
-                    }
-                  }}
+                  className={cn(
+                    "flex-1 min-h-0",
+                    hasMessages ? "overflow-hidden" : "flex items-center justify-center"
+                  )}
                 >
-                  <MessageBubble message={message} index={index} />
+                  {!hasMessages ? (
+                    <motion.div
+                      className="w-full"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
+                    >
+                      <motion.div
+                        className="text-center max-w-3xl mx-auto space-y-8"
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ duration: 0.6, delay: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+                      >
+                        {/* Hero Section */}
+                        <motion.div
+                          className="glass-elevated rounded-3xl p-8 shadow-elevated backdrop-blur-glass"
+                          whileHover={{ scale: 1.01 }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                        >
+                          {/* Animated logo */}
+                          <motion.div
+                            className="mb-6 flex justify-center"
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ duration: 0.5, delay: 0.6, type: "spring", bounce: 0.3 }}
+                          >
+                            <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-accent-primary to-accent-primary-hover flex items-center justify-center shadow-glow-primary">
+                              <motion.span
+                                className="text-3xl font-bold text-white"
+                                animate={{ rotate: [0, -5, 5, 0] }}
+                                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                              >
+                                C
+                              </motion.span>
+                            </div>
+                          </motion.div>
+
+                          <motion.h1
+                            className="text-5xl font-bold mb-4 text-text-primary"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.6, delay: 0.8 }}
+                          >
+                            Welcome to Cerebro OS
+                          </motion.h1>
+
+                          <motion.p
+                            className="text-text-muted text-xl mb-8 leading-relaxed"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.6, delay: 1.0 }}
+                          >
+                            Your intelligent Mac assistant powered by AI. Ask me anything about your system,
+                            automate tasks, or get help with your daily workflow.
+                          </motion.p>
+                        </motion.div>
+
+                        {/* Suggestion Chips */}
+                        <motion.div
+                          className="flex flex-wrap justify-center gap-3"
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.6, delay: 1.2 }}
+                        >
+                          {[
+                            "Show me my system info",
+                            "Check my email",
+                            "Play some music",
+                            "What's the weather like?",
+                            "Help me organize files"
+                          ].map((suggestion, index) => (
+                            <motion.button
+                              key={suggestion}
+                              onClick={() => sendMessage(suggestion)}
+                              className="px-4 py-3 bg-surface-elevated/80 hover:bg-surface-elevated/90 border border-surface-outline/30 rounded-xl text-text-primary font-medium transition-all duration-200 ease-out shadow-soft hover:shadow-medium"
+                              whileHover={{ scale: 1.05, y: -2 }}
+                              whileTap={{ scale: 0.95 }}
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{
+                                duration: 0.4,
+                                delay: 1.4 + index * 0.1,
+                                ease: "easeOut"
+                              }}
+                            >
+                              {suggestion}
+                            </motion.button>
+                          ))}
+                        </motion.div>
+
+                        {/* Keyboard hint */}
+                        <motion.div
+                          className="text-sm text-text-subtle"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: 0.6, delay: 1.8 }}
+                        >
+                          <motion.span
+                            animate={{ opacity: [0.6, 1, 0.6] }}
+                            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                          >
+                            Press ⌘K to start typing, or Space for voice commands
+                          </motion.span>
+                        </motion.div>
+                      </motion.div>
+                    </motion.div>
+                  ) : (
+                    <div
+                      ref={messagesContainerRef}
+                      className="flex-1 overflow-y-auto space-y-2 min-h-0 relative pb-6 sm:pb-8 lg:pb-10"
+                      role="log"
+                      aria-live="polite"
+                      aria-label="Chat messages"
+                    >
+                      <AnimatePresence>
+                        {messages.map((message, index) => (
+                          <motion.div
+                            key={index}
+                            layout
+                            ref={(el) => {
+                              if (el) {
+                                messageRefs.current.set(index, el);
+                              } else {
+                                messageRefs.current.delete(index);
+                              }
+                            }}
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            transition={{
+                              duration: 0.18,
+                              ease: [0, 0, 0.2, 1],
+                              delay: Math.min(index * 0.08, 0.4) // Stagger up to 400ms max delay
+                            }}
+                          >
+                            <MessageBubble message={message} index={index} planState={planState} />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                      {(isProcessing || (lastMessage && lastMessage.type === "plan")) && <TypingIndicator />}
+                      <div ref={messagesEndRef} />
+                      {messagesContainerRef.current && (
+                        <ScrollToBottom containerRef={messagesContainerRef} />
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
-              {(isProcessing || (lastMessage && lastMessage.type === "plan")) && <TypingIndicator />}
-              <div ref={messagesEndRef} />
-              {messagesContainerRef.current && (
-                <ScrollToBottom containerRef={messagesContainerRef} />
-              )}
+
+                <AnimatePresence>
+                  {connectionState === "error" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className="rounded-lg border border-danger-border bg-danger-bg px-4 py-2 text-center"
+                      role="alert"
+                      aria-live="assertive"
+                    >
+                      <p className="text-accent-danger text-sm">
+                        {lastError || "Connection failed. Please refresh the page."}
+                      </p>
+                    </motion.div>
+                  )}
+                  {connectionState === "reconnecting" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className="rounded-lg border border-warning-border bg-warning-bg px-4 py-2 text-center"
+                      role="alert"
+                      aria-live="assertive"
+                    >
+                      <p className="text-warning text-sm">
+                        Disconnected from server. Attempting to reconnect...
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <div className="relative">
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-full h-20"
+                    style={{
+                      background:
+                        "linear-gradient(to top, rgba(13, 13, 13, 0.95), rgba(13, 13, 13, 0.7), rgba(13, 13, 13, 0))",
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div className="relative z-10 mx-auto w-full max-w-3xl pt-[clamp(1rem,2vh,2rem)] pb-[calc(env(safe-area-inset-bottom)+clamp(1.5rem,6vh,5rem))]">
+                    {/* Active Step Chip */}
+                    <div className="flex justify-center mb-3">
+                      <ActiveStepChip planState={planState} />
+                    </div>
+
+                    <InputArea
+                      onSend={handleSend}
+                      disabled={!isConnected || isTranscribing}
+                      onVoiceRecord={handleVoiceRecord}
+                      isRecording={isRecording || isTranscribing}
+                      initialValue={inputValue}
+                      onValueChange={setInputValue}
+                      isProcessing={isProcessing}
+                      onStop={handleStopRequest}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* Connection status banner */}
-        {!isConnected && (
-          <div className="rounded-lg border border-danger-border bg-danger-bg px-4 py-2 text-center mb-2" role="alert" aria-live="assertive">
-            <p className="text-accent-danger text-sm">
-              Disconnected from server. Attempting to reconnect...
-            </p>
           </div>
-        )}
-
-        {/* Input area */}
-        <div className="pb-4">
-          <InputArea
-            onSend={handleSend}
-            disabled={!isConnected || isTranscribing}
-            onVoiceRecord={handleVoiceRecord}
-            isRecording={isRecording || isTranscribing}
-            initialValue={inputValue}
-            onValueChange={setInputValue}
-            isProcessing={isProcessing}
-            onStop={handleStopRequest}
-          />
         </div>
       </div>
 
@@ -478,7 +605,6 @@ export default function ChatInterface() {
 
       {/* Spotify Web Player */}
       <SpotifyPlayer />
-      </div>
     </>
   );
 }

@@ -524,6 +524,54 @@ class TestHybridPromptPattern:
         assert "Test planning entry" in restored_summary
         assert "Test execution entry" in restored_summary
 
+    def test_reasoning_context_assembly_fix(self):
+        """
+        Regression test: ensure reasoning context assembly uses correct SessionMemory methods.
+
+        This tests the fix for the issue where memory.get_reasoning_summary().get("commitments", [])
+        was called on a string return value, and memory.get_interaction_count() was undefined.
+        """
+        # Create memory with reasoning trace enabled
+        memory = SessionMemory(enable_reasoning_trace=True)
+
+        # Add some interactions to build context
+        interaction_id = memory.add_interaction(user_request="play some music")
+        memory.start_reasoning_trace(interaction_id)
+        memory.add_reasoning_entry(
+            stage="planning",
+            thought="User wants to play music",
+            commitments=["play requested song"],
+            outcome="success"
+        )
+        memory.add_reasoning_entry("execution", "Calling play_song tool")
+
+        # Test the fixed reasoning context assembly logic
+        # This simulates the code in agent.py execute_step method
+        try:
+            reasoning_context = {
+                "trace_enabled": True,
+                "commitments": memory.get_pending_commitments(),
+                "past_attempts": len(memory.interactions),
+                "interaction_id": getattr(memory, '_current_interaction_id', None)
+            }
+        except Exception as e:
+            pytest.fail(f"Reasoning context assembly failed: {e}")
+
+        # Verify the context was built correctly
+        assert reasoning_context["trace_enabled"] is True
+        assert isinstance(reasoning_context["commitments"], list)  # Should be list from get_pending_commitments()
+        assert isinstance(reasoning_context["past_attempts"], int)  # Should be int from len(interactions)
+        assert reasoning_context["interaction_id"] == interaction_id
+
+        # Verify the old broken approach would have failed
+        with pytest.raises(AttributeError):
+            # This is what the old code tried to do - call .get() on a string
+            broken_commitments = memory.get_reasoning_summary().get("commitments", [])
+
+        # Verify get_interaction_count doesn't exist (would raise AttributeError)
+        with pytest.raises(AttributeError):
+            broken_attempts = memory.get_interaction_count()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

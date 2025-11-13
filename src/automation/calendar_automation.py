@@ -174,6 +174,142 @@ class CalendarAutomation:
             "summary": self._build_event_summary(event)
         }
 
+    def create_event(
+        self,
+        title: str,
+        start_time: str,
+        end_time: str,
+        location: Optional[str] = None,
+        notes: Optional[str] = None,
+        attendees: Optional[List[str]] = None,
+        calendar_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new calendar event.
+
+        Args:
+            title: Event title/summary
+            start_time: Start time in ISO format (e.g., "2024-01-15T14:00:00")
+            end_time: End time in ISO format (e.g., "2024-01-15T15:00:00")
+            location: Optional location
+            notes: Optional notes/description
+            attendees: Optional list of attendee email addresses
+            calendar_name: Optional calendar name (uses default if not specified)
+
+        Returns:
+            Dictionary with success status and event details
+        """
+        logger.info(f"Creating calendar event: {title} at {start_time}")
+
+        try:
+            # Build AppleScript for creating event
+            script = self._build_create_event_applescript(
+                title=title,
+                start_time=start_time,
+                end_time=end_time,
+                location=location,
+                notes=notes,
+                attendees=attendees or [],
+                calendar_name=calendar_name
+            )
+
+            # Execute AppleScript
+            result = self._run_applescript(script)
+
+            if result.returncode == 0:
+                logger.info(f"Successfully created calendar event: {title}")
+                return {
+                    "success": True,
+                    "event": {
+                        "title": title,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "location": location,
+                        "notes": notes,
+                        "attendees": attendees or [],
+                        "calendar_name": calendar_name
+                    }
+                }
+            else:
+                logger.error(f"Failed to create calendar event: {result.stderr}")
+                return {
+                    "success": False,
+                    "error": result.stderr.decode('utf-8', errors='ignore') if result.stderr else "Unknown error",
+                    "event_attempted": {
+                        "title": title,
+                        "start_time": start_time,
+                        "end_time": end_time
+                    }
+                }
+
+        except Exception as e:
+            logger.error(f"Error creating calendar event: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "event_attempted": {
+                    "title": title,
+                    "start_time": start_time,
+                    "end_time": end_time
+                }
+            }
+
+    def _build_create_event_applescript(
+        self,
+        title: str,
+        start_time: str,
+        end_time: str,
+        location: Optional[str] = None,
+        notes: Optional[str] = None,
+        attendees: Optional[List[str]] = None,
+        calendar_name: Optional[str] = None
+    ) -> str:
+        """Build AppleScript to create a calendar event."""
+        # Parse start and end times
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        except ValueError as e:
+            raise ValueError(f"Invalid datetime format. Expected ISO format: {e}")
+
+        # Format dates for AppleScript (YYYY-MM-DD HH:MM:SS)
+        start_date_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end_date_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        script_parts = [
+            "tell application \"Calendar\"",
+            "    tell calendar" + (f" \"{calendar_name}\"" if calendar_name else " 1"),  # Default calendar if not specified
+            "        set newEvent to make new event with properties {"
+        ]
+
+        # Required properties
+        properties = [
+            f"summary:\"{self._escape_applescript_string(title)}\"",
+            f"start date:date \"{start_date_str}\"",
+            f"end date:date \"{end_date_str}\""
+        ]
+
+        # Optional properties
+        if location:
+            properties.append(f"location:\"{self._escape_applescript_string(location)}\"")
+        if notes:
+            properties.append(f"description:\"{self._escape_applescript_string(notes)}\"")
+
+        script_parts.append("            " + ", ".join(properties))
+        script_parts.append("        }")
+
+        # Add attendees if provided
+        if attendees:
+            for attendee in attendees:
+                script_parts.append(f"        tell newEvent to make new attendee with properties {{email:\"{self._escape_applescript_string(attendee)}\"}}")
+
+        script_parts.extend([
+            "    end tell",
+            "end tell"
+        ])
+
+        return "\n".join(script_parts)
+
     def _build_event_summary(self, event: Dict[str, Any]) -> str:
         """Build a text summary of the event for LLM context."""
         parts = [f"Event: {event.get('title', 'Untitled')}"]
