@@ -11,11 +11,15 @@ Based on ReAct pattern with feedback loops for handling complex UI interactions.
 import base64
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
 from openai import OpenAI
+
+from ..utils.trajectory_logger import get_trajectory_logger
+from ..utils.llm_wrapper import log_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -193,11 +197,13 @@ class ExecutionRouter:
         # Lower temperature for consistent execution decisions
         self.temperature = 0.1
         self.max_tokens = 500
+        self.trajectory_logger = get_trajectory_logger(config)
 
         logger.info(f"[EXECUTION ROUTER] Initialized with models: {self.model}, vision: {self.vision_model}")
 
     def route_execution(self, operation: str, song_name: str, artist: Optional[str] = None,
-                       context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                       context: Optional[Dict[str, Any]] = None, session_id: Optional[str] = None,
+                       interaction_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Route to the best execution strategy for a Spotify operation.
 
@@ -218,7 +224,8 @@ class ExecutionRouter:
         # Check if we should skip routing and go directly to vision for certain operations
         if self._should_use_vision_first(operation, context):
             logger.info(f"[EXECUTION ROUTER] Skipping routing, using VISION for {operation}")
-            return {
+            
+            decision = {
                 "strategy": ExecutionStrategy.VISION,
                 "confidence": 0.9,
                 "reasoning": f"Direct vision routing for {operation} based on context analysis",
@@ -231,6 +238,27 @@ class ExecutionRouter:
                     "direct_vision": True
                 }
             }
+            
+            # Log routing decision
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="execution_router",
+                decision_type="route_selection",
+                input_data={
+                    "operation": operation,
+                    "song_name": song_name,
+                    "artist": artist,
+                    "context": context
+                },
+                output_data=decision,
+                reasoning=decision["reasoning"],
+                confidence=decision["confidence"],
+                success=True
+            )
+            
+            return decision
 
         # Build context string
         context_info = self._build_context_string(context)
@@ -263,8 +291,34 @@ class ExecutionRouter:
                 api_params["max_tokens"] = self.max_tokens
                 api_params["temperature"] = self.temperature
 
+            # Log LLM call with timing
+            llm_start_time = time.time()
             response = self.client.chat.completions.create(**api_params)
+            llm_latency_ms = (time.time() - llm_start_time) * 1000
+            
+            # Extract token usage
+            tokens_used = None
+            if hasattr(response, 'usage'):
+                tokens_used = {
+                    "prompt": response.usage.prompt_tokens if hasattr(response.usage, 'prompt_tokens') else 0,
+                    "completion": response.usage.completion_tokens if hasattr(response.usage, 'completion_tokens') else 0,
+                    "total": response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 0
+                }
+            
             result = json.loads(response.choices[0].message.content)
+            
+            # Log LLM call
+            log_llm_call(
+                model=self.model,
+                prompt=api_params["messages"][1]["content"][:2000] + "..." if len(api_params["messages"][1]["content"]) > 2000 else api_params["messages"][1]["content"],
+                response=response.choices[0].message.content[:2000] + "..." if len(response.choices[0].message.content) > 2000 else response.choices[0].message.content,
+                latency_ms=llm_latency_ms,
+                success=True,
+                session_id=session_id,
+                interaction_id=interaction_id,
+                component="execution_router",
+                decision_type="route_selection"
+            )
 
             # Validate and parse result
             strategy_str = result.get("strategy", "simple").lower()

@@ -54,6 +54,7 @@ class PooledOpenAIClient:
         
         # Return cached client if config unchanged
         if cls._instance is not None and cls._config_hash == config_hash:
+            cls._track_reuse()
             return cls._instance
         
         # Close old client if config changed
@@ -63,12 +64,27 @@ class PooledOpenAIClient:
             except Exception as e:
                 logger.warning(f"Error closing old HTTP client: {e}")
         
+        # Read connection pooling config
+        perf_config = config.get("performance", {})
+        conn_pool_config = perf_config.get("connection_pooling", {})
+        
+        # Use config values with fallback defaults
+        if conn_pool_config.get("enabled", True):
+            max_keepalive = conn_pool_config.get("max_keepalive", 50)
+            max_connections = conn_pool_config.get("max_connections", 100)
+            keepalive_expiry = conn_pool_config.get("keepalive_expiry", 30.0)
+        else:
+            # If disabled, use minimal pooling
+            max_keepalive = 5
+            max_connections = 10
+            keepalive_expiry = 10.0
+        
         # Create new HTTP client with connection pooling
         cls._http_client = httpx.Client(
             limits=httpx.Limits(
-                max_keepalive_connections=20,  # Keep 20 connections alive
-                max_connections=50,             # Max 50 total connections
-                keepalive_expiry=60.0           # Keep connections alive for 60s
+                max_keepalive_connections=max_keepalive,
+                max_connections=max_connections,
+                keepalive_expiry=keepalive_expiry
             ),
             timeout=httpx.Timeout(
                 timeout=60.0,      # Total timeout
@@ -77,7 +93,7 @@ class PooledOpenAIClient:
                 write=10.0,        # Write timeout
                 pool=5.0           # Pool timeout
             ),
-            http2=True  # Enable HTTP/2 for better performance
+            http2=False  # Disable HTTP/2 for compatibility
         )
         
         # Create OpenAI client with pooled HTTP client
@@ -89,9 +105,27 @@ class PooledOpenAIClient:
         
         cls._config_hash = config_hash
         
-        logger.info("[POOLED CLIENT] Created OpenAI client with connection pooling (max_connections=50, keepalive=20)")
+        # Track connection pool usage
+        try:
+            from .performance_monitor import get_performance_monitor
+            monitor = get_performance_monitor()
+            monitor.record_connection_pool_request(reused=False)
+        except Exception:
+            pass  # Don't fail if monitor not available
+        
+        logger.info(f"[POOLED CLIENT] Created OpenAI client with connection pooling (max_connections={max_connections}, keepalive={max_keepalive}, expiry={keepalive_expiry}s)")
         
         return cls._instance
+    
+    @classmethod
+    def _track_reuse(cls):
+        """Track connection reuse."""
+        try:
+            from .performance_monitor import get_performance_monitor
+            monitor = get_performance_monitor()
+            monitor.record_connection_pool_request(reused=True)
+        except Exception:
+            pass
     
     @classmethod
     def close(cls):

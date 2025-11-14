@@ -1,0 +1,67 @@
+{
+  "timestamp": "2025-11-13T15:44:27.888518",
+  "test_query": "summarize my last 3 emails",
+  "checkpoints": [
+    {
+      "number": 1,
+      "name": "Query Routing",
+      "status": "pass",
+      "details": "Intent hints extracted correctly",
+      "timestamp": "2025-11-13T15:43:35.854757"
+    },
+    {
+      "number": 2,
+      "name": "Orchestrator Planning",
+      "status": "fail",
+      "details": "SessionContext.__init__() got an unexpected keyword argument 'structured_memory'",
+      "timestamp": "2025-11-13T15:43:38.180888"
+    },
+    {
+      "number": 3,
+      "name": "Email Reading",
+      "status": "pass",
+      "details": "Read 3 emails",
+      "timestamp": "2025-11-13T15:43:58.875904"
+    },
+    {
+      "number": 4,
+      "name": "Email Summarization",
+      "status": "pass",
+      "details": "Summary: 1026 chars",
+      "timestamp": "2025-11-13T15:44:27.885343"
+    },
+    {
+      "number": 5,
+      "name": "Response Formatting",
+      "status": "pass",
+      "details": "Payload structure correct",
+      "timestamp": "2025-11-13T15:44:27.886702"
+    },
+    {
+      "number": 6,
+      "name": "WebSocket Delivery",
+      "status": "pass",
+      "details": "Endpoint exists (manual verification needed)",
+      "timestamp": "2025-11-13T15:44:27.888370"
+    },
+    {
+      "number": 7,
+      "name": "Frontend Rendering",
+      "status": "pass",
+      "details": "Files exist (manual verification needed)",
+      "timestamp": "2025-11-13T15:44:27.888450"
+    }
+  ],
+  "issues": [
+    {
+      "checkpoint": 2,
+      "issue": "Exception: SessionContext.__init__() got an unexpected keyword argument 'structured_memory'",
+      "fix": "Review orchestrator planning code"
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 6,
+    "failed": 1
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "test_name": "Stock Report Email",
+  "test_query": "open up for the query, search for Nvidia's stock price, analyze it, create a report out of it and send it to me in an email",
+  "timestamp": "2025-11-13T15:58:47.453706",
+  "checkpoints": [
+    {
+      "number": 1,
+      "name": "Query Routing",
+      "status": "pass",
+      "details": "Query validated, session/correlation IDs would be generated",
+      "metadata": {
+        "session_id": "9f1582a6-db39-4e1d-af8f-4ea796fe55f1",
+        "correlation_id": "req_2c5593bb"
+      },
+      "timestamp": "2025-11-13T15:58:36.578056"
+    },
+    {
+      "number": 2,
+      "name": "Plan Generation",
+      "status": "fail",
+      "details": "'dict' object has no attribute 'name'",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:39.870239"
+    },
+    {
+      "number": 3,
+      "name": "Stock Symbol Search",
+      "status": "pass",
+      "details": "Found: NVIDIA Corporation (NVDA)",
+      "metadata": {
+        "symbol": "NVDA",
+        "company_name": "NVIDIA Corporation"
+      },
+      "timestamp": "2025-11-13T15:58:39.998435"
+    },
+    {
+      "number": 4,
+      "name": "Stock Price Fetching",
+      "status": "pass",
+      "details": "NVIDIA Corporation: $186.86 (-3.58%)",
+      "metadata": {
+        "price": 186.86,
+        "change_percent": -3.58
+      },
+      "timestamp": "2025-11-13T15:58:40.069396"
+    },
+    {
+      "number": 5,
+      "name": "Content Analysis",
+      "status": "pass",
+      "details": "Generated 281 chars of analysis",
+      "metadata": {
+        "content_length": 281
+      },
+      "timestamp": "2025-11-13T15:58:45.368834"
+    },
+    {
+      "number": 6,
+      "name": "Report File Creation",
+      "status": "fail",
+      "details": "Failed to create Pages document",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.439631"
+    },
+    {
+      "number": 7,
+      "name": "Email Composition",
+      "status": "fail",
+      "details": "No report file",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.439716"
+    },
+    {
+      "number": 8,
+      "name": "Email Sending",
+      "status": "pass",
+      "details": "Manual verification needed",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.444950"
+    },
+    {
+      "number": 9,
+      "name": "Response Delivery",
+      "status": "pass",
+      "details": "WebSocket endpoint available",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.449010"
+    },
+    {
+      "number": 10,
+      "name": "Frontend Rendering",
+      "status": "pass",
+      "details": "Files exist (manual verification needed)",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.449439"
+    },
+    {
+      "number": 11,
+      "name": "Telemetry and Logging",
+      "status": "pass",
+      "details": "Checked 5 files, 0 missing telemetry",
+      "metadata": {},
+      "timestamp": "2025-11-13T15:58:47.452819"
+    }
+  ],
+  "issues": [
+    {
+      "checkpoint": 2,
+      "issue": "Planning failed: 'dict' object has no attribute 'name'",
+      "fix": "Check planner prompts and tool catalog",
+      "severity": "error",
+      "timestamp": "2025-11-13T15:58:39.870205"
+    },
+    {
+      "checkpoint": 6,
+      "issue": "Failed to create Pages document",
+      "fix": "Check file system permissions and create_pages_doc tool",
+      "severity": "error",
+      "timestamp": "2025-11-13T15:58:47.439437"
+    }
+  ],
+  "fixes_applied": [],
+  "summary": {
+    "total": 11,
+    "passed": 8,
+    "failed": 3,
+    "warnings": 0
+  }
+}

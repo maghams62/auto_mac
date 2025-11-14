@@ -222,11 +222,23 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
     Returns:
         Dictionary with screenshot_paths and pages_captured
     """
-    logger.info(f"Tool: take_screenshot(doc_path='{doc_path}', pages={pages})")
+    logger.info(f"[TOOLS] Tool: take_screenshot(doc_path='{doc_path}', pages={pages})")
 
     try:
         import fitz  # PyMuPDF
-        import tempfile
+        from pathlib import Path
+        from datetime import datetime
+        from src.utils.screenshot import get_screenshot_dir
+        from src.utils import load_config
+
+        # Get screenshot directory from config
+        config = load_config()
+        screenshot_dir = get_screenshot_dir(config, ensure_exists=True)
+        
+        # Get document name for filename
+        doc_path_obj = Path(doc_path)
+        doc_stem = doc_path_obj.stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         doc = fitz.open(doc_path)
         screenshot_paths = []
@@ -237,26 +249,46 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
                 page = doc[page_num - 1]
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
 
-                # Save to temp file
-                temp_file = tempfile.NamedTemporaryFile(
-                    delete=False, suffix='.png', prefix=f'page{page_num}_'
-                )
-                pix.save(temp_file.name)
-                screenshot_paths.append(temp_file.name)
+                # Generate predictable filename
+                filename = f"{doc_stem}_p{page_num}_{timestamp}.png"
+                output_path = screenshot_dir / filename
+                
+                # Save to screenshot directory
+                pix.save(str(output_path))
+                
+                # Return path relative to project root for security checks
+                project_root = Path(__file__).resolve().parent.parent.parent
+                try:
+                    relative_path = output_path.resolve().relative_to(project_root)
+                    screenshot_paths.append(str(relative_path))
+                except ValueError:
+                    # If not relative to project root, use absolute path
+                    screenshot_paths.append(str(output_path.resolve()))
+                
                 pages_captured.append(page_num)
-                logger.info(f"Screenshot saved: {temp_file.name}")
+                logger.info(f"[TOOLS] Screenshot saved: {output_path} (page {page_num} of {doc_path_obj.name})")
             else:
-                logger.warning(f"Page {page_num} out of range (total: {len(doc)})")
+                logger.warning(f"[TOOLS] Page {page_num} out of range (total: {len(doc)})")
 
         doc.close()
 
+        if not screenshot_paths:
+            logger.warning(f"[TOOLS] No screenshots were captured from {doc_path}")
+            return {
+                "error": True,
+                "error_type": "ScreenshotError",
+                "error_message": "No valid pages were captured",
+                "retry_possible": False
+            }
+
+        logger.info(f"[TOOLS] Successfully captured {len(screenshot_paths)} screenshot(s) from {doc_path_obj.name}")
         return {
             "screenshot_paths": screenshot_paths,
             "pages_captured": pages_captured
         }
 
     except Exception as e:
-        logger.error(f"Error in take_screenshot: {e}")
+        logger.error(f"[TOOLS] Error in take_screenshot: {e}", exc_info=True)
         return {
             "error": True,
             "error_type": "ScreenshotError",
@@ -514,7 +546,8 @@ def create_pages_doc(
     output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Generate a Pages document from content.
+    DISABLED: Pages document creation is unreliable and unsafe.
+    Use create_keynote or create_local_document_report instead.
 
     Args:
         title: Document title
@@ -522,38 +555,20 @@ def create_pages_doc(
         output_path: Save location (None = default)
 
     Returns:
-        Dictionary with pages_path and page_count
+        Error dictionary indicating Pages is disabled
     """
-    logger.info(f"Tool: create_pages_doc(title='{title}')")
-
-    try:
-        result = pages_composer.create_document(
-            title=title,
-            content=content,
-            output_path=output_path
-        )
-
-        if result:
-            return {
-                "pages_path": result.get("file_path", "Unknown"),
-                "message": "Pages document created successfully"
-            }
-        else:
-            return {
-                "error": True,
-                "error_type": "PagesError",
-                "error_message": "Failed to create Pages document",
-                "retry_possible": True
-            }
-
-    except Exception as e:
-        logger.error(f"Error in create_pages_doc: {e}")
-        return {
-            "error": True,
-            "error_type": "PagesError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
+    logger.warning(f"Tool: create_pages_doc called but is disabled (title='{title}')")
+    
+    return {
+        "error": True,
+        "error_type": "PagesDisabled",
+        "error_message": "Pages document creation is disabled due to reliability issues. Use create_keynote for presentations or create_local_document_report for PDF reports instead.",
+        "retry_possible": False,
+        "suggested_alternatives": [
+            "create_keynote - for presentations",
+            "create_local_document_report - for PDF reports"
+        ]
+    }
 
 
 @tool

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 
 from .reasoning_trace import ReasoningStage, OutcomeStatus
+from ..utils.trajectory_logger import get_trajectory_logger
 
 
 logger = logging.getLogger(__name__)
@@ -162,16 +163,19 @@ class RetryLogger:
     4. Codebase context for better understanding
     """
 
-    def __init__(self, log_dir: str = "data/retry_logs"):
+    def __init__(self, log_dir: str = "data/retry_logs", config: Optional[Dict[str, Any]] = None):
         """
         Initialize retry logger.
 
         Args:
             log_dir: Directory to store retry logs
+            config: Optional configuration dict
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._current_retries: Dict[str, List[RetryEntry]] = {}
+        self.config = config or {}
+        self.trajectory_logger = get_trajectory_logger(config)
 
     def log_retry_attempt(
         self,

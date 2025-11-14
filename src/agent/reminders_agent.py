@@ -16,7 +16,7 @@ INTEGRATION PATTERN:
 Acts as a time-based action trigger layer.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 import logging
 
@@ -441,15 +441,49 @@ def execute_reminders_agent_tools(tool_name: str, arguments: Dict[str, Any]) -> 
             "retry_possible": False
         }
 
-    try:
-        tool = tool_map[tool_name]
-        result = tool.invoke(arguments)
-        return result
-    except Exception as e:
-        logger.error(f"[REMINDERS AGENT] Execution error: {e}")
-        return {
-            "error": True,
-            "error_type": "ExecutionError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
+
+class RemindersAgent:
+    """
+    Wrapper class exposing reminder tools through an execute() API.
+
+    Some higher-level agents (daily overview, slash command router, etc.)
+    expect a CalendarAgent-style interface with `get_tools()` and
+    `execute()`. The class reference existed but the implementation was
+    missing, which caused imports to fail and downstream workflows (like
+    "How's my deal looking?") to hang before a reply was produced.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.tools = {tool.name: tool for tool in REMINDERS_AGENT_TOOLS}
+        logger.info(f"[REMINDERS AGENT] Initialized with {len(self.tools)} tools")
+
+    def get_tools(self) -> List:
+        return REMINDERS_AGENT_TOOLS
+
+    def get_hierarchy(self) -> str:
+        return REMINDERS_AGENT_HIERARCHY
+
+    def execute(self, tool_name: str, inputs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if tool_name not in self.tools:
+            return {
+                "error": True,
+                "error_type": "ToolNotFound",
+                "error_message": f"Reminders agent tool '{tool_name}' not found",
+                "available_tools": list(self.tools.keys()),
+            }
+
+        params = inputs or {}
+        tool = self.tools[tool_name]
+        logger.info(f"[REMINDERS AGENT] Executing: {tool_name}")
+
+        try:
+            return tool.invoke(params)
+        except Exception as exc:
+            logger.error(f"[REMINDERS AGENT] Execution error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ExecutionError",
+                "error_message": str(exc),
+                "retry_possible": False,
+            }

@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import ChatInterface from "@/components/ChatInterface";
-import StartupOverlay from "@/components/StartupOverlay";
-
+import BootScreen from "@/components/BootScreen";
 
 import { BootProvider, useBootContext } from "@/components/BootProvider";
 
@@ -17,39 +16,23 @@ export default function Home() {
 }
 
 function HomeContent() {
-  const [isLoading, setIsLoading] = useState(true);
   const [showChat, setShowChat] = useState(false);
   const { bootPhase } = useBootContext();
 
+  // Show chat when boot is ready
   useEffect(() => {
-    let hideLoaderTimer: number | undefined;
-    let showChatTimer: number | undefined;
-
     if (bootPhase === "ready") {
-      hideLoaderTimer = window.setTimeout(() => {
-        setIsLoading(false);
-        showChatTimer = window.setTimeout(() => setShowChat(true), 400);
-      }, 800);
+      // Small delay before chat fade-in for smooth handoff
+      setTimeout(() => {
+        setShowChat(true);
+      }, 100);
     } else if (bootPhase === "error") {
-      setIsLoading(true);
       setShowChat(false);
     }
-
-    return () => {
-      if (hideLoaderTimer) {
-        window.clearTimeout(hideLoaderTimer);
-      }
-      if (showChatTimer) {
-        window.clearTimeout(showChatTimer);
-      }
-    };
   }, [bootPhase]);
 
   // Handle retry in error state
   const handleRetry = () => {
-    // Reset UI state
-    setIsLoading(true);
-    setShowChat(false);
     // The BootProvider will handle resetting the boot phase
     window.location.reload(); // Simple retry for now
   };
@@ -73,55 +56,42 @@ function HomeContent() {
 
   return (
     <main className="relative min-h-screen flex flex-col">
-      {/* Startup Overlay */}
-      <StartupOverlay
-        phase={bootPhase}
-        show={isLoading}
-        error={bootPhase === "error" ? "Connection failed" : undefined}
-        onRetry={handleRetry}
-      />
+      {/* Boot Screen - shows during boot, auto-fades when ready */}
+      <BootScreen />
 
+      {/* Error state overlay */}
+      {bootPhase === "error" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+          <div className="text-center space-y-4">
+            <div className="text-red-400 font-mono text-sm mb-2">Connection failed</div>
+            <div className="text-white/60 font-mono text-xs mb-4">
+              Unable to connect to Cerebro. Please check your connection and try refreshing.
+            </div>
+            <button
+              onClick={handleRetry}
+              className="px-4 py-2 bg-gray-800/50 hover:bg-gray-700/50 border border-gray-600/50 rounded text-gray-300 hover:text-gray-200 transition-all duration-200 font-medium font-mono text-sm"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Interface - always mounted, visually hidden during boot */}
       <motion.div
         variants={chatVariants}
         initial="hidden"
         animate={showChat ? "visible" : "hidden"}
         transition={{
-          duration: 1.5,
-          ease: [0.23, 1, 0.32, 1],
+          duration: 0.4,
+          ease: [0.4, 0, 0.2, 1],
         }}
         className="flex-1 relative"
       >
-        {/* Enhanced reveal effects */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: showChat ? 1 : 0, scale: showChat ? 1 : 0.9 }}
-          transition={{ duration: 0.6, delay: showChat ? 0.3 : 0, ease: "easeOut" }}
-          className="absolute inset-0 bg-gradient-to-br from-transparent via-blue-500/3 to-purple-500/3 pointer-events-none"
-        />
-
-        {/* Subtle glow overlay */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: showChat ? 1 : 0 }}
-          transition={{ duration: 0.8, delay: showChat ? 0.5 : 0 }}
-          className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-white/2 pointer-events-none"
-        />
-
-        {/* Soft radial glow from center */}
-        <motion.div
-          initial={{
-            opacity: 0,
-            scale: 0,
-            background: "radial-gradient(circle at center, rgba(59, 130, 246, 0.1) 0%, transparent 70%)"
-          }}
-          animate={{
-            opacity: showChat ? 1 : 0,
-            scale: showChat ? 1.2 : 0,
-            background: "radial-gradient(circle at center, rgba(59, 130, 246, 0.05) 0%, transparent 70%)"
-          }}
-          transition={{ duration: 1.2, delay: showChat ? 0.2 : 0, ease: "easeOut" }}
-          className="absolute inset-0 pointer-events-none"
-        />
+        {/* Simplified reveal effects - reduced animation complexity for better performance */}
+        {showChat && (
+          <div className="absolute inset-0 bg-gradient-to-br from-transparent via-blue-500/3 to-purple-500/3 pointer-events-none" />
+        )}
 
         <ChatInterface />
       </motion.div>

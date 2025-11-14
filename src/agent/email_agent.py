@@ -12,15 +12,95 @@ Acts as a mini-orchestrator for email-related operations.
 """
 
 from typing import List, Optional, Dict, Any
+from collections import deque
 from langchain_core.tools import tool
 import logging
 from datetime import datetime
+import hashlib
+import json
+import os
+import time
 
 from src.config import get_config_context
 from src.config_validator import ConfigValidationError
 from ..utils import get_temperature_for_model
 
 logger = logging.getLogger(__name__)
+
+_RECENT_EMAIL_SIGNATURES: deque = deque(maxlen=25)
+_DUPLICATE_WINDOW_SECONDS = 180
+
+
+def _suggest_alternative_paths(missing_path: str) -> Dict[str, Any]:
+    """
+    Suggest alternative file paths when a file is not found.
+    
+    Args:
+        missing_path: The file path that was not found
+        
+    Returns:
+        Dictionary with suggestions including:
+        - similar_files: List of similar files found in the same directory
+        - suggestions: List of actionable suggestions
+        - step_reference_hint: Hint about using step references
+    """
+    suggestions = []
+    similar_files = []
+    step_reference_hint = None
+    
+    try:
+        abs_path = os.path.abspath(os.path.expanduser(missing_path))
+        dir_path = os.path.dirname(abs_path)
+        filename = os.path.basename(abs_path)
+        
+        # Check if directory exists
+        if os.path.exists(dir_path) and os.path.isdir(dir_path):
+            # Look for similar files in the same directory
+            try:
+                files_in_dir = os.listdir(dir_path)
+                # Simple fuzzy matching: check if filename parts match
+                filename_lower = filename.lower()
+                filename_parts = filename_lower.replace('.', ' ').replace('_', ' ').split()
+                
+                for file in files_in_dir:
+                    if os.path.isfile(os.path.join(dir_path, file)):
+                        file_lower = file.lower()
+                        # Check if any significant parts match
+                        if any(part in file_lower for part in filename_parts if len(part) > 3):
+                            similar_files.append(file)
+                            if len(similar_files) >= 5:  # Limit to 5 suggestions
+                                break
+            except Exception as e:
+                logger.debug(f"Could not list directory for suggestions: {e}")
+        
+        # Generate suggestions based on the path pattern
+        if filename.endswith('.docx') or filename.endswith('.doc'):
+            suggestions.append(
+                "The file appears to be a Word document. If you created a ZIP archive, use the zip_path from that step instead."
+            )
+            step_reference_hint = "Use $stepN.zip_path if you created a ZIP archive, or $stepN.file_path if you created a document"
+        
+        # Check if path looks like it should come from a step reference
+        if not missing_path.startswith('$step') and not os.path.isabs(missing_path):
+            suggestions.append(
+                "File paths should either be absolute paths or step references (e.g., $step1.zip_path, $step2.pages_path)"
+            )
+            step_reference_hint = "Common step references: $stepN.zip_path (from create_zip_archive), $stepN.pages_path (from create_pages_doc), $stepN.file_path (from file operations)"
+        
+        # If we found similar files, suggest them
+        if similar_files:
+            suggestions.append(
+                f"Found similar files in the same directory: {', '.join(similar_files[:3])}"
+            )
+        
+    except Exception as e:
+        logger.debug(f"Error generating path suggestions: {e}")
+    
+    return {
+        "similar_files": similar_files[:5],
+        "suggestions": suggestions,
+        "step_reference_hint": step_reference_hint
+    }
 
 
 def _load_email_runtime():
@@ -61,6 +141,10 @@ def compose_email(
         Dictionary with status ('sent' or 'draft')
     """
     logger.info(f"[EMAIL AGENT] Tool: compose_email(subject='{subject}', recipient='{recipient}', send={send})")
+
+    # TODO: Add telemetry logging for regression testing
+    # [TELEMETRY] Tool compose_email started - correlation_id={correlation_id}, subject={subject}, has_attachments={bool(attachments)}
+    # Use telemetry/tool_helpers.py: log_tool_step("compose_email", "start", metadata={"subject": subject, "attachment_count": len(attachments) if attachments else 0}, correlation_id=correlation_id)
 
     # Validate email content
     if not body or not body.strip():
@@ -143,10 +227,22 @@ def compose_email(
         # If user requested attachments but none are valid, return error
         if len(attachments) > 0 and len(validated_attachments) == 0:
             error_details = []
+            all_suggestions = []
+            step_reference_hints = []
+            
             for inv_path in invalid_attachments:
                 abs_path = os.path.abspath(os.path.expanduser(inv_path)) if isinstance(inv_path, str) else str(inv_path)
                 if not os.path.exists(abs_path):
                     error_details.append(f"'{inv_path}' - file not found")
+                    # Get suggestions for missing files
+                    if isinstance(inv_path, str):
+                        suggestions = _suggest_alternative_paths(inv_path)
+                        if suggestions.get("suggestions"):
+                            all_suggestions.extend(suggestions["suggestions"])
+                        if suggestions.get("step_reference_hint"):
+                            step_reference_hints.append(suggestions["step_reference_hint"])
+                        if suggestions.get("similar_files"):
+                            logger.info(f"[EMAIL AGENT] Found similar files for '{inv_path}': {suggestions['similar_files']}")
                 elif not os.path.isfile(abs_path):
                     error_details.append(f"'{inv_path}' - not a file (may be a directory)")
                 elif not os.access(abs_path, os.R_OK):
@@ -154,14 +250,41 @@ def compose_email(
                 else:
                     error_details.append(f"'{inv_path}' - validation failed")
             
+            # Build comprehensive error message with suggestions
             error_msg = f"All {len(attachments)} attachment(s) failed validation: {', '.join(error_details)}"
+            
+            # Add helpful suggestions to the error message
+            suggestion_text = ""
+            unique_suggestions = []
+            unique_hints = []
+            
+            if all_suggestions:
+                unique_suggestions = list(dict.fromkeys(all_suggestions))  # Remove duplicates while preserving order
+                suggestion_text = "\n\nSuggestions:\n" + "\n".join(f"- {s}" for s in unique_suggestions[:3])
+            
+            if step_reference_hints:
+                unique_hints = list(dict.fromkeys(step_reference_hints))
+                suggestion_text += "\n\n" + unique_hints[0]
+            
+            # Add workflow guidance
+            suggestion_text += "\n\nCorrect workflow examples:\n"
+            suggestion_text += "- create_zip_archive → compose_email(attachments=['$step1.zip_path'])\n"
+            suggestion_text += "- create_pages_doc → compose_email(attachments=['$step1.pages_path'])\n"
+            suggestion_text += "- list_related_documents → compose_email(attachments=['$step1.files[0].path'])"
+            
+            full_error_msg = error_msg + suggestion_text
             logger.error(f"[EMAIL AGENT] ⚠️  {error_msg}")
+            if all_suggestions or step_reference_hints:
+                logger.info(f"[EMAIL AGENT] 💡 Suggestions: {suggestion_text}")
+            
             return {
                 "error": True,
                 "error_type": "AttachmentError",
-                "error_message": error_msg,
+                "error_message": full_error_msg,
                 "invalid_attachments": invalid_attachments,
-                "retry_possible": True
+                "retry_possible": True,
+                "suggestions": unique_suggestions if unique_suggestions else None,
+                "step_reference_hint": unique_hints[0] if unique_hints else None
             }
         
         # Log warning if some attachments were invalid but we have valid ones
@@ -170,6 +293,33 @@ def compose_email(
             logger.info(f"[EMAIL AGENT] Proceeding with {len(validated_attachments)} valid attachment(s)")
         
         logger.info(f"[EMAIL AGENT] Email will have {len(validated_attachments)} attachment(s): {validated_attachments}")
+
+    # Duplicate send guard to avoid tight loops sending identical emails repeatedly
+    normalized_recipient = (recipient or "").strip().lower()
+    signature_payload = {
+        "subject": subject.strip(),
+        "body": body.strip(),
+        "recipient": normalized_recipient,
+        "attachments": sorted(validated_attachments),
+    }
+    email_signature = hashlib.sha256(json.dumps(signature_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    now = time.time()
+
+    # Remove stale entries
+    while _RECENT_EMAIL_SIGNATURES and now - _RECENT_EMAIL_SIGNATURES[0][1] > _DUPLICATE_WINDOW_SECONDS:
+        _RECENT_EMAIL_SIGNATURES.popleft()
+
+    for signature, ts in _RECENT_EMAIL_SIGNATURES:
+        if signature == email_signature:
+            logger.warning(
+                "[EMAIL AGENT] Duplicate email detected within %s seconds. Skipping actual send.",
+                _DUPLICATE_WINDOW_SECONDS,
+            )
+            return {
+                "status": "sent",
+                "message": "Email was already sent recently; skipping duplicate send.",
+                "duplicate_prevented": True,
+            }
 
     try:
         from src.automation import MailComposer
@@ -204,11 +354,22 @@ def compose_email(
         )
 
         if success:
+            status = "sent" if send else "draft"
+            if send:
+                _RECENT_EMAIL_SIGNATURES.append((email_signature, now))
+            # TODO: Add telemetry logging for regression testing
+            # [TELEMETRY] Tool compose_email success - correlation_id={correlation_id}, status={status}
+            # Use telemetry/tool_helpers.py: log_tool_step("compose_email", "success", metadata={"status": status, "attachment_count": len(validated_attachments) if validated_attachments else 0}, correlation_id=correlation_id)
+            
             return {
-                "status": "sent" if send else "draft",
+                "status": status,
                 "message": f"Email {'sent' if send else 'drafted'} successfully"
             }
         else:
+            # TODO: Add telemetry logging for regression testing
+            # [TELEMETRY] Tool compose_email error - correlation_id={correlation_id}, error="Failed to compose email"
+            # Use telemetry/tool_helpers.py: log_tool_step("compose_email", "error", metadata={"error": "Failed to compose email"}, correlation_id=correlation_id)
+            
             return {
                 "error": True,
                 "error_type": "MailError",
@@ -217,6 +378,9 @@ def compose_email(
             }
 
     except Exception as e:
+        # TODO: Add telemetry logging for regression testing
+        # [TELEMETRY] Tool compose_email error - correlation_id={correlation_id}, error={str(e)}
+        # Use telemetry/tool_helpers.py: log_tool_step("compose_email", "error", metadata={"error": str(e)}, correlation_id=correlation_id)
         logger.error(f"[EMAIL AGENT] Error in compose_email: {e}")
         return {
             "error": True,
@@ -404,10 +568,64 @@ def read_latest_emails(
                 }
             }
 
-        logger.info(f"[EMAIL AGENT] Successfully retrieved {email_count} emails from mailbox '{mailbox}'")
+        # Validate emails array before returning
+        def validate_emails_array(emails_list: List[Dict[str, Any]]) -> tuple:
+            """Validate and sanitize emails array."""
+            if not isinstance(emails_list, list):
+                logger.error(f"[EMAIL AGENT] Emails is not a list: {type(emails_list)}")
+                return False, []
+            
+            validated_emails = []
+            for i, email in enumerate(emails_list):
+                try:
+                    if not isinstance(email, dict):
+                        logger.warning(f"[EMAIL AGENT] Email {i} is not a dict, skipping")
+                        continue
+                    
+                    # Ensure required fields exist with defaults
+                    validated_email = {
+                        "sender": email.get("sender", "Unknown Sender"),
+                        "subject": email.get("subject", "(No Subject)"),
+                        "date": email.get("date", ""),
+                        "content": email.get("content", ""),
+                        "content_preview": email.get("content_preview", email.get("content", "")[:200])
+                    }
+                    
+                    # Validate sender is not empty
+                    if not validated_email["sender"] or not validated_email["sender"].strip():
+                        logger.warning(f"[EMAIL AGENT] Email {i} has empty sender, skipping")
+                        continue
+                    
+                    validated_emails.append(validated_email)
+                except Exception as e:
+                    logger.warning(f"[EMAIL AGENT] Error validating email {i}: {e}, skipping")
+                    continue
+            
+            if len(validated_emails) != len(emails_list):
+                logger.warning(f"[EMAIL AGENT] Validated {len(validated_emails)} out of {len(emails_list)} emails")
+            
+            return len(validated_emails) > 0, validated_emails
+        
+        # Validate emails array
+        is_valid, validated_emails = validate_emails_array(emails)
+        if not is_valid:
+            logger.error(f"[EMAIL AGENT] Email validation failed - no valid emails after validation")
+            return {
+                "error": True,
+                "error_type": "EmailValidationFailure",
+                "error_message": "Failed to validate email data. This may indicate a parsing issue with AppleScript output.",
+                "retry_possible": True,
+                "diagnostic_info": {
+                    "mailbox": mailbox,
+                    "account": account_email,
+                    "original_count": email_count
+                }
+            }
+        
+        logger.info(f"[EMAIL AGENT] Successfully retrieved and validated {len(validated_emails)} emails from mailbox '{mailbox}'")
         return {
-            "emails": emails,
-            "count": email_count,
+            "emails": validated_emails,
+            "count": len(validated_emails),
             "mailbox": mailbox,
             "account": account_email,
             "success": True

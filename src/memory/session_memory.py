@@ -211,7 +211,8 @@ class SessionMemory:
         enable_reasoning_trace: bool = False,
         enable_retry_logging: bool = False,
         active_context_window: int = 5,
-        enable_conversation_summary: bool = False
+        enable_conversation_summary: bool = False,
+        config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize session memory.
@@ -254,7 +255,8 @@ class SessionMemory:
         self.memory_extraction_pipeline = None
         if self.user_memory_store:
             self.memory_extraction_pipeline = MemoryExtractionPipeline(
-                user_memory_store=self.user_memory_store
+                user_memory_store=self.user_memory_store,
+                config=config
             )
 
         # Additional metadata
@@ -263,6 +265,7 @@ class SessionMemory:
             "total_steps_executed": 0,
             "agents_used": set(),
             "tools_used": set(),
+            "auto_reset_count": 0,
         }
 
         # Reasoning trace support (opt-in, feature flag controlled)
@@ -290,6 +293,33 @@ class SessionMemory:
 
         # Context bus for standardized context exchange
         self._context_bus = ContextBus()
+        
+        # Background tasks configuration
+        self.config = config
+        self._background_memory_updates = True  # Default enabled
+        if config:
+            perf_config = config.get("performance", {})
+            background_config = perf_config.get("background_tasks", {})
+            self._background_memory_updates = background_config.get("memory_updates", True)
+
+        # Memory gating configuration
+        memory_config = config.get("memory", {}) if config else {}
+        self._auto_reset_on_success = memory_config.get("auto_reset_on_success", False)
+
+        if self._auto_reset_on_success:
+            logger.warning(
+                "[SESSION MEMORY] auto_reset_on_success enabled – context will be trimmed after successful runs. "
+                "Prefer leaving this off outside kiosk-style slash workflows."
+            )
+            try:
+                from src.utils.performance_monitor import get_performance_monitor
+                get_performance_monitor().record_alert(
+                    "memory_auto_reset_enabled",
+                    "auto_reset_on_success flag enabled",
+                    {"session_id": self.session_id}
+                )
+            except Exception:
+                logger.debug("[SESSION MEMORY] Performance monitor unavailable for auto-reset alert")
 
         logger.info(f"[SESSION MEMORY] Created session: {self.session_id} (active window: {active_context_window})")
 
@@ -343,16 +373,188 @@ class SessionMemory:
             if self.should_reset_context_window(interaction):
                 self.reset_active_context_window()
 
-            # Extract and store memories from this interaction
+            # Extract and store memories from this interaction (async if background tasks enabled)
             if self.memory_extraction_pipeline:
-                try:
+                if self._background_memory_updates:
+                    # Run memory extraction in background
+                    import asyncio
+                    try:
+                        # Try to get existing event loop
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # Event loop is running, create task
+                            asyncio.create_task(
+                                self._extract_memories_async(
+                                    user_request, agent_response, interaction_id, interaction
+                                )
+                            )
+                        else:
+                            # No event loop running, run in background thread
+                            loop.run_until_complete(
+                                self._extract_memories_async(
+                                    user_request, agent_response, interaction_id, interaction
+                                )
+                            )
+                    except RuntimeError:
+                        # No event loop, create new one in thread
+                        import threading
+                        def run_async():
+                            new_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(new_loop)
+                            new_loop.run_until_complete(
+                                self._extract_memories_async(
+                                    user_request, agent_response, interaction_id, interaction
+                                )
+                            )
+                            new_loop.close()
+                        thread = threading.Thread(target=run_async, daemon=True)
+                        thread.start()
+                else:
+                    # Synchronous extraction (backward compatibility)
+                    try:
+                        extraction_result = self.memory_extraction_pipeline.extract_and_store(
+                            user_request=user_request,
+                            agent_response=agent_response,
+                            interaction_id=interaction_id
+                        )
+
+                        # Store extraction stats in interaction metadata
+                        interaction.metadata["memory_extraction"] = {
+                            "extracted_count": len(extraction_result.extracted_memories),
+                            "duplicates_skipped": len(extraction_result.duplicates_skipped),
+                            "stored_count": len(extraction_result.stored_memories),
+                            "processing_stats": extraction_result.processing_stats
+                        }
+
+                        logger.debug(f"[SESSION MEMORY] Memory extraction completed: {extraction_result.processing_stats}")
+
+                    except Exception as e:
+                        logger.error(f"[SESSION MEMORY] Memory extraction failed: {e}")
+                        interaction.metadata["memory_extraction_error"] = str(e)
+
+            logger.debug(f"[SESSION MEMORY] Added interaction {interaction_id}")
+
+            return interaction_id
+
+    async def _extract_memories_async(
+        self,
+        user_request: str,
+        agent_response: Optional[Dict[str, Any]],
+        interaction_id: str,
+        interaction: 'Interaction'
+    ):
+        """
+        Async helper to extract memories in background.
+        
+        Args:
+            user_request: User's request
+            agent_response: Agent's response
+            interaction_id: Interaction ID
+            interaction: Interaction object to update with results
+        """
+        import time
+        start_time = time.time()
+        try:
+            extraction_result = self.memory_extraction_pipeline.extract_and_store(
+                user_request=user_request,
+                agent_response=agent_response,
+                interaction_id=interaction_id
+            )
+
+            # Store extraction stats in interaction metadata (thread-safe)
+            with self._lock:
+                interaction.metadata["memory_extraction"] = {
+                    "extracted_count": len(extraction_result.extracted_memories),
+                    "duplicates_skipped": len(extraction_result.duplicates_skipped),
+                    "stored_count": len(extraction_result.stored_memories),
+                    "processing_stats": extraction_result.processing_stats
+                }
+
+            logger.debug(f"[SESSION MEMORY] Background memory extraction completed: {extraction_result.processing_stats}")
+            
+            # Track memory operation time
+            duration = time.time() - start_time
+            try:
+                from src.utils.performance_monitor import get_performance_monitor
+                get_performance_monitor().record_memory_operation("extract_memories", duration)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"[SESSION MEMORY] Background memory extraction failed: {e}")
+            with self._lock:
+                interaction.metadata["memory_extraction_error"] = str(e)
+
+    async def add_interaction_async(
+        self,
+        user_request: str,
+        agent_response: Optional[Dict[str, Any]] = None,
+        plan: Optional[List[Dict[str, Any]]] = None,
+        step_results: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Async version of add_interaction for use in async contexts.
+        
+        Args:
+            user_request: User's input
+            agent_response: Agent's final response
+            plan: Execution plan used
+            step_results: Results from each plan step
+            metadata: Additional interaction metadata
+
+        Returns:
+            Interaction ID
+        """
+        # Use asyncio lock for thread safety in async context
+        import asyncio
+        lock = asyncio.Lock()
+        
+        async with lock:
+            interaction_id = f"int_{len(self.interactions) + 1}"
+
+            interaction = Interaction(
+                interaction_id=interaction_id,
+                timestamp=datetime.now().isoformat(),
+                user_request=user_request,
+                agent_response=agent_response,
+                plan=plan or [],
+                step_results=step_results or {},
+                metadata=metadata or {}
+            )
+
+            self.interactions.append(interaction)
+            self.last_active_at = interaction.timestamp
+            self.metadata["total_requests"] += 1
+
+            # Update usage statistics
+            if plan:
+                self.metadata["total_steps_executed"] += len(plan)
+            if step_results:
+                for result in step_results.values():
+                    if "tool" in result:
+                        self.metadata["tools_used"].add(result["tool"])
+
+            # Check if context window should be reset
+            if self.should_reset_context_window(interaction):
+                self.reset_active_context_window()
+
+            # Extract and store memories (async)
+            if self.memory_extraction_pipeline:
+                if self._background_memory_updates:
+                    # Run in background task
+                    asyncio.create_task(
+                        self._extract_memories_async(
+                            user_request, agent_response, interaction_id, interaction
+                        )
+                    )
+                else:
+                    # Synchronous extraction
                     extraction_result = self.memory_extraction_pipeline.extract_and_store(
                         user_request=user_request,
                         agent_response=agent_response,
                         interaction_id=interaction_id
                     )
-
-                    # Store extraction stats in interaction metadata
                     interaction.metadata["memory_extraction"] = {
                         "extracted_count": len(extraction_result.extracted_memories),
                         "duplicates_skipped": len(extraction_result.duplicates_skipped),
@@ -360,13 +562,7 @@ class SessionMemory:
                         "processing_stats": extraction_result.processing_stats
                     }
 
-                    logger.debug(f"[SESSION MEMORY] Memory extraction completed: {extraction_result.processing_stats}")
-
-                except Exception as e:
-                    logger.error(f"[SESSION MEMORY] Memory extraction failed: {e}")
-                    interaction.metadata["memory_extraction_error"] = str(e)
-
-            logger.debug(f"[SESSION MEMORY] Added interaction {interaction_id}")
+            logger.debug(f"[SESSION MEMORY] Added interaction {interaction_id} (async)")
 
             return interaction_id
 
@@ -495,10 +691,23 @@ class SessionMemory:
         Returns:
             True if the context window should be reset
         """
+        metadata = interaction.metadata or {}
+
+        # Check for explicit control flags set by executors or agents
+        if metadata.get("preserve_context"):
+            return False
+
+        if metadata.get("reset_context"):
+            return True
+
         # Check for explicit clear command
         user_request = interaction.user_request.lower().strip()
         if user_request.startswith('/clear') or user_request == 'clear':
+            self._record_auto_reset_event("explicit_clear")
             return True
+
+        if not self._auto_reset_on_success:
+            return False
 
         # Check for task completion indicators in agent response
         if interaction.agent_response:
@@ -507,15 +716,35 @@ class SessionMemory:
 
             # Reset on successful or partially successful task completion
             if status in {"success", "partial_success"}:
+                self._record_auto_reset_event(f"status:{status}")
                 return True
 
             # Keep nested check for backward compatibility/tests that might use final_result
             final_result = interaction.agent_response.get('final_result', {})
             nested_status = final_result.get('status')
             if nested_status in {"success", "partial_success"}:
+                self._record_auto_reset_event(f"nested_status:{nested_status}")
                 return True
 
         return False
+
+    def _record_auto_reset_event(self, reason: str):
+        """
+        Track auto-reset invocations for telemetry/observability.
+        """
+        self.metadata["auto_reset_count"] = self.metadata.get("auto_reset_count", 0) + 1
+        logger.debug(
+            "[SESSION MEMORY] Auto-reset triggered (%s) for session %s (count=%d)",
+            reason,
+            self.session_id,
+            self.metadata["auto_reset_count"],
+        )
+        try:
+            from src.utils.performance_monitor import get_performance_monitor
+            get_performance_monitor().record_batch_operation("memory_auto_reset", 1)
+        except Exception:
+            # Avoid cascading failures if performance monitor is unavailable
+            pass
 
     def get_conversation_summary(self, max_interactions: int = 3) -> str:
         """
@@ -802,19 +1031,31 @@ class SessionMemory:
                     purpose=purpose
                 )
                 derived_topic = temp_context.headline()
+                if derived_topic:
+                    lowered_topic = derived_topic.lower()
+                    if lowered_topic.startswith("why ") and " draw " in lowered_topic:
+                        tokens = derived_topic.split()
+                        for idx, token in enumerate(tokens):
+                            if token.lower() == "draw":
+                                tokens[idx] = "Drew"
+                                derived_topic = " ".join(tokens[:idx + 1])
+                                break
 
             # Build persistent context if available
             persistent_context = None
             if self.user_memory_store and hasattr(self.user_memory_store, 'build_persistent_context'):
                 try:
                     persistent_context = self.user_memory_store.build_persistent_context(
-                        query=original_query,
+                        query=original_query or "general query",  # Use fallback if no query yet
                         top_k=5,
                         include_summaries=True
                     )
                     logger.debug(f"[SESSION MEMORY] Built persistent context with {len(persistent_context.top_persistent_memories)} memories")
                 except Exception as e:
                     logger.error(f"[SESSION MEMORY] Failed to build persistent context: {e}")
+            elif original_query and not self.user_memory_store:
+                # Log when persistent memory is not available but query exists
+                logger.debug(f"[SESSION MEMORY] Persistent memory not available - query '{original_query[:50]}...' will not have memory context")
 
             session_context = SessionContext(
                 original_query=original_query,

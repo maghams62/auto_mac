@@ -113,6 +113,70 @@ def pause_music() -> Dict[str, Any]:
 
 
 @tool
+def next_track() -> Dict[str, Any]:
+    """
+    Skip to the next track in Spotify.
+
+    Use this tool when you need to:
+    - Skip the current song
+    - Jump to the next item in the queue or playlist
+    - Move forward in the current album or playlist
+    """
+    logger.info("[SPOTIFY AGENT] Tool: next_track()")
+
+    try:
+        from ..integrations.spotify_playback_service import SpotifyPlaybackService
+        from ..utils import load_config
+
+        config = load_config()
+        service = SpotifyPlaybackService(config)
+
+        result = service.next_track()
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"[SPOTIFY AGENT] Error in next_track: {e}")
+        return {
+            "error": True,
+            "error_type": "SpotifyError",
+            "error_message": f"Failed to skip to the next track: {str(e)}",
+            "retry_possible": True
+        }
+
+
+@tool
+def previous_track() -> Dict[str, Any]:
+    """
+    Return to the previous track in Spotify.
+
+    Use this tool when you need to:
+    - Replay the last song
+    - Go back in the current queue
+    - Restart the current track from the beginning (Spotify behaviour for double previous)
+    """
+    logger.info("[SPOTIFY AGENT] Tool: previous_track()")
+
+    try:
+        from ..integrations.spotify_playback_service import SpotifyPlaybackService
+        from ..utils import load_config
+
+        config = load_config()
+        service = SpotifyPlaybackService(config)
+
+        result = service.previous_track()
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"[SPOTIFY AGENT] Error in previous_track: {e}")
+        return {
+            "error": True,
+            "error_type": "SpotifyError",
+            "error_message": f"Failed to return to the previous track: {str(e)}",
+            "retry_possible": True
+        }
+
+
+@tool
 def get_spotify_status() -> Dict[str, Any]:
     """
     Get current playback status from Spotify.
@@ -142,9 +206,14 @@ def get_spotify_status() -> Dict[str, Any]:
     try:
         from ..integrations.spotify_playback_service import SpotifyPlaybackService
         from ..utils import load_config
+        import time
 
         config = load_config()
         service = SpotifyPlaybackService(config)
+
+        # Add a small delay to allow Spotify API to update after playback changes
+        # This helps prevent stale track information when verifying playback
+        time.sleep(0.8)
 
         result = service.get_status()
         return result.to_dict()
@@ -310,7 +379,23 @@ def play_song(song_name: str, reasoning_context: Optional[Dict[str, Any]] = None
 
         if result.success:
             # Success - return enriched result
-            message = result.message or f"Now playing: {resolved_song_name}"
+            # Use track info from result if available (most accurate), otherwise fall back to resolved song name
+            track_name = result.track or resolved_song_name
+            track_artist = result.artist or resolved_artist
+            
+            # Construct message using track info from result
+            if result.track and result.artist:
+                # Use the accurate track info from the playback result
+                message = result.message or f"Now playing: {result.track} by {result.artist}"
+            elif result.message and result.message != "Started track playback":
+                # Use the message from result if it's informative
+                message = result.message
+            else:
+                # Fall back to resolved song name
+                message = f"Now playing: {resolved_song_name}"
+                if resolved_artist:
+                    message += f" by {resolved_artist}"
+            
             if confidence < 0.8:
                 message += f" (resolved from '{song_name}')"
 
@@ -318,11 +403,11 @@ def play_song(song_name: str, reasoning_context: Optional[Dict[str, Any]] = None
                 "success": True,
                 "action": "play_song",
                 "song_name": resolved_song_name,
-                "artist": resolved_artist or result.artist,
+                "artist": track_artist,
                 "status": "playing",
                 "message": message,
-                "track": result.track or resolved_song_name,
-                "track_artist": result.artist or resolved_artist,
+                "track": track_name,
+                "track_artist": track_artist,
                 "backend": result.backend.value if result.backend else None,
                 "disambiguation": {
                     "original": song_name,
@@ -615,15 +700,26 @@ def play_artist(artist_name: str) -> Dict[str, Any]:
 
 
 # Tool exports
-SPOTIFY_AGENT_TOOLS = [play_music, pause_music, get_spotify_status, play_song, play_album, play_artist]
+SPOTIFY_AGENT_TOOLS = [
+    play_music,
+    pause_music,
+    next_track,
+    previous_track,
+    get_spotify_status,
+    play_song,
+    play_album,
+    play_artist,
+]
 
 # Agent hierarchy documentation
 SPOTIFY_AGENT_HIERARCHY = """
-SPOTIFY AGENT (6 tools)
+SPOTIFY AGENT (8 tools)
 Domain: Music playback control
 └─ Tools:
    ├─ play_music - Start/resume music playback
    ├─ pause_music - Pause music playback
+   ├─ next_track - Skip to the next track in the queue
+   ├─ previous_track - Return to the previous track
    ├─ get_spotify_status - Get current playback status and track info
    ├─ play_song - Play a specific song by name (with LLM-powered semantic understanding)
    ├─ play_album - Play a specific album by name
@@ -664,6 +760,8 @@ class SpotifyAgent:
             "play_music": play_music,
             "pause_music": pause_music,
             "get_spotify_status": get_spotify_status,
+            "next_track": next_track,
+            "previous_track": previous_track,
             "play_song": play_song,
             "play_album": play_album,
             "play_artist": play_artist,
@@ -688,4 +786,3 @@ class SpotifyAgent:
                 "error_type": "ExecutionError",
                 "error_message": str(e)
             }
-

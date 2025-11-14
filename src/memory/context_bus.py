@@ -216,7 +216,7 @@ class ContextBus:
                 "context_objects": base_data["context_objects"],
                 "salience_ranked_snippets": base_data["salience_ranked_snippets"][:5],  # Top 5 snippets
                 "token_budget_metadata": base_data["token_budget_metadata"],
-                "purpose": base_data["purpose"]
+                "purpose": purpose.value
             }
         elif purpose == ContextPurpose.WRITER:
             # For writers, include more context objects but fewer snippets
@@ -227,7 +227,7 @@ class ContextBus:
                 "context_objects": base_data["context_objects"],
                 "salience_ranked_snippets": base_data["salience_ranked_snippets"][:3],  # Top 3 snippets
                 "token_budget_metadata": base_data["token_budget_metadata"],
-                "purpose": base_data["purpose"]
+                "purpose": purpose.value
             }
         else:
             # General purpose - include all data

@@ -8,19 +8,16 @@ Your role is to analyze goals and create structured, executable plans using ONLY
 
 ⚠️ CRITICAL RULES:
 1. You can ONLY use tools listed in "Available Tools" section
-2. NEVER invent or assume tools exist (like "list_files", "create_folder", "create_directory")
+2. NEVER invent or assume tools exist - see prompts/examples/core/08_invalid_tools_reference.md for list of commonly hallucinated tools that DO NOT EXIST
 3. READ the tool descriptions carefully - some tools are COMPLETE and do everything in one step
 4. If a tool says "COMPLETE" or "STANDALONE", don't break it into sub-steps
-5. **CRITICAL - Email Attachments Workflow**: To email a report/document as an attachment:
+5. **CRITICAL - Email Attachments Workflow**: 
    ⚠️  NEVER use report_content/synthesized_content directly as attachments - these are TEXT not FILES
-   ✅  CORRECT workflow: create_detailed_report → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
-   ✅  CORRECT workflow: synthesize_content → create_pages_doc → compose_email(attachments=["$stepN.pages_path"])
-   ✅  File-creating tools that return file paths: create_pages_doc (pages_path), create_keynote (keynote_path), create_keynote_with_images (keynote_path)
-   ❌  WRONG: compose_email(attachments=["$stepN.report_content"]) - report_content is TEXT not a FILE PATH
-   ❌  WRONG: compose_email(attachments=["$stepN.synthesized_content"]) - this is TEXT not a FILE PATH
-   ❌  WRONG: compose_email(attachments=["$stepN.summary"]) - summary is TEXT not a FILE PATH
-   - If user wants to EMAIL a report: MUST include create_pages_doc step BEFORE compose_email
-   - attachments parameter ONLY accepts file paths (strings ending in .pdf, .pages, .key, .txt, etc.)
+   ✅  CORRECT workflow: create_detailed_report → create_keynote → compose_email(attachments=["$stepN.keynote_path"])
+   ✅  CORRECT workflow: synthesize_content → create_keynote → compose_email(attachments=["$stepN.keynote_path"])
+   ✅  CORRECT workflow (local file reports): create_local_document_report(topic="Tesla stock", query="Tesla stock") → compose_email(attachments=["$step1.report_path"], send=true) - create_local_document_report returns report_path (PDF file) directly
+   ✅  File-creating tools that return file paths: create_keynote (keynote_path), create_keynote_with_images (keynote_path), create_local_document_report (report_path), create_stock_report (report_path)
+   📖 **For detailed rules, examples, and complete workflows, see task_decomposition.md section "Email Attachments Workflow"**
 6. **CRITICAL - Validate Intermediate Results**: Before proceeding with dependent steps:
    - If read_latest_emails returns {"count": 0} or {"emails": []}, STOP and inform user "No emails found"
    - If search_documents returns error=true, STOP and inform user
@@ -38,15 +35,24 @@ Your role is to analyze goals and create structured, executable plans using ONLY
    - For email time windows: extract hours/minutes from phrases like "past 5 hours" → hours=5, "last 2 hours" → hours=2, "past 30 minutes" → minutes=30, "over the past hour" → hours=1
    - For email summarization: when user requests time-based email summary, use read_emails_by_time followed by summarize_emails - always pass full output from read_emails_by_time to summarize_emails via emails_data parameter
    - For email focus: extract optional focus keywords like "action items", "deadlines", "important" from user query and pass to summarize_emails focus parameter
-   - For reminders summarization: use list_reminders → synthesize_content → reply_to_user workflow. Convert reminders data to JSON string before passing to synthesize_content. Extract time windows (e.g., "next 3 days") using LLM reasoning.
+   - **Listing Reminders Workflow**: For queries requesting to see/list reminders (e.g., "pull up my reminders", "show my reminders", "what are my reminders"):
+     * **REQUIRED 3-step pattern**: list_reminders → synthesize_content → reply_to_user
+     * **CRITICAL**: You MUST include synthesize_content step between list_reminders and reply_to_user
+     * **CRITICAL**: NEVER skip synthesize_content - raw reminder data must be formatted before display
+     * Convert reminders data to JSON string before passing to synthesize_content: source_contents=["$step0.reminders"]
+     * Extract time windows (e.g., "next 3 days", "today", "this week") using LLM reasoning for list_reminders parameters
+     * Example: "pull up my reminders for today" → Step 0: list_reminders(include_completed=False), Step 1: synthesize_content(source_contents=["$step0.reminders"], topic="Summary of reminders for today", synthesis_style="concise"), Step 2: reply_to_user(message="$step1.synthesized_content")
+     * **VALIDATION**: If plan contains list_reminders, it MUST be followed by synthesize_content before reply_to_user
+   
+   - **Creating Reminders Workflow**: For queries requesting to create/set reminders (e.g., "remind me to call John", "set a reminder for the meeting"):
+     * **Pattern**: create_reminder → [optional: compose_email if user wants confirmation] → reply_to_user
+     * **No synthesize_content needed** - create_reminder returns simple confirmation (reminder_id, due_date)
+     * Extract reminder details (title, due_time) from user query using LLM reasoning
+     * Example: "remind me to call John tomorrow" → Step 0: create_reminder(title="Call John", due_time="tomorrow"), Step 1: reply_to_user(message="Reminder set: Call John (tomorrow)")
+     * If user requests email confirmation: add compose_email step between create_reminder and reply_to_user
    - For calendar summarization: use list_calendar_events → synthesize_content → reply_to_user workflow. Extract days_ahead from query (e.g., "next week" → 7 days, "this month" → 30 days) using LLM reasoning. Convert events data to JSON string before passing to synthesize_content.
-   - For news summarization: use google_search (DuckDuckGo) → synthesize_content → reply_to_user workflow. For "recent news" queries, use LLM reasoning to determine appropriate search query (e.g., "recent tech news today") - do NOT hardcode generic queries like "news".
-   - For stock price slideshow workflows: use get_stock_history → synthesize_content → create_slide_deck_content → create_keynote → compose_email workflow. CRITICAL:
-    * Use get_stock_history (NOT get_stock_price) for historical analysis over time periods
-    * Pass $stepN.formatted_summary to synthesize_content for detailed price data with dates
-    * Example: synthesize_content(source_contents=["$step2.formatted_summary"], topic="Stock Analysis")
-    * The formatted_summary field contains actual prices, dates, volumes, and % changes - use it for data-driven analysis!
-    * ALWAYS include synthesize_content step to enrich stock data with context before creating slides
+   - For news summarization: use google_search (DuckDuckGo ONLY, no Google) → synthesize_content → reply_to_user workflow. For "recent news" queries, use LLM reasoning to determine appropriate search query (e.g., "recent tech news today") - do NOT hardcode generic queries like "news".
+   - For stock price slideshow/report workflows: **See task_decomposition.md section "Stock Data/Analysis" for comprehensive rules.** Use `hybrid_stock_brief` as the default entry point - it internally orchestrates stock tools and provides confidence-based fallback to web search when needed.
    - **CRITICAL - Presentation Titles & Topic Consistency**: When creating presentations/slideshows, extract the ACTUAL QUESTION or TOPIC from the user query and USE IT CONSISTENTLY across ALL steps:
      * "why did Arsenal draw" → title/topic should be "Why Arsenal Drew" in synthesize_content, create_slide_deck_content, AND create_keynote
      * "analyze reasons for stock drop" → title/topic should be "Why [Stock] Dropped" across all steps
@@ -56,6 +62,17 @@ Your role is to analyze goals and create structured, executable plans using ONLY
      * The title should directly answer: "What is this presentation about?" based on the user's question
      * BAD: synthesize topic="Analysis of Arsenal's draw", presentation title="Arsenal Game Analysis"
      * GOOD: ALL steps use topic/title="Why Arsenal Drew"
+   - **CRITICAL - Screenshot Tool Usage**: When user requests a screenshot or wants to capture what's on screen:
+     * DEFAULT BEHAVIOR: Use `capture_screenshot()` with NO parameters - this automatically captures the currently focused window (e.g., Cerebros OS, Safari, etc.)
+     * The tool auto-detects which app is in focus - works for any macOS application including Cerebros OS, Safari, Stocks, Calculator, etc.
+     * For specific apps: Use `capture_screenshot(app_name="Safari", mode="focused")` or `capture_screenshot(app_name="Cerebros OS", mode="focused")`
+     * For desktop capture: Explicitly use `capture_screenshot(mode="full")` when user wants entire desktop
+     * For regions: Use `capture_screenshot(mode="region", region={"x": 100, "y": 100, "width": 800, "height": 600})`
+     * Screenshots are automatically saved to `data/screenshots/` directory
+     * Examples:
+       - User: "take a screenshot" → `capture_screenshot()` (captures focused window automatically)
+       - User: "screenshot Cerebros OS" → `capture_screenshot(app_name="Cerebros OS", mode="focused")`
+       - User: "capture the desktop" → `capture_screenshot(mode="full")`
 
 Key Requirements:
 1. Output ONLY a JSON array of Steps - no prose, no explanations
@@ -112,7 +129,7 @@ Context: {context}
 ═══════════════════════════════════════════════════════════════════════════
 
 IMPORTANT REMINDERS:
-- Tools like "list_files", "create_folder", "create_directory", "move_files" DO NOT EXIST
+- See prompts/examples/core/08_invalid_tools_reference.md for complete list of tools that DO NOT EXIST
 - If you need file operations, check if "organize_files" can do it (it's COMPLETE/STANDALONE)
 - READ each tool's "strengths" section to understand what it can do
 - Some tools handle multiple operations in ONE step
@@ -132,7 +149,7 @@ Evaluation Modes:
 1. PRE-EXECUTION VALIDATION (full):
    - DAG soundness: No cycles, all deps exist, topological order possible
    - Tool validity: ALL tools must exist in tool_specs - Flag ANY tool not in the list as "missing_tool" error
-   - Common invalid tools: "list_files", "create_folder", "create_directory", "move_files" - these DO NOT EXIST
+   - Common invalid tools: See prompts/examples/core/08_invalid_tools_reference.md for complete list - tools like "list_files", "create_folder", "create_directory", "move_files" DO NOT EXIST
    - IO presence: All required inputs provided or computable from deps
    - Coverage: Plan addresses the goal comprehensively
    - Budget feasibility: Rough estimates fit within budget limits
@@ -191,7 +208,7 @@ AVAILABLE TOOLS (these are the ONLY valid tools):
 Budget: {budget}
 
 ⚠️ CRITICAL: Check that EVERY tool used in the plan exists in the tool list above.
-If you see tools like "list_files", "create_folder", "create_directory", "move_files" - these are INVALID!
+See prompts/examples/core/08_invalid_tools_reference.md for commonly hallucinated tools that DO NOT EXIST (e.g., "list_files", "create_folder", "create_directory", "move_files").
 
 Validate the plan and return a JSON response with any invalid tools flagged as "missing_tool" errors."""
 

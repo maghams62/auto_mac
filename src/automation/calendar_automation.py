@@ -34,6 +34,7 @@ class CalendarAutomation:
         """
         self.config = config or {}
         self.fake_data_path = os.getenv("CALENDAR_FAKE_DATA_PATH")
+        self._activated_calendar = False
 
     def list_events(
         self,
@@ -72,6 +73,9 @@ class CalendarAutomation:
             if result.returncode == 0:
                 events = self._parse_event_list(result.stdout)
                 logger.info(f"Retrieved {len(events)} events")
+                # Bring Calendar app to foreground for user visibility (real data only)
+                if not self.fake_data_path or not os.path.exists(self.fake_data_path):
+                    self._activate_calendar_app()
                 return events
             else:
                 error_msg = result.stderr or result.stdout or "Failed to list events"
@@ -622,6 +626,40 @@ class CalendarAutomation:
                 stderr=str(e)
             )
 
+    def _activate_calendar_app(self) -> bool:
+        """
+        Bring the Calendar app to the foreground so the user can see upcoming events.
+
+        Returns:
+            True if activation succeeded, False otherwise.
+        """
+        # Avoid spamming activation if we've already done it during this session.
+        if self._activated_calendar:
+            return True
+
+        try:
+            script = '''
+            tell application "Calendar"
+                activate
+            end tell
+            '''
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                self._activated_calendar = True
+                logger.info("Activated Calendar app for user visibility")
+                return True
+            logger.warning(f"Calendar activation returned non-zero status: {result.returncode}, stderr: {result.stderr.strip()}")
+        except subprocess.TimeoutExpired:
+            logger.warning("Calendar activation timed out after 5s")
+        except Exception as e:
+            logger.warning(f"Failed to activate Calendar app: {e}")
+        return False
+
     def test_calendar_integration(self) -> bool:
         """
         Test if Calendar app is accessible.
@@ -648,4 +686,3 @@ class CalendarAutomation:
         except Exception as e:
             logger.error(f"Calendar integration test failed: {e}")
             return False
-

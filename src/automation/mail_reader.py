@@ -366,41 +366,79 @@ end tell
             except Exception as e:
                 logger.warning(f"[MAIL READER] Failed to clean up temp file {script_file}: {e}")
 
+    def _detect_applescript_error(self, raw_output: str) -> Optional[str]:
+        """Detect AppleScript error patterns in output."""
+        if not raw_output:
+            return None
+        
+        # Common AppleScript error patterns
+        error_patterns = [
+            "error",
+            "Error",
+            "ERROR",
+            "can't get",
+            "can't make",
+            "doesn't understand",
+            "execution error",
+            "AppleScript Error",
+            "Mail got an error",
+        ]
+        
+        output_lower = raw_output.lower()
+        for pattern in error_patterns:
+            if pattern.lower() in output_lower:
+                # Extract error context
+                pattern_idx = output_lower.find(pattern.lower())
+                context_start = max(0, pattern_idx - 50)
+                context_end = min(len(raw_output), pattern_idx + len(pattern) + 100)
+                error_context = raw_output[context_start:context_end]
+                logger.warning(f"[MAIL READER] Detected AppleScript error pattern '{pattern}': {error_context}")
+                return error_context
+        
+        return None
+
     def _parse_email_list(self, raw_output: str) -> List[Dict[str, Any]]:
-        """Parse AppleScript output into list of email dictionaries."""
+        """Parse AppleScript output into list of email dictionaries with robust error handling."""
         emails = []
 
         if not raw_output:
             logger.warning("[MAIL READER] Cannot parse empty raw output")
             return emails
 
+        # Pre-validate: Check for AppleScript errors
+        applescript_error = self._detect_applescript_error(raw_output)
+        if applescript_error:
+            logger.error(f"[MAIL READER] AppleScript error detected in output: {applescript_error}")
+            # Return empty list with error logged - don't try to parse error output as emails
+            return emails
+
         logger.debug(f"[MAIL READER] Parsing raw output, length: {len(raw_output)} chars")
         logger.debug(f"[MAIL READER] Raw output preview: {raw_output[:200]}...")
 
-        # Split by email delimiter
-        email_blocks = raw_output.split("EMAILSTART|||")
-        logger.debug(f"[MAIL READER] Found {len(email_blocks)} email blocks after splitting by 'EMAILSTART|||'")
+        # Use regex for more robust parsing that handles delimiter patterns in content
+        import re
+        
+        # Pattern to match email blocks: EMAILSTART|||...|||EMAILEND
+        # Use non-greedy matching and handle cases where delimiter might appear in content
+        email_pattern = re.compile(r'EMAILSTART\|\|\|(.*?)\|\|\|EMAILEND', re.DOTALL)
+        matches = email_pattern.findall(raw_output)
+        
+        logger.debug(f"[MAIL READER] Found {len(matches)} email blocks using regex pattern")
 
         valid_blocks = 0
-        for i, block in enumerate(email_blocks):
-            if not block.strip():
+        for i, block_content in enumerate(matches):
+            if not block_content or not block_content.strip():
                 logger.debug(f"[MAIL READER] Skipping empty block {i}")
                 continue
 
-            if "|||EMAILEND" not in block:
-                logger.warning(f"[MAIL READER] Block {i} missing EMAILEND delimiter: {block[:100]}...")
-                continue
-
             valid_blocks += 1
-            logger.debug(f"[MAIL READER] Processing valid block {i} (length: {len(block)} chars)")
+            logger.debug(f"[MAIL READER] Processing valid block {i} (length: {len(block_content)} chars)")
 
             try:
-                # Remove the end delimiter
-                block = block.replace("|||EMAILEND", "")
-                logger.debug(f"[MAIL READER] Block {i} after removing EMAILEND: {block[:100]}...")
-
-                # Split by field delimiter
-                parts = block.split("|||")
+                # Split by field delimiter - but be careful: content might contain |||
+                # We know there should be exactly 4 parts: sender, subject, date, content
+                # Use split with maxsplit=3 to handle ||| in content
+                parts = block_content.split("|||", 3)
                 logger.debug(f"[MAIL READER] Block {i} split into {len(parts)} parts")
 
                 if len(parts) >= 4:
@@ -408,6 +446,14 @@ end tell
                     subject = parts[1].strip()
                     date_str = parts[2].strip()
                     content = parts[3].strip() if len(parts) > 3 else ""
+
+                    # Validate required fields
+                    if not sender:
+                        logger.warning(f"[MAIL READER] Block {i} has empty sender, skipping")
+                        continue
+                    if not subject:
+                        logger.warning(f"[MAIL READER] Block {i} has empty subject, using default")
+                        subject = "(No Subject)"
 
                     logger.debug(f"[MAIL READER] Block {i} - sender: '{sender[:50]}', subject: '{subject[:50]}', date: '{date_str}', content length: {len(content)}")
 
@@ -419,27 +465,47 @@ end tell
                         logger.debug(f"[MAIL READER] Truncating content from {len(content)} to 2000 chars")
                         content = content[:2000] + "... [truncated]"
 
+                    # Validate and sanitize email data
                     email_dict = {
-                        "sender": sender,
-                        "subject": subject,
-                        "date": date_str,
+                        "sender": sender[:200] if len(sender) > 200 else sender,  # Limit sender length
+                        "subject": subject[:200] if len(subject) > 200 else subject,  # Limit subject length
+                        "date": date_str[:100] if len(date_str) > 100 else date_str,  # Limit date length
                         "content": content,
                         "content_preview": content[:200] + "..." if len(content) > 200 else content
                     }
 
                     emails.append(email_dict)
                     logger.debug(f"[MAIL READER] Successfully parsed email {len(emails)} from block {i}")
+                elif len(parts) == 3:
+                    # Fallback: Maybe content is missing, create email with empty content
+                    sender = parts[0].strip()
+                    subject = parts[1].strip()
+                    date_str = parts[2].strip()
+                    
+                    if sender and subject:
+                        email_dict = {
+                            "sender": sender[:200],
+                            "subject": subject[:200],
+                            "date": date_str[:100] if date_str else "",
+                            "content": "",
+                            "content_preview": ""
+                        }
+                        emails.append(email_dict)
+                        logger.warning(f"[MAIL READER] Block {i} missing content field, created email with empty content")
+                    else:
+                        logger.warning(f"[MAIL READER] Block {i} has only {len(parts)} parts and missing required fields, skipping")
                 else:
-                    logger.warning(f"[MAIL READER] Block {i} has only {len(parts)} parts, expected >= 4: {parts}")
+                    logger.warning(f"[MAIL READER] Block {i} has only {len(parts)} parts, expected >= 3: {parts[:2]}")
             except Exception as e:
                 logger.error(f"[MAIL READER] Error parsing email block {i}: {e}", exc_info=True)
+                # Continue processing other blocks even if one fails
                 continue
 
         logger.info(f"[MAIL READER] Parsing complete: {valid_blocks} valid blocks processed, {len(emails)} emails extracted")
 
         if valid_blocks > 0 and len(emails) == 0:
             logger.error("[MAIL READER] CRITICAL: Found valid blocks but no emails were parsed!")
-            logger.error(f"[MAIL READER] Raw output that failed to parse: {raw_output}")
+            logger.error(f"[MAIL READER] Raw output that failed to parse (first 500 chars): {raw_output[:500]}")
 
         return emails
 

@@ -116,12 +116,24 @@ class ExplainPipeline:
                 telemetry["error_details"] = {"reason": "No search results returned"}
                 return self._create_error_response(f"No documents or images found matching '{topic}'", telemetry)
 
-            best_result = results[0]
+            # Select the best match from multiple results (highest relevance_score)
+            # Results are already sorted by relevance_score in search_documents, but we'll be explicit
+            best_result = max(results, key=lambda r: r.get("relevance_score", 0.0))
             doc_path = best_result.get("doc_path")
             result_type = best_result.get("result_type", "document")
             telemetry["selected_file"] = doc_path
             telemetry["similarity_score"] = best_result.get("relevance_score", 0.0)
             telemetry["result_type"] = result_type
+            telemetry["total_results_considered"] = len(results)
+            
+            # Log which file was selected and why
+            if len(results) > 1:
+                logger.info(f"[EXPLAIN PIPELINE] Selected best match from {len(results)} results:")
+                logger.info(f"[EXPLAIN PIPELINE]   Selected: {best_result.get('doc_title', 'Unknown')} (score: {best_result.get('relevance_score', 0.0):.3f})")
+                for i, r in enumerate(results[:3], 1):  # Log top 3 for debugging
+                    logger.info(f"[EXPLAIN PIPELINE]   Option {i}: {r.get('doc_title', 'Unknown')} (score: {r.get('relevance_score', 0.0):.3f})")
+            else:
+                logger.info(f"[EXPLAIN PIPELINE] Selected single result: {best_result.get('doc_title', 'Unknown')} (score: {best_result.get('relevance_score', 0.0):.3f})")
 
             if not doc_path:
                 telemetry["failure_step"] = "search"
@@ -253,12 +265,17 @@ class ExplainPipeline:
 
     def _search_documents(self, topic: str, original_task: str, session_id: str, max_results: int) -> Dict[str, Any]:
         """Search for documents matching the topic."""
+        # Use max_results as top_k to get multiple results for better file identification
+        # For explain queries, we want at least 3-5 results to pick the best match
+        top_k = max(3, max_results)  # Ensure at least 3 results for explain queries
+        logger.info(f"[EXPLAIN PIPELINE] Searching with top_k={top_k} for topic: {topic}")
         return self.registry.execute_tool(
             "search_documents",
             {
                 "query": topic,
                 "user_request": original_task,
-                "max_results": max_results
+                "top_k": top_k,
+                "include_images": True
             },
             session_id=session_id
         )

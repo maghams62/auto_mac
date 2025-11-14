@@ -58,15 +58,28 @@ export default function DocumentPreviewModal({
   };
 
   // Check if file is accessible before loading
+  // This pre-flight HEAD request allows us to verify file accessibility and get
+  // proper error messages before attempting to load the actual file content.
+  // All failures are logged to the browser console for debugging.
   useEffect(() => {
     if (!isOpen || !filePath) return;
 
     // Try to fetch the preview URL to check if it's accessible
     const checkPreviewAccess = async () => {
       const previewUrl = `${apiBaseUrl}/api/files/preview?path=${encodeURIComponent(filePath)}`;
+      console.info("[PreviewModal] Checking preview access", { previewUrl, filePath });
+      
       try {
         const response = await fetch(previewUrl, { method: "HEAD" });
         if (!response.ok) {
+          // Log detailed error information for debugging
+          console.warn("[PreviewModal] Preview HEAD failed", {
+            status: response.status,
+            statusText: response.statusText,
+            previewUrl,
+            filePath
+          });
+          
           if (response.status === 403) {
             handlePreviewError("Preview not available: File is outside allowed directories");
           } else if (response.status === 404) {
@@ -75,9 +88,22 @@ export default function DocumentPreviewModal({
             handlePreviewError(`Preview not available: Server error (${response.status})`);
           }
         } else {
+          console.info("[PreviewModal] Preview HEAD successful", {
+            status: response.status,
+            contentType: response.headers.get("content-type"),
+            previewUrl
+          });
           setIsLoading(false);
         }
       } catch (err) {
+        // Network errors, CORS errors, or other fetch failures
+        console.error("[PreviewModal] Preview HEAD error", {
+          error: err,
+          errorType: err instanceof Error ? err.constructor.name : typeof err,
+          errorMessage: err instanceof Error ? err.message : String(err),
+          previewUrl,
+          filePath
+        });
         handlePreviewError("Preview not available: Unable to load file");
       }
     };
@@ -175,7 +201,7 @@ export default function DocumentPreviewModal({
                 <div className="text-sm text-text-subtle">
                   <p>You can still:</p>
                   <ul className="list-disc list-inside mt-2 space-y-1">
-                    <li>Open the file in Finder using the "Reveal" button</li>
+                    <li>Open the file in Finder using the &quot;Reveal&quot; button</li>
                     <li>Copy the file path to access it manually</li>
                   </ul>
                 </div>

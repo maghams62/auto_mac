@@ -218,12 +218,6 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
                         <strong>Expected Output:</strong> {step.expected_output}
                       </div>
 
-                      {step.post_check && (
-                        <div className="text-sm text-gray-600">
-                          <strong>Post Check:</strong> {step.post_check}
-                        </div>
-                      )}
-
                       {/* Parameters */}
                       {step.parameters && Object.keys(step.parameters).length > 0 && (
                         <div className="text-sm text-gray-600">

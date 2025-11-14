@@ -219,3 +219,131 @@ code {
 .rhythm-text-2xl { font-size: 20px; line-height: 1.2; } /* 24px line height */
 .rhythm-text-3xl { font-size: 24px; line-height: 1.333; } /* 32px line height */
 .rhythm-text-4xl { font-size: 32px; line-height: 1.25; } /* 40px line height */
+
+/* Boot Animation Styles */
+/* Grain overlay for texture */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Vignette glow */
+.vignette-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.1) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Typewriter cursor with flicker */
+.typewriter-cursor {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  background-color: currentColor;
+  margin-left: 2px;
+  animation: typewriterCursorBlink 1.1s step-end infinite;
+  box-shadow: 0 0 4px currentColor;
+  opacity: 1;
+}
+
+@keyframes typewriterCursorBlink {
+  0%, 45% {
+    opacity: 1;
+  }
+  46%, 100% {
+    opacity: 0;
+  }
+}
+
+/* Typewriter cursor with random jitter */
+.typewriter-cursor-jitter {
+  animation: typewriterCursorBlink 1.1s step-end infinite,
+              typewriterCursorJitter 0.15s ease-in-out infinite;
+}
+
+@keyframes typewriterCursorJitter {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(0.5px);
+  }
+}
+
+/* Machine pulse animation for transition */
+@keyframes machinePulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  33% {
+    opacity: 0.7;
+    transform: scale(1.02);
+  }
+  66% {
+    opacity: 0.9;
+    transform: scale(0.98);
+  }
+}
+
+.machine-pulse {
+  animation: machinePulse 0.3s ease-in-out;
+}
+
+/* Boot Intro Animation Keyframes */
+@keyframes bootCursorBlink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes bootGlowPulse {
+  0% {
+    filter: drop-shadow(0 0 2px rgba(79, 243, 248, 0.2)) drop-shadow(0 0 2px rgba(200, 116, 255, 0.15));
+  }
+  50% {
+    filter: drop-shadow(0 0 4px rgba(79, 243, 248, 0.4)) drop-shadow(0 0 4px rgba(200, 116, 255, 0.3));
+  }
+  100% {
+    filter: drop-shadow(0 0 2px rgba(79, 243, 248, 0.2)) drop-shadow(0 0 2px rgba(200, 116, 255, 0.15));
+  }
+}
+
+@keyframes bootScalePulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes bootCursorBlink {
+    0%, 100% {
+      opacity: 0.6;
+    }
+  }
+  
+  @keyframes bootGlowPulse {
+    0%, 100% {
+      filter: drop-shadow(0 0 2px rgba(79, 243, 248, 0.2)) drop-shadow(0 0 2px rgba(200, 116, 255, 0.15));
+    }
+  }
+  
+  @keyframes bootScalePulse {
+    0%, 100% {
+      transform: scale(1);
+    }
+  }
+}

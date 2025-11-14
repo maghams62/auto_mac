@@ -59,8 +59,11 @@ export default function Header({
               <span className="text-white font-bold text-sm">C</span>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-text-primary tracking-tight">
+              <h1 className="text-xl font-bold text-text-primary tracking-tight flex items-center gap-2">
                 Cerebro
+                <span className="text-xs px-1.5 py-0.5 rounded bg-glass text-text-muted font-medium">
+                  beta
+                </span>
               </h1>
               <p className="text-sm text-text-muted font-semibold">
                 Mac OS Assistant

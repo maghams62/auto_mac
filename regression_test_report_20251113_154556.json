@@ -1,0 +1,67 @@
+{
+  "timestamp": "2025-11-13T15:45:56.833105",
+  "test_query": "summarize my last 3 emails",
+  "checkpoints": [
+    {
+      "number": 1,
+      "name": "Query Routing",
+      "status": "pass",
+      "details": "Intent hints extracted correctly",
+      "timestamp": "2025-11-13T15:44:58.916818"
+    },
+    {
+      "number": 2,
+      "name": "Orchestrator Planning",
+      "status": "fail",
+      "details": "Missing: ['read_latest_emails', 'summarize_emails', 'reply_to_user']",
+      "timestamp": "2025-11-13T15:45:05.612375"
+    },
+    {
+      "number": 3,
+      "name": "Email Reading",
+      "status": "pass",
+      "details": "Read 3 emails",
+      "timestamp": "2025-11-13T15:45:26.801329"
+    },
+    {
+      "number": 4,
+      "name": "Email Summarization",
+      "status": "pass",
+      "details": "Summary: 1020 chars",
+      "timestamp": "2025-11-13T15:45:56.830977"
+    },
+    {
+      "number": 5,
+      "name": "Response Formatting",
+      "status": "pass",
+      "details": "Payload structure correct",
+      "timestamp": "2025-11-13T15:45:56.831392"
+    },
+    {
+      "number": 6,
+      "name": "WebSocket Delivery",
+      "status": "pass",
+      "details": "Endpoint exists (manual verification needed)",
+      "timestamp": "2025-11-13T15:45:56.833018"
+    },
+    {
+      "number": 7,
+      "name": "Frontend Rendering",
+      "status": "pass",
+      "details": "Files exist (manual verification needed)",
+      "timestamp": "2025-11-13T15:45:56.833067"
+    }
+  ],
+  "issues": [
+    {
+      "checkpoint": 2,
+      "issue": "Missing tools: ['read_latest_emails', 'summarize_emails', 'reply_to_user']",
+      "fix": "Check planner prompts in prompts/task_decomposition.md"
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 6,
+    "failed": 1
+  }
+}

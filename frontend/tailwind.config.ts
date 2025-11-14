@@ -23,10 +23,12 @@ const config: Config = {
         accent: {
           cyan: "#3dd9ff",
           "cyan-hover": "#4de5ff",
+          "cyan-boot": "#4FF3F8", // Boot intro cyan
           lime: "#a6f573",
           green: "#6ef5b8",
           purple: "#8b6eff",
           "purple-hover": "#9d7fff",
+          "purple-boot": "#C874FF", // Boot intro purple
           yellow: "#ffd43b",
           pink: "#ff75e0",
           info: "#5b9fff",
@@ -71,6 +73,8 @@ const config: Config = {
         sans: ['"Inter"', '"SF Pro Display"', "system-ui", "-apple-system", "sans-serif"],
         mono: ['"JetBrains Mono"', '"SF Mono"', "Menlo", "Monaco", "monospace"],
         serif: ["Instrument Serif", "serif"],
+        typewriter: ['var(--font-courier-prime)', '"Courier Prime"', "Courier", "monospace"],
+        "ibm-plex-mono": ['var(--font-ibm-plex-mono)', '"IBM Plex Mono"', '"SF Mono"', "Menlo", "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace"],
       },
       spacing: {
         "18": "4.5rem",

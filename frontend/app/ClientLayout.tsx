@@ -3,14 +3,18 @@
 import { useState, useEffect } from "react";
 import CommandPalette from "@/components/CommandPalette";
 import DocumentPreviewModal from "@/components/DocumentPreviewModal";
+import { useGlobalEventBus } from "@/lib/telemetry";
 
 function ClientLayout({ children }: { children: React.ReactNode }) {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [pendingPaletteQuery, setPendingPaletteQuery] = useState<string | null>(null);
+  const [pendingPaletteSource, setPendingPaletteSource] = useState<"files" | "folder" | undefined>(undefined);
   const [documentPreview, setDocumentPreview] = useState<{
     isOpen: boolean;
     filePath: string;
     fileType: string;
   }>({ isOpen: false, filePath: "", fileType: "" });
+  const eventBus = useGlobalEventBus();
 
   // Global keyboard handler for Command+K
   useEffect(() => {
@@ -49,13 +53,36 @@ function ClientLayout({ children }: { children: React.ReactNode }) {
     setDocumentPreview({ isOpen: false, filePath: "", fileType: "" });
   };
 
+  useEffect(() => {
+    if (!eventBus) return;
+
+    const unsubscribe = eventBus.subscribe("open-command-palette", (payload?: { query?: string; source?: "files" | "folder" }) => {
+      setPendingPaletteQuery(payload?.query ?? null);
+      setPendingPaletteSource(payload?.source);
+      setIsCommandPaletteOpen(true);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [eventBus]);
+
   return (
     <>
       {children}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
+        onClose={() => {
+          setIsCommandPaletteOpen(false);
+          setPendingPaletteSource(undefined);
+        }}
+        initialQuery={pendingPaletteQuery ?? ""}
+        source={pendingPaletteSource}
         onOpenDocument={handleOpenDocument}
+        onMount={() => {
+          setPendingPaletteQuery(null);
+          setPendingPaletteSource(undefined);
+        }}
       />
       <DocumentPreviewModal
         isOpen={documentPreview.isOpen}

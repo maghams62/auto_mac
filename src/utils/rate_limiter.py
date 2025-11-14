@@ -9,7 +9,7 @@ import asyncio
 import time
 import logging
 from collections import deque
-from typing import Optional
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,13 @@ class OpenAIRateLimiter:
                 await asyncio.sleep(wait_time)
                 self.total_wait_time += wait_time
                 
+                # Track rate limit wait in performance monitor
+                try:
+                    from .performance_monitor import get_performance_monitor
+                    get_performance_monitor().record_rate_limit_wait(wait_time)
+                except Exception:
+                    pass
+                
                 # Clean up again after waiting
                 now = time.time()
                 self._cleanup_old_entries(now)
@@ -232,29 +239,98 @@ class OpenAIRateLimiter:
 
 # Global rate limiter instance
 _global_rate_limiter: Optional[OpenAIRateLimiter] = None
+_global_config_hash: Optional[str] = None
 
 
 def get_rate_limiter(
-    rpm_limit: int = 10000,
-    tpm_limit: int = 2_000_000
+    config: Optional[Dict[str, Any]] = None,
+    rpm_limit: Optional[int] = None,
+    tpm_limit: Optional[int] = None
 ) -> OpenAIRateLimiter:
     """
-    Get or create global rate limiter instance.
+    Get or create global rate limiter instance (singleton pattern).
+    
+    If config is provided, reads rate limiting settings from config.
+    Otherwise uses provided limits or defaults.
     
     Args:
-        rpm_limit: Requests per minute limit
-        tpm_limit: Tokens per minute limit
+        config: Optional configuration dictionary with performance.rate_limiting settings
+        rpm_limit: Optional requests per minute limit (overrides config)
+        tpm_limit: Optional tokens per minute limit (overrides config)
         
     Returns:
         Global rate limiter instance
     """
-    global _global_rate_limiter
+    global _global_rate_limiter, _global_config_hash
     
-    if _global_rate_limiter is None:
-        _global_rate_limiter = OpenAIRateLimiter(
-            rpm_limit=rpm_limit,
-            tpm_limit=tpm_limit
-        )
+    import hashlib
     
+    # Determine actual limits
+    actual_rpm = rpm_limit
+    actual_tpm = tpm_limit
+    config_hash = None
+    
+    if config:
+        # Read from config
+        perf_config = config.get("performance", {})
+        rate_config = perf_config.get("rate_limiting", {})
+        
+        if rate_config.get("enabled", True):
+            actual_rpm = actual_rpm or rate_config.get("rpm_limit", 10000)
+            actual_tpm = actual_tpm or rate_config.get("tpm_limit", 2_000_000)
+            burst_size = rate_config.get("burst_size", 100)
+            safety_margin = rate_config.get("safety_margin", 0.9)
+            
+            # Create config hash for cache invalidation
+            config_str = f"{actual_rpm}_{actual_tpm}_{burst_size}_{safety_margin}"
+            config_hash = hashlib.md5(config_str.encode()).hexdigest()
+        else:
+            # Rate limiting disabled - return a no-op limiter
+            logger.warning("[RATE LIMITER] Rate limiting disabled in config")
+            return _NoOpRateLimiter()
+    else:
+        # Use defaults
+        actual_rpm = actual_rpm or 10000
+        actual_tpm = actual_tpm or 2_000_000
+    
+    # Return existing limiter if config unchanged
+    if _global_rate_limiter is not None:
+        if config_hash is None or _global_config_hash == config_hash:
+            return _global_rate_limiter
+    
+    # Create new limiter
+    _global_rate_limiter = OpenAIRateLimiter(
+        rpm_limit=actual_rpm,
+        tpm_limit=actual_tpm
+    )
+    _global_config_hash = config_hash
+    
+    logger.info(f"[RATE LIMITER] Created global rate limiter (RPM={actual_rpm}, TPM={actual_tpm})")
     return _global_rate_limiter
+
+
+class _NoOpRateLimiter:
+    """No-op rate limiter when rate limiting is disabled."""
+    
+    async def acquire(self, estimated_tokens: int = 1000) -> float:
+        """No-op acquire - returns immediately."""
+        return 0.0
+    
+    def record_usage(self, actual_tokens: int):
+        """No-op record - does nothing."""
+        pass
+    
+    def get_stats(self) -> dict:
+        """Return empty stats."""
+        return {
+            "total_requests": 0,
+            "total_tokens": 0,
+            "total_wait_time": 0.0,
+            "rate_limit_hits": 0,
+            "current_rpm": 0,
+            "current_tpm": 0,
+            "rpm_utilization": 0,
+            "tpm_utilization": 0,
+            "avg_wait_time": 0,
+        }
 

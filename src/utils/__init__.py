@@ -6,7 +6,7 @@ import os
 import logging
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv, find_dotenv
 
 
@@ -65,6 +65,14 @@ def load_config(config_path: str = "config.yaml", use_global_manager: bool = Tru
 
     # Expand environment variables
     config = _expand_env_vars(config)
+    
+    # Validate and normalize performance configuration
+    try:
+        from .config_validator import validate_config
+        config = validate_config(config)
+    except Exception as e:
+        # Don't fail if validation fails, just log warning
+        logger.warning(f"[CONFIG] Performance config validation failed: {e}")
 
     return config
 
@@ -157,7 +165,9 @@ def setup_logging(config: Dict[str, Any]):
     logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
-def get_temperature_for_model(config: Dict[str, Any], default_temperature: float = 0.7) -> float:
+def get_temperature_for_model(config: Dict[str, Any], default_temperature: float = 0.7, 
+                              log_selection: bool = False, session_id: Optional[str] = None,
+                              interaction_id: Optional[str] = None, component: str = "unknown") -> float:
     """
     Get appropriate temperature for the configured model.
 
@@ -167,6 +177,10 @@ def get_temperature_for_model(config: Dict[str, Any], default_temperature: float
     Args:
         config: Configuration dictionary
         default_temperature: Default temperature to use if not in config (only for non-o-series)
+        log_selection: Whether to log the model selection decision
+        session_id: Session identifier for logging
+        interaction_id: Interaction identifier for logging
+        component: Component making the selection
 
     Returns:
         Temperature value appropriate for the model
@@ -176,13 +190,31 @@ def get_temperature_for_model(config: Dict[str, Any], default_temperature: float
 
     # o-series models only support temperature=1
     if model and model.startswith(("o1", "o3", "o4")):
-        return 1.0
+        temperature = 1.0
+        reasoning = f"o-series model {model} requires temperature=1.0"
+    else:
+        temperature = openai_config.get("temperature", default_temperature)
+        reasoning = f"Using config temperature={temperature} for model {model}"
+    
+    # Log model selection if requested
+    if log_selection:
+        from .model_selection_logger import log_model_selection
+        log_model_selection(
+            model=model,
+            temperature=temperature,
+            reasoning=reasoning,
+            config=config,
+            session_id=session_id,
+            interaction_id=interaction_id,
+            component=component
+        )
+    
+    return temperature
 
-    # For other models, use config value or default
-    return openai_config.get("temperature", default_temperature)
 
-
-def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max_tokens: int = 2000) -> Dict[str, Any]:
+def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max_tokens: int = 2000,
+                   log_selection: bool = False, session_id: Optional[str] = None,
+                   interaction_id: Optional[str] = None, component: str = "unknown") -> Dict[str, Any]:
     """
     Get LLM parameters compatible with the configured model.
 
@@ -194,6 +226,10 @@ def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max
         config: Configuration dictionary
         default_temperature: Default temperature for non-o-series models
         max_tokens: Maximum tokens (will be converted to max_completion_tokens for o-series)
+        log_selection: Whether to log the model selection decision
+        session_id: Session identifier for logging
+        interaction_id: Interaction identifier for logging
+        component: Component making the selection
 
     Returns:
         Dictionary of parameters to pass to ChatOpenAI()
@@ -210,9 +246,26 @@ def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max
     if model and model.startswith(("o1", "o3", "o4")):
         params["temperature"] = 1.0
         params["max_completion_tokens"] = max_tokens
+        reasoning = f"o-series model {model} requires temperature=1.0 and max_completion_tokens={max_tokens}"
     else:
         params["temperature"] = openai_config.get("temperature", default_temperature)
         params["max_tokens"] = max_tokens
+        reasoning = f"Using model {model} with temperature={params['temperature']}, max_tokens={max_tokens}"
+    
+    # Log model selection if requested
+    if log_selection:
+        from .model_selection_logger import log_model_selection
+        log_model_selection(
+            model=model,
+            temperature=params["temperature"],
+            max_tokens=params.get("max_tokens"),
+            max_completion_tokens=params.get("max_completion_tokens"),
+            reasoning=reasoning,
+            config=config,
+            session_id=session_id,
+            interaction_id=interaction_id,
+            component=component
+        )
 
     return params
 
@@ -270,4 +323,3 @@ __all__ = [
     'get_screenshot_dir',
     'DEFAULT_SCREENSHOT_DIR',
 ]
-

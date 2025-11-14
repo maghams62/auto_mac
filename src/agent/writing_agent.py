@@ -18,8 +18,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import logging
 import json
 import re
+from pathlib import Path
+from datetime import datetime
 
 from ..utils import get_temperature_for_model
+from ..automation.report_generator import ReportGenerator
 from ..memory.session_memory import SessionContext
 from ..writing.style_profile import StyleProfile
 
@@ -1957,6 +1960,10 @@ def create_detailed_report(
     """
     logger.info(f"[WRITING AGENT] Tool: create_detailed_report(title='{title}', style='{report_style}')")
 
+    # TODO: Add telemetry logging for regression testing
+    # [TELEMETRY] Tool create_detailed_report started - correlation_id={correlation_id}, title={title}
+    # Use telemetry/tool_helpers.py: log_tool_step("create_detailed_report", "start", metadata={"title": title, "style": report_style}, correlation_id=correlation_id)
+
     try:
         from ..utils import load_config
 
@@ -2108,11 +2115,105 @@ Create a professional, detailed report with strong narrative flow.
         result["report_style"] = report_style
         result["message"] = f"Created {report_style} report: '{title}' ({result.get('total_word_count', 0)} words)"
 
-        logger.info(f"[WRITING AGENT] Created report: {result.get('total_word_count', 0)} words, {len(result.get('sections', []))} sections")
+        logger.info(
+            f"[WRITING AGENT] Created report: {result.get('total_word_count', 0)} words, "
+            f"{len(result.get('sections', []))} sections"
+        )
+
+        # Persist formatted report to disk so downstream steps (emails, sharing) can attach it.
+        def _write_plaintext_fallback() -> Optional[str]:
+            try:
+                reports_dir = Path("data/reports")
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", title).strip("_") or "report"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                fallback_path = reports_dir / f"{safe_title}_{timestamp}.txt"
+                fallback_path.write_text(result.get("report_content", ""), encoding="utf-8")
+                logger.info(f"[WRITING AGENT] Fallback report saved: {fallback_path}")
+                return str(fallback_path)
+            except Exception as write_err:
+                logger.warning(f"[WRITING AGENT] Fallback report save failed: {write_err}")
+                return None
+
+        artifact_path: Optional[str] = None
+        fallback_needed = False
+        try:
+            generator = ReportGenerator(config)
+
+            section_payload: Optional[List[Dict[str, str]]] = None
+            if result.get("sections"):
+                section_payload = []
+                for section in result["sections"]:
+                    heading = (
+                        section.get("section_name")
+                        or section.get("heading")
+                        or section.get("title")
+                        or ""
+                    )
+                    section_payload.append({
+                        "heading": heading,
+                        "content": section.get("content", "")
+                    })
+
+            generation_result = generator.create_report(
+                title=title,
+                content=result.get("report_content", ""),
+                sections=section_payload,
+                export_pdf=True
+            )
+
+            if generation_result.get("success"):
+                primary_path = (
+                    generation_result.get("pdf_path")
+                    or generation_result.get("html_path")
+                    or generation_result.get("rtf_path")
+                )
+
+                if primary_path:
+                    artifact_path = primary_path
+                    result["report_path"] = primary_path
+                    # Legacy planners sometimes reference formatted_content -> provide compatible field.
+                    result["formatted_content"] = primary_path
+                    logger.info(f"[WRITING AGENT] Report artifact saved: {primary_path}")
+                else:
+                    fallback_needed = True
+
+                if generation_result.get("pdf_path"):
+                    result["pdf_path"] = generation_result["pdf_path"]
+                if generation_result.get("rtf_path"):
+                    result["rtf_path"] = generation_result["rtf_path"]
+                if generation_result.get("html_path"):
+                    result["html_path"] = generation_result["html_path"]
+
+                # Expose artifact metadata for advanced consumers.
+                result["report_artifact"] = generation_result
+            else:
+                warning_msg = generation_result.get("error_message", "Unknown report generation error")
+                result["report_generation_warning"] = warning_msg
+                logger.warning(f"[WRITING AGENT] Report file generation failed: {warning_msg}")
+                fallback_needed = True
+        except Exception as artifact_error:
+            logger.warning(f"[WRITING AGENT] Could not persist report artifact: {artifact_error}")
+            result["report_generation_warning"] = str(artifact_error)
+            fallback_needed = True
+
+        if not artifact_path and fallback_needed:
+            fallback_path = _write_plaintext_fallback()
+            if fallback_path:
+                artifact_path = fallback_path
+                result["report_path"] = fallback_path
+                result["formatted_content"] = fallback_path
+
+        # TODO: Add telemetry logging for regression testing
+        # [TELEMETRY] Tool create_detailed_report success - correlation_id={correlation_id}, word_count={result.get('total_word_count')}
+        # Use telemetry/tool_helpers.py: log_tool_step("create_detailed_report", "success", metadata={"word_count": result.get('total_word_count'), "sections": len(result.get('sections', []))}, correlation_id=correlation_id)
 
         return result
 
     except Exception as e:
+        # TODO: Add telemetry logging for regression testing
+        # [TELEMETRY] Tool create_detailed_report error - correlation_id={correlation_id}, error={str(e)}
+        # Use telemetry/tool_helpers.py: log_tool_step("create_detailed_report", "error", metadata={"error": str(e)}, correlation_id=correlation_id)
         logger.error(f"[WRITING AGENT] Error in create_detailed_report: {e}")
         return {
             "error": True,

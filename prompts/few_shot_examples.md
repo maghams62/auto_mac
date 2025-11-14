@@ -5,15 +5,20 @@
 ### Tool Hierarchy Snapshot (KNOW YOUR SPECIALISTS!)
 - **File Agent (docs):** `search_documents`, `extract_section`, `take_screenshot`, `organize_files`
 - **Writing Agent (content):** `synthesize_content`, `create_slide_deck_content`, `create_detailed_report`, `create_meeting_notes`
-- **Presentation Agent (surface):** `create_keynote`, `create_keynote_with_images`, `create_pages_doc`
+- **Presentation Agent (surface):** `create_keynote`, `create_keynote_with_images` (Note: create_pages_doc is DISABLED - use create_keynote instead)
 - **Browser Agent (web/Playwright):** `google_search`, `navigate_to_url`, `extract_page_content`, `take_web_screenshot`, `close_browser`
 - **Email Agent (mail ops):** `compose_email`, `reply_to_email`, `read_latest_emails`, `read_emails_by_sender`, `read_emails_by_time`, `summarize_emails`
 - **Bluesky Agent (social):** `search_bluesky_posts`, `summarize_bluesky_posts`, `post_bluesky_update`
-- **Ticker Discovery Rule:** Unless the user explicitly provides a ticker symbol (e.g., "MSFT"), ALWAYS run the Browser Agent sequence (search → navigate → extract) on allowlisted finance domains to confirm the ticker before invoking stock tools.
+- **Ticker Discovery Rule:** Unless the user explicitly provides a ticker symbol (e.g., "MSFT"), run `hybrid_search_stock_symbol` first; it will fall back to web search if the mapping is uncertain.
 - **Screen Agent (visual desktop):** `capture_screenshot` (focused window only)
-- **Stock Agent:** `get_stock_price`, `get_stock_history`, `capture_stock_chart`, `compare_stocks`
+- **Hybrid Stock Agent:** `hybrid_stock_brief`, `hybrid_search_stock_symbol`
+  - ⚠️ **CRITICAL**: Always inspect `hybrid_stock_brief.confidence_level` before adding extra web steps.
+  - `confidence_level="high"` → rely on `price_snapshot` + `history` directly (C-Short reasoning, no search).
+  - `confidence_level="medium/low"` → justify a `google_search` with the provided `search_query`, then feed results into `synthesize_content`.
+  - Each response carries `reasoning_channels` (local_confident / investigative_duckduckgo / meta_reflection); reference them in your planner notes so the executor knows which lane you're using.
+  - Workflow for weekly productivity check-ins: `hybrid_stock_brief` → `synthesize_content` (use `price_snapshot`, `history`) → `create_slide_deck_content` → `create_keynote` → `compose_email` (if delivery requested) → `reply_to_user`.
 - **Maps Agent (trip planning + transit):** `get_google_transit_directions` (real-time transit with actual times), `get_directions`, `get_transit_schedule`, `plan_trip_with_stops`, `open_maps_with_route`
-- **Spotify Agent (music control):** `play_music`, `pause_music`, `get_spotify_status`
+- **Spotify Agent (music control):** `play_music`, `pause_music`, `next_track`, `previous_track`, `get_spotify_status`, `play_song`, `play_album`, `play_artist`
 - **Reply Agent (UI formatting):** `reply_to_user` (ALWAYS use as FINAL step to format responses for UI)
 
 Reference this hierarchy when picking tools—if a capability lives in a specific agent, route the plan through that agent’s tools.
@@ -29,6 +34,8 @@ Some requests are intentionally one-and-done for the **action** step. Mirror the
 | "Scan r/electricvehicles (hot, limit 5) and summarize the titles." | `scan_subreddit_posts` → `reply_to_user` | Summarize the titles from the returned payload. | Critic is optional—only call it on demand. |
 | "Play music" | `play_music` → `reply_to_user` | Start/resume Spotify playback, then confirm to user. | Skip critic—simple action. |
 | "Pause" or "Pause music" | `pause_music` → `reply_to_user` | Pause Spotify playback, then confirm to user. | Skip critic—simple action. |
+| "Skip this song" | `next_track` → `reply_to_user` | Jump to the next track, then confirm to user. | Skip critic—simple action. |
+| "Back one track" | `previous_track` → `reply_to_user` | Return to the previous track, then confirm to user. | Skip critic—simple action. |
 | "play that Michael Jackson song where he does the moonwalk" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool handles descriptive queries internally. | Skip critic—play_song uses LLM disambiguation. |
 | "play the space song" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool resolves vague references internally. | Skip critic—play_song uses LLM disambiguation. |
 | "play that song by Eminem that starts with space" | `play_song` → `reply_to_user` | Play song directly - NO google_search needed! Tool handles partial descriptions with artist hints. | Skip critic—play_song uses LLM disambiguation. |
@@ -168,8 +175,8 @@ Observation: {"status": "delivered"}
     {"id": 1, "action": "read_latest_emails", "parameters": {"count": 3, "mailbox": "INBOX"}, "dependencies": [], "reasoning": "Retrieve the last 3 emails", "expected_output": "emails_data with emails list", "post_check": "Check if count > 0. If 0, skip to step 7", "deliveries": []},
     {"id": 2, "action": "summarize_emails", "parameters": {"emails_data": "$step1", "focus": null}, "dependencies": [1], "reasoning": "Create AI summary of email contents", "expected_output": "summary text", "post_check": "Verify summary is not empty", "deliveries": []},
     {"id": 3, "action": "create_detailed_report", "parameters": {"content": "$step2.summary", "title": "Email Summary Report", "report_style": "business"}, "dependencies": [2], "reasoning": "Transform summary into formatted report", "expected_output": "report_content (TEXT)", "post_check": "Verify report_content exists and is not empty", "deliveries": []},
-    {"id": 4, "action": "create_pages_doc", "parameters": {"title": "Email Summary Report", "content": "$step3.report_content"}, "dependencies": [3], "reasoning": "CRITICAL: Save report TEXT to FILE for email attachment", "expected_output": "pages_path (FILE PATH)", "post_check": "Verify pages_path is a valid file path", "deliveries": ["attach_documents"]},
-    {"id": 5, "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "me", "attachments": ["$step4.pages_path"], "send": true}, "dependencies": [4], "reasoning": "Email the report as attachment using FILE PATH from step 4", "expected_output": "status sent", "post_check": "Confirm email sent successfully", "deliveries": ["send_email", "attach_documents"]},
+    {"id": 4, "action": "create_keynote", "parameters": {"title": "Email Summary Report", "content": "$step3.report_content"}, "dependencies": [3], "reasoning": "CRITICAL: Save report TEXT to FILE for email attachment", "expected_output": "keynote_path (FILE PATH)", "post_check": "Verify keynote_path is a valid file path", "deliveries": ["attach_documents"]},
+    {"id": 5, "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "me", "attachments": ["$step4.keynote_path"], "send": true}, "dependencies": [4], "reasoning": "Email the report as attachment using FILE PATH from step 4", "expected_output": "status sent", "post_check": "Confirm email sent successfully", "deliveries": ["send_email", "attach_documents"]},
     {"id": 6, "action": "reply_to_user", "parameters": {"message": "Email summary report created and sent successfully. Summarized 3 emails."}, "dependencies": [5], "reasoning": "Confirm completion to user", "expected_output": "User notified", "post_check": "None", "deliveries": []}
   ],
   "complexity": "complex"
@@ -178,8 +185,8 @@ Observation: {"status": "delivered"}
 
 **⚠️ COMMON MISTAKES TO AVOID:**
 - ❌ **WRONG:** `compose_email(attachments=["$step3.report_content"])` - This passes TEXT content as filename!
-- ✅ **CORRECT:** `create_pages_doc` → `compose_email(attachments=["$step4.pages_path"])` - This passes a FILE PATH
-- ❌ **WRONG:** Skipping the `create_pages_doc` step entirely
+- ✅ **CORRECT:** `create_keynote` → `compose_email(attachments=["$step4.keynote_path"])` - This passes a FILE PATH
+- ❌ **WRONG:** Skipping the `create_keynote` step entirely
 - ✅ **CORRECT:** Always save report content to file before emailing as attachment
 - ❌ **WRONG:** Continuing workflow when step 1 returns count=0 (no emails)
 - ✅ **CORRECT:** Check email count and stop gracefully if empty
@@ -207,16 +214,16 @@ Observation: {"report_content": "# Email Summary Report\n\n## Executive Summary\
 Action: update_reasoning_entry {"entry_id": "exec-503", "outcome": "success", "evidence": ["Created 450-word report"]}
 Observation: {"status": "updated"}
 Thought 4: CRITICAL - Save report TEXT to FILE before emailing.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Save report to Pages document for email attachment", "action": "create_pages_doc", "parameters": {"title": "Email Summary Report", "content": "# Email Summary Report..."}, "commitments": ["attach_documents"], "outcome": "pending"}
+Action: add_reasoning_entry {"stage": "execution", "thought": "Save report to Keynote presentation for email attachment", "action": "create_keynote", "parameters": {"title": "Email Summary Report", "content": "# Email Summary Report..."}, "commitments": ["attach_documents"], "outcome": "pending"}
 Observation: {"entry_id": "exec-504"}
-Action: create_pages_doc {"title": "Email Summary Report", "content": "# Email Summary Report..."}
-Observation: {"pages_path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.pages", "message": "Pages document created successfully"}
-Action: update_reasoning_entry {"entry_id": "exec-504", "outcome": "success", "evidence": ["Saved to /Users/.../Email_Summary_Report.pages"], "attachments": [{"type": "file", "path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.pages", "status": "available"}]}
+Action: create_keynote {"title": "Email Summary Report", "content": "# Email Summary Report..."}
+Observation: {"keynote_path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.key", "message": "Keynote presentation created successfully"}
+Action: update_reasoning_entry {"entry_id": "exec-504", "outcome": "success", "evidence": ["Saved to /Users/.../Email_Summary_Report.key"], "attachments": [{"type": "file", "path": "/Users/siddharthsuresh/Documents/Email_Summary_Report.key", "status": "available"}]}
 Observation: {"status": "updated"}
 Thought 5: Email the report using FILE PATH from step 4.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Email report as attachment", "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached...", "recipient": "me", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.pages"], "send": true}, "commitments": ["send_email", "attach_documents"], "outcome": "pending"}
+Action: add_reasoning_entry {"stage": "execution", "thought": "Email report as attachment", "action": "compose_email", "parameters": {"subject": "Email Summary Report", "body": "Please find attached...", "recipient": "me", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.key"], "send": true}, "commitments": ["send_email", "attach_documents"], "outcome": "pending"}
 Observation: {"entry_id": "exec-505"}
-Action: compose_email {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "user@example.com", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.pages"], "send": true}
+Action: compose_email {"subject": "Email Summary Report", "body": "Please find attached your email summary report for the last 3 emails.", "recipient": "user@example.com", "attachments": ["/Users/siddharthsuresh/Documents/Email_Summary_Report.key"], "send": true}
 Observation: {"status": "sent", "message": "Email sent successfully"}
 Action: update_reasoning_entry {"entry_id": "exec-505", "outcome": "success", "evidence": ["Email sent with attachment"]}
 Observation: {"status": "updated"}
@@ -224,7 +231,7 @@ Thought 6: Confirm completion to user.
 Action: reply_to_user {"message": "Email summary report created and sent successfully. Summarized 3 emails from Alice, Bob, and Carol."}
 Observation: {"status": "delivered"}
 
-**KEY INSIGHT:** The `create_pages_doc` step (step 4) is CRITICAL - it converts TEXT to FILE PATH. Without it, the email attachment validation will fail because you cannot attach text content directly.
+**KEY INSIGHT:** The `create_keynote` step (step 4) is CRITICAL - it converts TEXT to FILE PATH. Without it, the email attachment validation will fail because you cannot attach text content directly.
 
 ### 5. NVIDIA Stock Deck Delivery
 **User Goal:** "Fetch NVIDIA's latest price, build a slide deck, and email it to me."
@@ -234,60 +241,98 @@ Observation: {"status": "delivered"}
 {
   "goal": "Create NVDA price deck and email it",
   "steps": [
-    {"id": 1, "action": "get_stock_price", "parameters": {"ticker": "NVDA"}, "dependencies": [], "reasoning": "Pull latest price data", "expected_output": "price details", "post_check": "Ensure market_price present", "deliveries": []},
-    {"id": 2, "action": "synthesize_content", "parameters": {"source_contents": ["$step1.summary"], "topic": "NVDA price briefing", "synthesis_style": "bullet"}, "dependencies": [1], "reasoning": "Write bullet points for slides", "expected_output": "structured bullets", "post_check": "Confirm >=3 bullets", "deliveries": []},
+    {"id": 1, "action": "hybrid_stock_brief", "parameters": {"symbol": "NVDA", "period": "past week"}, "dependencies": [], "reasoning": "Hybrid tool normalizes the window and reports confidence; defer web search until needed.", "expected_output": "price_snapshot + history + reasoning_channels", "post_check": "Ensure confidence_level present", "deliveries": []},
+    {"id": 2, "action": "synthesize_content", "parameters": {"source_contents": ["$step1.price_snapshot.message", "$step1.history.formatted_summary"], "topic": "NVDA weekly movement", "synthesis_style": "bullet"}, "dependencies": [1], "reasoning": "Convert hybrid output into slide-ready talking points", "expected_output": "structured bullets", "post_check": "Confirm >=3 bullets", "deliveries": []},
     {"id": 3, "action": "create_slide_deck_content", "parameters": {"title": "NVIDIA Price Update", "outline": "$step2.output"}, "dependencies": [2], "reasoning": "Format slide outline", "expected_output": "formatted_slide_content", "post_check": "Validate sections", "deliveries": []},
     {"id": 4, "action": "create_keynote", "parameters": {"title": "NVIDIA Price Update", "content": "$step3.formatted_slide_content", "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}, "dependencies": [3], "reasoning": "Export Keynote deck", "expected_output": "keynote_path", "post_check": "Verify file exists", "deliveries": ["attach_documents"]},
-    {"id": 5, "action": "get_trace_attachments", "parameters": {}, "dependencies": [4], "reasoning": "Confirm Keynote file available", "expected_output": "attachment list includes NVDA_Update.key", "post_check": "If missing, re-run create_keynote", "deliveries": []},
-    {"id": 6, "action": "compose_email", "parameters": {"subject": "NVIDIA Price Deck", "body": "$step2.output", "recipient": "$memory.preferred_recipient", "attachments": ["/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"], "send": true}, "dependencies": [2, 5], "reasoning": "Deliver deck via email", "expected_output": "status sent", "post_check": "Mail reported sent", "deliveries": ["send_email", "attach_documents"]},
-    {"id": 7, "action": "reply_to_user", "parameters": {"message": "Email sent with NVIDIA deck attached. Latest price: $step1.market_price."}, "dependencies": [6], "reasoning": "Summarize delivery and data", "expected_output": "User informed", "post_check": "None", "deliveries": []}
+    {"id": 5, "action": "compose_email", "parameters": {"subject": "NVIDIA Price Deck", "body": "$step2.output", "recipient": "$memory.preferred_recipient", "attachments": ["$step4.keynote_path"], "send": true}, "dependencies": [2, 4], "reasoning": "Deliver deck via email", "expected_output": "status sent", "post_check": "Mail reported sent", "deliveries": ["send_email", "attach_documents"]},
+    {"id": 6, "action": "reply_to_user", "parameters": {"message": "Email sent with NVIDIA deck attached. Weekly move: $step1.history.formatted_summary"}, "dependencies": [5], "reasoning": "Summarize delivery and cite hybrid reasoning", "expected_output": "User informed", "post_check": "None", "deliveries": []}
   ],
   "complexity": "complex"
 }
 ```
 
 **ReAct Trace Highlights:**
-Thought 1: Fetch current NVDA price data for context.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Collect latest NVDA price", "action": "get_stock_price", "parameters": {"ticker": "NVDA"}, "commitments": ["attach_documents"], "outcome": "pending"}
+Thought 1: Gather NVDA context with C-Short lane expectation.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Run hybrid stock brief (expect local_confident lane)", "action": "hybrid_stock_brief", "parameters": {"symbol": "NVDA", "period": "past week"}, "commitments": ["attach_documents"], "outcome": "pending"}
 Observation: {"entry_id": "exec-401"}
-Action: get_stock_price {"ticker": "NVDA"}
-Observation: {"ticker": "NVDA", "market_price": 945.32, "summary": "NVDA at $945.32 (+1.2%) as of close."}
-Action: update_reasoning_entry {"entry_id": "exec-401", "outcome": "success", "evidence": ["Price summary captured"], "attachments": []}
+Action: hybrid_stock_brief {"symbol": "NVDA", "period": "past week"}
+Observation: {"symbol": "NVDA", "normalized_period": "5d", "confidence_level": "high", "price_snapshot": {"message": "NVIDIA Corporation (NVDA): $945.32 (+1.20%)"}, "history": {"formatted_summary": "NVDA Stock History (past week):\n\nPeriod: 2025-11-10 to 2025-11-14\nStarting Price: $932.12\nEnding Price: $945.32\nChange: $13.20 (+1.42%)\n\nDaily Prices:\n  2025-11-10: $932.12 (Vol: 41,312,400)\n  2025-11-11: $939.85 (Vol: 39,872,500)\n  ..."}, "reasoning_channels": [{"lane": "local_confident", "confidence": "high", "summary": "NVDA over 5d gained +13.20 (+1.42%).", "justification": "Structured history returned sufficient data; no DuckDuckGo required."}]}
+Action: update_reasoning_entry {"entry_id": "exec-401", "outcome": "success", "evidence": ["confidence_level=high", "normalized_period=5d"], "attachments": []}
 Observation: {"status": "updated"}
-Thought 2: Convert price data into bullet talking points.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Synthesize NVDA talking points", "action": "synthesize_content", "parameters": {"source_contents": ["NVDA at $945.32 (+1.2%) as of close."], "topic": "NVDA price briefing", "synthesis_style": "bullet"}, "outcome": "pending"}
+Thought 2: Turn hybrid output into bullet talking points.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Synthesize NVDA weekly bullets", "action": "synthesize_content", "parameters": {"source_contents": ["NVIDIA Corporation (NVDA): $945.32 (+1.20%)", "NVDA Stock History (past week):\n\nPeriod: 2025-11-10 to 2025-11-14\nStarting Price: $932.12\nEnding Price: $945.32\nChange: $13.20 (+1.42%)\n\nDaily Prices:\n  2025-11-10: $932.12 (Vol: 41,312,400)\n  2025-11-11: $939.85 (Vol: 39,872,500)\n  ..."], "topic": "NVDA weekly movement", "synthesis_style": "bullet"}, "outcome": "pending"}
 Observation: {"entry_id": "exec-402"}
-Action: synthesize_content {"source_contents": ["NVDA at $945.32 (+1.2%) as of close."], "topic": "NVDA price briefing", "synthesis_style": "bullet"}
-Observation: {"output": "- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend."}
-Action: update_reasoning_entry {"entry_id": "exec-402", "outcome": "success", "evidence": ["Generated bullet summary"]}
+Action: synthesize_content {"source_contents": ["NVIDIA Corporation (NVDA): $945.32 (+1.20%)", "NVDA Stock History (past week):\n\nPeriod: 2025-11-10 to 2025-11-14\nStarting Price: $932.12\nEnding Price: $945.32\nChange: $13.20 (+1.42%)\n\nDaily Prices:\n  2025-11-10: $932.12 (Vol: 41,312,400)\n  2025-11-11: $939.85 (Vol: 39,872,500)\n  ..."], "topic": "NVDA weekly movement", "synthesis_style": "bullet"}
+Observation: {"output": "- NVDA gained $13.20 over the normalized 5D window (+1.42%).\n- Confidence high: hybrid_stock_brief stayed on local lane, no search.\n- Watch data center demand commentary heading into next earnings."}
+Action: update_reasoning_entry {"entry_id": "exec-402", "outcome": "success", "evidence": ["Bullet summary references hybrid confidence"]}
 Observation: {"status": "updated"}
 Thought 3: Structure slides from the synthesized content.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Format slide outline", "action": "create_slide_deck_content", "parameters": {"title": "NVIDIA Price Update", "outline": "- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend."}, "outcome": "pending"}
+Action: add_reasoning_entry {"stage": "execution", "thought": "Format NVDA slide outline", "action": "create_slide_deck_content", "parameters": {"title": "NVIDIA Price Update", "outline": "- NVDA gained $13.20 over the normalized 5D window (+1.42%).\n- Confidence high: hybrid_stock_brief stayed on local lane, no search.\n- Watch data center demand commentary heading into next earnings."}, "outcome": "pending"}
 Observation: {"entry_id": "exec-403"}
-Action: create_slide_deck_content {"title": "NVIDIA Price Update", "outline": "- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend."}
-Observation: {"formatted_slide_content": "Slide 1: NVIDIA Price Update\n- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend.", "section_count": 3}
-Action: update_reasoning_entry {"entry_id": "exec-403", "outcome": "success", "evidence": ["Slides formatted"]}
+Action: create_slide_deck_content {"title": "NVIDIA Price Update", "outline": "- NVDA gained $13.20 over the normalized 5D window (+1.42%).\n- Confidence high: hybrid_stock_brief stayed on local lane, no search.\n- Watch data center demand commentary heading into next earnings."}
+Observation: {"formatted_slide_content": {"title": "NVIDIA Price Update", "sections": [{"heading": "Weekly Snapshot", "bullets": ["NVDA gained $13.20 (+1.42%) over normalized 5D window.", "Confidence high: hybrid tool stayed on the local lane.", "Next focus: monitor data center commentary."]}]}}
+Action: update_reasoning_entry {"entry_id": "exec-403", "outcome": "success", "evidence": ["Slide outline references hybrid reasoning"]}
 Observation: {"status": "updated"}
-Thought 4: Render Keynote deck at deterministic path.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Export Keynote deck", "action": "create_keynote", "parameters": {"title": "NVIDIA Price Update", "content": "Slide 1: NVIDIA Price Update\n- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend.", "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}, "commitments": ["attach_documents"], "outcome": "pending"}
+Thought 4: Export the Keynote deck.
+Action: add_reasoning_entry {"stage": "execution", "thought": "Export NVDA deck", "action": "create_keynote", "parameters": {"title": "NVIDIA Price Update", "content": {"title": "NVIDIA Price Update", "sections": [{"heading": "Weekly Snapshot", "bullets": ["NVDA gained $13.20 (+1.42%) over normalized 5D window.", "Confidence high: hybrid tool stayed on the local lane.", "Next focus: monitor data center commentary."]}]}, "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}, "commitments": ["attach_documents"], "outcome": "pending"}
 Observation: {"entry_id": "exec-404"}
-Action: create_keynote {"title": "NVIDIA Price Update", "content": "Slide 1: NVIDIA Price Update\n- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend.", "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}
-Observation: {"keynote_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key", "slide_count": 4}
-Action: update_reasoning_entry {"entry_id": "exec-404", "outcome": "success", "attachments": [{"type": "file", "path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key", "status": "available"}]}
-Observation: {"status": "updated"}
-Thought 5: Verify attachment is logged before emailing.
-Action: get_trace_attachments {}
-Observation: {"attachments": [{"path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key", "status": "available"}]}
-Thought 6: Email deck with price summary in body.
-Action: add_reasoning_entry {"stage": "execution", "thought": "Send NVIDIA price deck", "action": "compose_email", "parameters": {"subject": "NVIDIA Price Deck", "body": "- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend.", "recipient": "siddharth@example.com", "attachments": ["/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"], "send": true}, "commitments": ["send_email", "attach_documents"], "outcome": "pending"}
-Observation: {"entry_id": "exec-405"}
-Action: compose_email {"subject": "NVIDIA Price Deck", "body": "- NVDA closed at $945.32 (+1.2%).\n- Data center demand remains strong.\n- Monitoring AI capex trend.", "recipient": "siddharth@example.com", "attachments": ["/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"], "send": true}
-Observation: {"status": "sent", "message": "Email sent successfully"}
-Action: update_reasoning_entry {"entry_id": "exec-405", "outcome": "success", "evidence": ["Mail.app reported sent"]}
-Observation: {"status": "updated"}
-Thought 7: Inform the user.
-Action: reply_to_user {"message": "Email sent with NVIDIA deck attached (NVDA at $945.32)."}
+Action: create_keynote {"title": "NVIDIA Price Update", "content": {"title": "NVIDIA Price Update", "sections": [{"heading": "Weekly Snapshot", "bullets": ["NVDA gained $13.20 (+1.42%) over normalized 5D window.", "Confidence high: hybrid tool stayed on the local lane.", "Next focus: monitor data center commentary."]}]}, "output_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}
+Observation: {"status": "success", "keynote_path": "/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"}
+Thought 5: Email the deck immediately (user implied send-now).
+Action: compose_email {"subject": "NVIDIA Price Deck", "body": "- NVDA gained $13.20 over the normalized 5D window (+1.42%).\n- Confidence high: hybrid_stock_brief stayed on local lane, no search.\n- Watch data center demand commentary heading into next earnings.", "recipient": "me", "attachments": ["/Users/siddharthsuresh/Documents/Slides/NVDA_Update.key"], "send": true}
+Observation: {"status": "sent", "message": "Email sent with NVIDIA deck attached."}
+Thought 6: Close the loop referencing hybrid reasoning.
+Action: reply_to_user {"message": "Email sent with NVIDIA deck attached. Weekly move snapshot: NVDA gained $13.20 (+1.42%) over the normalized 5D window; hybrid_stock_brief stayed on the local lane so no extra DuckDuckGo search was required."}
 Observation: {"status": "delivered"}
+
+### 6. Renewable Supplier Weekly Brief (DuckDuckGo Fallback)
+**User Goal:** "Give me a quick briefing on RenewCo this week and queue a deck."
+
+**Plan Extract:**
+```json
+{
+  "goal": "Produce RenewCo weekly briefing deck",
+  "steps": [
+    {"id": 1, "action": "hybrid_stock_brief", "parameters": {"symbol": "RNWC", "period": "past 10 days"}, "dependencies": [], "reasoning": "Hybrid tool normalizes the window and surfaces confidence.", "expected_output": "price_snapshot + history + reasoning_channels", "post_check": "Confirm confidence_level present", "deliveries": []},
+    {"id": 2, "action": "google_search", "parameters": {"query": "$step1.search_query as of 2025-11-14 US market", "num_results": 5}, "dependencies": [1], "reasoning": "Confidence came back medium; enrich with DuckDuckGo snippets dated as of today.", "expected_output": "search results with timestamps", "post_check": "Ensure >=3 dated snippets", "deliveries": []},
+    {"id": 3, "action": "synthesize_content", "parameters": {"source_contents": ["$step1.history.formatted_summary", "$step2.results"], "topic": "RenewCo weekly price momentum", "synthesis_style": "comprehensive"}, "dependencies": [1, 2], "reasoning": "Blend structured data with fresh headlines before building slides.", "expected_output": "narrative summary", "post_check": "References both sources", "deliveries": []},
+    {"id": 4, "action": "create_slide_deck_content", "parameters": {"title": "RenewCo Weekly Market Pulse – 2025-11-14", "outline": "$step3.output", "section_titles": ["Current Price Overview", "Momentum Drivers", "Risk Watchlist", "Opportunities", "Action Items"]}, "dependencies": [3], "reasoning": "Apply topic-aware slide titles instead of generic numbering.", "expected_output": "formatted_slide_content", "post_check": "Section titles match topic", "deliveries": []},
+    {"id": 5, "action": "create_keynote", "parameters": {"title": "RenewCo Weekly Market Pulse – 2025-11-14", "content": "$step4.formatted_slide_content", "output_path": "/Users/siddharthsuresh/Documents/Slides/RenewCo_Pulse_2025-11-14.key"}, "dependencies": [4], "reasoning": "Export the dated deck for delivery.", "expected_output": "keynote_path", "post_check": "Verify file exists", "deliveries": ["attach_documents"]},
+    {"id": 6, "action": "compose_email", "parameters": {"subject": "RenewCo Weekly Market Pulse – 2025-11-14", "body": "As of 2025-11-14, RenewCo closed at $150 (+1.35%).\\n\\n$step3.output", "attachments": ["$step5.keynote_path"], "send": true}, "dependencies": [3, 5], "reasoning": "Deliver briefing via email with the date in subject/body.", "expected_output": "status sent", "post_check": "Mail reported sent", "deliveries": ["send_email", "attach_documents"]},
+    {"id": 7, "action": "reply_to_user", "parameters": {"message": "RenewCo briefing sent (email subject: RenewCo Weekly Market Pulse – 2025-11-14). Deck saved at $step5.keynote_path. Price lane: $step1.reasoning_channels[0].summary"}, "dependencies": [6], "reasoning": "Confirm delivery and cite hybrid lane outcome.", "expected_output": "User informed", "post_check": "None", "deliveries": []}
+  ],
+  "complexity": "complex"
+}
+```
+
+**ReAct Trace Highlights:**
+Thought 1: Run hybrid brief; expect uncertainty.
+Action: hybrid_stock_brief {"symbol": "RNWC", "period": "past 10 days"}
+Observation: {"symbol": "RNWC", "normalized_period": "1mo", "confidence_level": "medium", "search_query": "RNWC stock price past 10 days", "reasoning_channels": [{"lane": "local_confident", "confidence": "medium", "summary": "RNWC over 1mo lacks full data; fallback advised.", "justification": "Structured history returned limited data for 10-day request."}, {"lane": "investigative_duckduckgo", "confidence": "pending", "summary": "Ready to run DuckDuckGo search.", "justification": "Requires supplemental news."}]}
+
+Thought 2: Execute DuckDuckGo with explicit date anchor.
+Action: google_search {"query": "RNWC stock price past 10 days as of 2025-11-14 US market", "num_results": 5}
+Observation: {"results": [{"title": "RenewCo edges higher on new storage contracts", "date": "2025-11-13", "snippet": "..."}], "message": "Found 5 results for 'RNWC stock price past 10 days as of 2025-11-14 US market'."}
+
+Thought 3: Synthesize narrative.
+Action: synthesize_content {"source_contents": ["RNWC Stock History (past 10 days): ...", [{"title": "RenewCo edges higher on new storage contracts", "date": "2025-11-13", "snippet": "..."}]], "topic": "RenewCo weekly price momentum", "synthesis_style": "comprehensive"}
+Observation: {"output": "Current Price Overview • Current Price: $150 • Daily Change: +$2 (+1.35%) • Trend: Upward momentum\nMomentum Drivers • Storage contracts announced Nov 13 • Analyst upgrades citing demand acceleration\nRisk Watchlist • Monitor commodity input costs • Pending policy vote Nov 18."}
+
+Thought 4: Build slides with topic-aware section names.
+Action: create_slide_deck_content {"title": "RenewCo Weekly Market Pulse", "outline": "Current Price Overview • ...", "section_titles": ["Current Price Overview", "Momentum Drivers", "Risk Watchlist"]}
+Observation: {"formatted_slide_content": {"title": "RenewCo Weekly Market Pulse – 2025-11-14", "sections": [{"heading": "Current Price Overview", "bullets": ["Current Price: $150", "Daily Change: +$2 (+1.35%)", "Trend: Upward momentum"]}, {"heading": "Momentum Drivers", "bullets": ["Storage contracts announced Nov 13", "Analyst upgrades citing demand acceleration"]}, {"heading": "Risk Watchlist", "bullets": ["Monitor commodity input costs", "Pending policy vote Nov 18"]}, {"heading": "Opportunities", "bullets": ["Expand regional storage capacity", "Capitalize on EV fleet demand signals"]}, {"heading": "Action Items", "bullets": ["Schedule supplier review meeting", "Track policy vote outcomes"]}]}}
+
+Thought 5: Export deck and confirm to user.
+Action: create_keynote {"title": "RenewCo Weekly Market Pulse – 2025-11-14", "content": {"title": "RenewCo Weekly Market Pulse – 2025-11-14", "sections": [...]}, "output_path": "/Users/siddharthsuresh/Documents/Slides/RenewCo_Pulse_2025-11-14.key"}
+Observation: {"status": "success", "keynote_path": "/Users/siddharthsuresh/Documents/Slides/RenewCo_Pulse_2025-11-14.key"}
+Thought 6: Email dated briefing with attachment.
+Action: compose_email {"subject": "RenewCo Weekly Market Pulse – 2025-11-14", "body": "As of 2025-11-14, RenewCo closed at $150 (+1.35%).\\n\\n$step3.output", "attachments": ["/Users/siddharthsuresh/Documents/Slides/RenewCo_Pulse_2025-11-14.key"], "send": true}
+Observation: {"status": "sent", "message": "Email sent with subject 'RenewCo Weekly Market Pulse – 2025-11-14'."}
+Thought 7: Close the loop with explicit date mention.
+Action: reply_to_user {"message": "RenewCo briefing sent. Email subject: RenewCo Weekly Market Pulse – 2025-11-14. Deck saved at /Users/siddharthsuresh/Documents/Slides/RenewCo_Pulse_2025-11-14.key. Hybrid lane confidence: medium (DuckDuckGo augmentation applied with results dated as of 2025-11-14)."}
+Observation: {"status": "delivered"}
+
 
 ### 5. Weather-Conditional Reminder + Discord Follow-Up
 **User Goal:** "If it will rain tomorrow, remind me at 7am, note it, and message the team."
@@ -627,27 +672,17 @@ When passing data between steps:
     },
     {
       "id": 7,
-      "action": "get_stock_price",
-      "parameters": {
-        "symbol": "BOSCHLTD.NS"
-      },
-      "dependencies": [3],
-      "reasoning": "Fetch canonical real-time metrics with the confirmed ticker",
-      "expected_output": "Current Bosch stock metrics"
-    },
-    {
-      "id": 8,
-      "action": "get_stock_history",
+      "action": "hybrid_stock_brief",
       "parameters": {
         "symbol": "BOSCHLTD.NS",
         "period": "1mo"
       },
-      "dependencies": [7],
-      "reasoning": "Obtain recent trend data for analysis",
-      "expected_output": "Historical Bosch price series"
+      "dependencies": [3],
+      "reasoning": "Use hybrid_stock_brief as entry point - it internally uses get_stock_price/get_stock_history and provides confidence-based routing",
+      "expected_output": "price_snapshot, history, confidence_level, normalized_period"
     },
     {
-      "id": 9,
+      "id": 8,
       "action": "capture_stock_chart",
       "parameters": {
         "symbol": "BOSCHLTD.NS",
@@ -658,59 +693,59 @@ When passing data between steps:
       "expected_output": "Screenshot path for Bosch chart"
     },
     {
-      "id": 10,
+      "id": 9,
       "action": "synthesize_content",
       "parameters": {
         "source_contents": [
-          "$step7.message",
-          "$step8.message",
+          "$step7.price_snapshot",
+          "$step7.history",
           "$step6.content"
         ],
         "topic": "Bosch Stock Analysis",
         "synthesis_style": "comprehensive"
       },
-      "dependencies": [7, 8, 6],
+      "dependencies": [7, 6],
       "reasoning": "Combine quantitative metrics/history with the extracted news narrative",
       "expected_output": "Bosch analysis text"
     },
     {
-      "id": 11,
+      "id": 10,
       "action": "create_slide_deck_content",
       "parameters": {
-        "content": "$step10.synthesized_content",
+        "content": "$step9.synthesized_content",
         "title": "Bosch Stock Update",
         "num_slides": 5
       },
-      "dependencies": [10],
+      "dependencies": [9],
       "reasoning": "Generate concise slide bullets",
       "expected_output": "Formatted slide content"
     },
     {
-      "id": 12,
+      "id": 11,
       "action": "create_keynote_with_images",
       "parameters": {
         "title": "Bosch Stock Update",
-        "content": "$step11.formatted_content",
-        "image_paths": ["$step9.screenshot_path"]
+        "content": "$step10.formatted_content",
+        "image_paths": ["$step8.screenshot_path"]
       },
-      "dependencies": [11, 9],
+      "dependencies": [10, 8],
       "reasoning": "Create Keynote deck that includes the screenshot",
       "expected_output": "Keynote path"
     },
     {
-      "id": 13,
+      "id": 12,
       "action": "compose_email",
       "parameters": {
         "subject": "Bosch Stock Analysis with Screenshot",
         "body": "Attached is the slide deck summarizing Bosch's latest stock performance and news.",
         "recipient": "user@example.com",
         "attachments": [
-          "$step12.keynote_path",
-          "$step9.screenshot_path"
+          "$step11.keynote_path",
+          "$step8.screenshot_path"
         ],
         "send": true
       },
-      "dependencies": [12],
+      "dependencies": [11],
       "reasoning": "Deliver the deck and screenshot to the user",
       "expected_output": "Email sent"
     }
@@ -1225,14 +1260,14 @@ When passing data between steps:
     },
     {
       "id": 5,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
         "title": "Tesla Autopilot - Introduction",
         "content": "$step4.extracted_text"
       },
       "dependencies": [4],
-      "reasoning": "Path B: Create Pages document",
-      "expected_output": "Pages document created"
+      "reasoning": "Path B: Create Keynote presentation",
+      "expected_output": "Keynote presentation created"
     }
   ],
   "complexity": "complex",
@@ -1490,14 +1525,14 @@ This enables chaining steps together with explicit data flow.
     },
     {
       "id": 7,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
         "title": "ML vs DL: Comparative Analysis",
         "content": "$step6.report_content"
       },
       "dependencies": [6],
-      "reasoning": "Save report as Pages document",
-      "expected_output": "Pages document created"
+      "reasoning": "Save report as Keynote presentation",
+      "expected_output": "Keynote presentation created"
     }
   ],
   "complexity": "complex"
@@ -1509,7 +1544,7 @@ This enables chaining steps together with explicit data flow.
 - ✅ Use `create_detailed_report` to transform into long-form prose
 - ✅ Choose appropriate `synthesis_style` (comparative for comparing sources)
 - ✅ Choose appropriate `report_style` (technical, business, academic, or executive)
-- ❌ Don't pass multiple sources directly to `create_pages_doc` - synthesize first!
+- ❌ Don't pass multiple sources directly to `create_keynote` - synthesize first!
 
 ---
 
@@ -1648,14 +1683,14 @@ This enables chaining steps together with explicit data flow.
     },
     {
       "id": 4,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
         "title": "Q1 Planning Meeting Notes",
         "content": "$step3.formatted_notes"
       },
       "dependencies": [3],
-      "reasoning": "Save structured notes as document",
-      "expected_output": "Pages document created"
+      "reasoning": "Save structured notes as Keynote presentation",
+      "expected_output": "Keynote presentation created"
     }
   ],
   "complexity": "medium"
@@ -1682,74 +1717,64 @@ This enables chaining steps together with explicit data flow.
   "steps": [
     {
       "id": 1,
-      "action": "get_stock_price",
-      "parameters": {
-        "symbol": "AAPL"
-      },
-      "dependencies": [],
-      "reasoning": "Get current Apple stock price and metrics - USE THIS instead of google_search!",
-      "expected_output": "Stock price, change, volume, market cap, day high/low"
-    },
-    {
-      "id": 2,
-      "action": "get_stock_history",
+      "action": "hybrid_stock_brief",
       "parameters": {
         "symbol": "AAPL",
         "period": "1mo"
       },
       "dependencies": [],
-      "reasoning": "Get recent price history for trend analysis",
-      "expected_output": "Historical price data for last month"
+      "reasoning": "Use hybrid_stock_brief as entry point - it internally uses get_stock_price/get_stock_history and provides confidence-based routing",
+      "expected_output": "price_snapshot, history, confidence_level, normalized_period"
     },
     {
-      "id": 3,
+      "id": 2,
       "action": "synthesize_content",
       "parameters": {
         "source_contents": [
-          "$step1.message",
-          "$step2.message"
+          "$step1.price_snapshot",
+          "$step1.history"
         ],
         "topic": "Apple Stock Analysis",
         "synthesis_style": "comprehensive"
       },
-      "dependencies": [1, 2],
-      "reasoning": "Combine current price data and historical trend using pre-formatted message fields that contain actual values",
+      "dependencies": [1],
+      "reasoning": "Combine price snapshot and historical data from hybrid_stock_brief output",
       "expected_output": "Comprehensive stock analysis narrative combining current and historical data"
     },
     {
-      "id": 4,
+      "id": 3,
       "action": "create_slide_deck_content",
       "parameters": {
-        "content": "$step3.synthesized_content",
+        "content": "$step2.synthesized_content",
         "title": "Apple Stock Analysis",
         "num_slides": 5
       },
-      "dependencies": [3],
+      "dependencies": [2],
       "reasoning": "Create concise slide deck from analysis",
       "expected_output": "Formatted slide content with bullets"
     },
     {
-      "id": 5,
+      "id": 4,
       "action": "create_keynote",
       "parameters": {
         "title": "Apple Stock Analysis",
-        "content": "$step4.formatted_content"
+        "content": "$step3.formatted_content"
       },
-      "dependencies": [4],
+      "dependencies": [3],
       "reasoning": "Generate Keynote presentation",
       "expected_output": "Keynote file created"
     },
     {
-      "id": 6,
+      "id": 5,
       "action": "compose_email",
       "parameters": {
         "subject": "Apple Stock Analysis Presentation",
         "body": "Please find attached the analysis of today's Apple stock price.",
         "recipient": "user@example.com",
-        "attachments": ["$step5.keynote_path"],
+        "attachments": ["$step4.keynote_path"],
         "send": true
       },
-      "dependencies": [5],
+      "dependencies": [4],
       "reasoning": "Email presentation to recipient",
       "expected_output": "Email sent"
     }
@@ -1759,13 +1784,15 @@ This enables chaining steps together with explicit data flow.
 ```
 
 **CRITICAL: Stock Data Pattern**
-- ✅ Use `get_stock_price` for current stock data (NOT google_search!)
-- ✅ Use `get_stock_history` for historical trends
-- ✅ Use `search_stock_symbol` if you need to find ticker (e.g., "Apple" → "AAPL")
+- ✅ Use `hybrid_stock_brief` as the default entry point for ALL stock workflows
+- ✅ The hybrid tool internally uses `get_stock_price`/`get_stock_history` and provides confidence-based routing
+- ✅ Check `confidence_level` from hybrid_stock_brief output:
+  - `high` → Proceed directly to `synthesize_content` (no extra search needed)
+  - `medium/low` → Add `google_search` with normalized period and date from hybrid output
+- ✅ Use `hybrid_search_stock_symbol` if you need to find ticker (e.g., "Apple" → "AAPL")
 - ✅ Synthesize stock data into analysis before creating slides
-- ✅ Stock tools work for: AAPL (Apple), MSFT (Microsoft), GOOGL (Google), TSLA (Tesla), etc.
-- ❌ DON'T use google_search or navigate_to_url for stock prices!
-- ❌ DON'T use web browsing for stock data - use stock tools!
+- ❌ DON'T call `get_stock_price`/`get_stock_history` directly - use `hybrid_stock_brief` instead
+- ❌ DON'T use blind web searches - always use hybrid tool's `search_query` with normalized period and date
 
 ---
 
@@ -1804,14 +1831,14 @@ This enables chaining steps together with explicit data flow.
     },
     {
       "id": 3,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
         "title": "Tech Stock Comparison Report",
         "content": "$step2.report_content"
       },
       "dependencies": [2],
-      "reasoning": "Save report as document",
-      "expected_output": "Pages document created"
+      "reasoning": "Save report as Keynote presentation",
+      "expected_output": "Keynote presentation created"
     }
   ],
   "complexity": "medium"
@@ -1916,27 +1943,17 @@ compare_stocks → synthesize_content → create_slide_deck_content → create_k
   "steps": [
     {
       "id": 1,
-      "action": "get_stock_price",
-      "parameters": {
-        "symbol": "AAPL"
-      },
-      "dependencies": [],
-      "reasoning": "Get current Apple stock price data",
-      "expected_output": "Stock price, change, volume, market cap"
-    },
-    {
-      "id": 2,
-      "action": "get_stock_history",
+      "action": "hybrid_stock_brief",
       "parameters": {
         "symbol": "AAPL",
         "period": "1mo"
       },
       "dependencies": [],
-      "reasoning": "Get historical data for trend analysis",
-      "expected_output": "Historical price data"
+      "reasoning": "Use hybrid_stock_brief as entry point - it internally uses get_stock_price/get_stock_history and provides confidence-based routing",
+      "expected_output": "price_snapshot, history, confidence_level, normalized_period"
     },
     {
-      "id": 3,
+      "id": 2,
       "action": "capture_stock_chart",
       "parameters": {
         "symbol": "AAPL",
@@ -1947,55 +1964,55 @@ compare_stocks → synthesize_content → create_slide_deck_content → create_k
       "expected_output": "Screenshot path of AAPL chart from Stocks app"
     },
     {
-      "id": 4,
+      "id": 3,
       "action": "synthesize_content",
       "parameters": {
         "source_contents": [
-          "$step1.message",
-          "$step2.message"
+          "$step1.price_snapshot",
+          "$step1.history"
         ],
         "topic": "Apple Stock Analysis",
         "synthesis_style": "comprehensive"
       },
-      "dependencies": [1, 2],
+      "dependencies": [1],
       "reasoning": "Combine stock data into analysis text",
       "expected_output": "Comprehensive analysis narrative"
     },
     {
-      "id": 5,
+      "id": 4,
       "action": "create_slide_deck_content",
       "parameters": {
-        "content": "$step4.synthesized_content",
+        "content": "$step3.synthesized_content",
         "title": "Apple Stock Analysis",
         "num_slides": 5
       },
-      "dependencies": [4],
+      "dependencies": [3],
       "reasoning": "Create concise slide content",
       "expected_output": "Formatted slides"
     },
     {
-      "id": 6,
+      "id": 5,
       "action": "create_keynote_with_images",
       "parameters": {
         "title": "Apple Stock Analysis",
-        "content": "$step5.formatted_content",
-        "image_paths": ["$step3.screenshot_path"]
+        "content": "$step4.formatted_content",
+        "image_paths": ["$step2.screenshot_path"]
       },
-      "dependencies": [5, 3],
+      "dependencies": [4, 2],
       "reasoning": "Create presentation with screenshot included",
       "expected_output": "Keynote file with embedded screenshot"
     },
     {
-      "id": 7,
+      "id": 6,
       "action": "compose_email",
       "parameters": {
         "subject": "Apple Stock Analysis with Screenshot",
         "body": "Please find attached the analysis with today's stock screenshot.",
         "recipient": "user@example.com",
-        "attachments": ["$step6.keynote_path"],
+        "attachments": ["$step5.keynote_path"],
         "send": true
       },
-      "dependencies": [6],
+      "dependencies": [5],
       "reasoning": "Email the presentation",
       "expected_output": "Email sent"
     }
@@ -2061,49 +2078,49 @@ CRITICAL: create_keynote_with_images requires BOTH:
 
 **User wants a DETAILED REPORT?**
 ```
-Flow: Source → synthesize_content (if multiple) → create_detailed_report → create_pages_doc
+Flow: Source → synthesize_content (if multiple) → create_detailed_report → create_keynote
 Tools:
   - For research: search_documents, google_search
   - For extraction: extract_section, extract_page_content
   - For synthesis: synthesize_content
   - For formatting: create_detailed_report
-  - For creation: create_pages_doc
+  - For creation: create_keynote
 ```
 
 **User wants MEETING NOTES?**
 ```
-Flow: search_documents → extract_section → create_meeting_notes → create_pages_doc OR compose_email
+Flow: search_documents → extract_section → create_meeting_notes → create_keynote OR compose_email
 Tools:
   - For finding: search_documents
   - For extraction: extract_section
   - For structuring: create_meeting_notes
-  - For output: create_pages_doc or compose_email
+  - For output: create_keynote or compose_email
 ```
 
 #### B. Data & Analysis Tasks
 
 **User wants STOCK ANALYSIS/DATA?** (CRITICAL!)
 ```
-Flow: get_stock_price + get_stock_history → synthesize_content → create_slide_deck_content OR create_detailed_report
+Flow: hybrid_stock_brief → [check confidence_level] → [optional: google_search if confidence low] → synthesize_content → create_slide_deck_content OR create_detailed_report
 
 DECISION TREE:
 1. Do I know the ticker symbol?
-   - YES → Use symbol directly (AAPL, MSFT, GOOGL, TSLA, NVDA, etc.)
-   - NO → Use search_stock_symbol first (e.g., "Tesla" → "TSLA")
+   - YES → Use symbol directly in hybrid_stock_brief (AAPL, MSFT, GOOGL, TSLA, NVDA, etc.)
+   - NO → Use hybrid_search_stock_symbol first (e.g., "Tesla" → "TSLA"), then hybrid_stock_brief
 
-2. What data do I need?
-   - Current price → get_stock_price
-   - Historical trend → get_stock_history
-   - Compare multiple → compare_stocks
+2. Check confidence_level from hybrid_stock_brief:
+   - high → Proceed directly to synthesize_content (feed price_snapshot and history from hybrid_stock_brief)
+   - medium/low → Add google_search(query=hybrid_stock_brief.search_query + normalized period + date) → synthesize_content (feed hybrid outputs + search results)
 
 3. What format does user want?
    - Presentation → synthesize_content → create_slide_deck_content → create_keynote
-   - Report → synthesize_content → create_detailed_report → create_pages_doc
+   - Report → synthesize_content → create_detailed_report → create_keynote
 
 IMPORTANT:
-  ✅ ALWAYS use stock tools for stock data (NOT google_search!)
-  ✅ ALWAYS synthesize before formatting (compare_stocks returns list, not string!)
-  ❌ NEVER pass structured data directly to writing tools
+  ✅ ALWAYS use hybrid_stock_brief as entry point (it internally uses stock tools with confidence-based routing)
+  ✅ Check confidence_level - only add google_search if confidence is medium/low
+  ✅ ALWAYS synthesize before formatting (hybrid_stock_brief returns structured data, not string!)
+  ❌ NEVER call get_stock_price/get_stock_history directly - use hybrid_stock_brief instead
 ```
 
 **User wants to COMPARE data/documents?**
@@ -3347,14 +3364,14 @@ open_maps_with_route(origin, destination, stops=[...], start_navigation=false)
     },
     {
       "id": 3,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
         "title": "Email Summary Report",
         "content": "$step2.summary"
       },
       "dependencies": [2],
-      "reasoning": "Save summary as Pages document for permanent record",
-      "expected_output": "Pages document created with summary"
+      "reasoning": "Save summary as Keynote presentation for permanent record",
+      "expected_output": "Keynote presentation created with summary"
     },
     {
       "id": 4,
@@ -3786,7 +3803,7 @@ read_emails_by_time → summarize_emails → reply_to_user
 
 **Complex Workflow:**
 ```
-read_emails_by_sender → summarize_emails → create_pages_doc → reply_to_user
+read_emails_by_sender → summarize_emails → create_keynote → reply_to_user
 ```
 
 **Multi-Source Summary:**
@@ -4114,80 +4131,69 @@ Presentation Angle: Causal analysis
   "steps": [
     {
       "id": 1,
-      "action": "get_stock_price",
-      "parameters": {
-        "ticker": "TSLA"
-      },
-      "dependencies": [],
-      "reasoning": "Get Tesla stock price and daily change"
-    },
-    {
-      "id": 2,
       "action": "google_search",
       "parameters": {
-        "query": "Tesla stock drop yesterday news reasons",
+        "query": "Tesla stock price drop yesterday news reasons",
         "num_results": 5
       },
       "dependencies": [],
-      "reasoning": "Find news explaining the stock decline"
+      "reasoning": "Use DuckDuckGo to get Tesla stock data and news explaining the decline"
     },
     {
-      "id": 3,
+      "id": 2,
       "action": "synthesize_content",
       "parameters": {
         "source_contents": [
-          "$step1.price_info",
-          "$step2.results[0].snippet",
-          "$step2.results[1].snippet",
-          "$step2.results[2].snippet"
+          "$step1.results"
         ],
         "topic": "Why Tesla Stock Dropped",
         "synthesis_style": "comprehensive"
       },
-      "dependencies": [1, 2],
-      "reasoning": "Synthesize price data + news into explanation of causes"
+      "dependencies": [1],
+      "reasoning": "Synthesize stock data and news into explanation of causes"
     },
     {
-      "id": 4,
+      "id": 3,
       "action": "create_slide_deck_content",
       "parameters": {
-        "content": "$step3.synthesized_content",
+        "content": "$step2.synthesized_content",
         "title": "Why Tesla Stock Dropped",
         "num_slides": 6
       },
-      "dependencies": [3],
+      "dependencies": [2],
       "reasoning": "Create presentation with consistent title"
     },
     {
-      "id": 5,
+      "id": 4,
       "action": "create_keynote",
       "parameters": {
         "title": "Why Tesla Stock Dropped",
-        "content": "$step4.formatted_content"
+        "content": "$step3.formatted_content"
       },
-      "dependencies": [4],
-      "reasoning": "Generate Keynote file"
+      "dependencies": [3],
+      "reasoning": "Generate Keynote file (NO screenshots/images)"
     },
     {
-      "id": 6,
+      "id": 5,
       "action": "compose_email",
       "parameters": {
         "subject": "Why Tesla Stock Dropped - Analysis",
         "body": "Attached is the analysis of yesterday's Tesla stock decline.",
-        "attachments": ["$step5.keynote_path"],
+        "attachments": ["$step4.keynote_path"],
         "send": true
       },
-      "dependencies": [5],
+      "dependencies": [4],
       "reasoning": "Email the slideshow"
     },
     {
-      "id": 7,
+      "id": 6,
       "action": "reply_to_user",
       "parameters": {
         "message": "Created and sent the Tesla stock analysis presentation.",
         "status": "success"
       },
-      "dependencies": [6]
+      "dependencies": [5],
+      "reasoning": "FINAL step - confirm completion to user"
     }
   ]
 }
@@ -5874,11 +5880,11 @@ I found a meeting commitment in your emails for "Weekly Team Sync" on Wednesday 
 
 ## Level 4 (Find → Synthesize → Save/Send) — Extend Level 2/3 Flows with File Creation/Mail Tools
 
-**"Create a one-page summary … save to Desktop":** retrieval/summarize pipeline → create_pages_doc(content="$step3.densified_summary", output_path="~/Desktop/Cerebro Overview.pages") → reply_to_user referencing saved path.
+**"Create a one-page summary … save to Desktop":** retrieval/summarize pipeline → create_keynote(content="$step3.densified_summary", output_path="~/Desktop/Cerebro Overview.key") → reply_to_user referencing saved path.
 
 **Email variant:** append compose_email(subject="Cerebro OS pitch", body="$step3.densified_summary", recipient="$memory.preferred_recipient", send=false) before final reply so commitments stay explicit.
 
-**Guidance:** "Whenever user says save or email, add explicit delivery steps: write file (create_pages_doc / create_keynote) → verify path in post_check → delivery tool (compose_email etc.) → reply_to_user summarizing status."
+**Guidance:** "Whenever user says save or email, add explicit delivery steps: write file (create_keynote) → verify path in post_check → delivery tool (compose_email etc.) → reply_to_user summarizing status."
 
 ### Example: Create and Save Summary Document
 
@@ -5922,15 +5928,16 @@ I found a meeting commitment in your emails for "Weekly Team Sync" on Wednesday 
     },
     {
       "id": 4,
-      "action": "create_pages_doc",
+      "action": "create_keynote",
       "parameters": {
+        "title": "Cerebro OS Overview",
         "content": "$step3.densified_summary",
-        "output_path": "~/Desktop/Cerebro_OS_Overview.pages"
+        "output_path": "~/Desktop/Cerebro_OS_Overview.key"
       },
       "dependencies": [3],
-      "reasoning": "Save the summary as a Pages document on Desktop",
-      "expected_output": "pages_path to created document",
-      "post_check": "Verify file exists at pages_path",
+      "reasoning": "Save the summary as a Keynote presentation on Desktop",
+      "expected_output": "keynote_path to created presentation",
+      "post_check": "Verify file exists at keynote_path",
       "deliveries": ["create_document"]
     },
     {

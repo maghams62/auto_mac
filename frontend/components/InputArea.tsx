@@ -3,9 +3,10 @@
 import { useState, KeyboardEvent, useRef, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { SLASH_COMMANDS, SlashCommandDefinition } from "@/lib/slashCommands";
+import { getChatCommands, getSortedCommands, SlashCommandDefinition } from "@/lib/slashCommands";
 import { duration, easing } from "@/lib/motion";
 import logger from "@/lib/logger";
+import { useGlobalEventBus } from "@/lib/telemetry";
 
 interface InputAreaProps {
   onSend: (message: string) => void;
@@ -31,6 +32,7 @@ export default function InputArea({
   const [input, setInput] = useState(initialValue);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const eventBus = useGlobalEventBus();
 
   const slashInput = input.startsWith("/") ? input.slice(1) : "";
   const slashQuery = slashInput.split(/[\s\n]/)[0] ?? "";
@@ -42,17 +44,31 @@ export default function InputArea({
       return [];
     }
 
-    if (!slashQuery.trim()) {
-      return SLASH_COMMANDS;
-    }
-
+    // Only show chat commands in the dropdown (not special-ui commands like /files)
+    const chatCommands = getChatCommands();
+    
     const query = slashQuery.toLowerCase();
-    return SLASH_COMMANDS.filter((cmd) =>
+    const filtered = chatCommands.filter((cmd) =>
       [cmd.command, cmd.label, cmd.description]
         .join(" ")
         .toLowerCase()
         .includes(query)
     );
+
+    if (!slashQuery.trim()) {
+      // Return sorted by priority
+      return getSortedCommands().filter(cmd => 
+        chatCommands.some(cc => cc.command === cmd.command)
+      );
+    }
+
+    // For filtered results, maintain priority order
+    const sorted = getSortedCommands();
+    return filtered.sort((a, b) => {
+      const aIdx = sorted.findIndex(c => c.command === a.command);
+      const bIdx = sorted.findIndex(c => c.command === b.command);
+      return aIdx - bIdx;
+    });
   }, [showSlashPalette, slashQuery]);
 
   useEffect(() => {
@@ -118,8 +134,74 @@ export default function InputArea({
     if (isProcessing) {
       return;
     }
-    if (input.trim() && !disabled) {
-      onSend(input.trim());
+
+    // Handle /files as special UI command (opens palette, not chat)
+    if (input.startsWith("/files")) {
+      const query = input.replace(/^\/files\s*/, "");
+      const trimmed = query.trim();
+      if (trimmed.length > 0) {
+        eventBus.emit("open-command-palette", { query: trimmed, source: "files" });
+        logger.info("[INPUT] Opening command palette for /files search", { query: trimmed });
+        // Emit telemetry for /files usage
+        eventBus.emit("slash-command-used", { 
+          command: "files", 
+          invocation_source: "input_dropdown",
+          query: trimmed 
+        });
+        setInput("");
+        onValueChange?.("");
+        return;
+      }
+    }
+
+    // Handle /folder as special UI command for lookup mode (opens palette, not chat)
+    // Only trigger palette for pure lookup queries (no organize/rename verbs)
+    if (input.startsWith("/folder")) {
+      const query = input.replace(/^\/folder\s*/, "");
+      const trimmed = query.trim();
+      
+      // Check if this is a lookup query (not a management operation)
+      const managementKeywords = ["organize", "rename", "normalize", "alpha", "sort", "arrange", "plan", "apply"];
+      const isLookupQuery = trimmed.length > 0 && 
+        !managementKeywords.some(keyword => trimmed.toLowerCase().includes(keyword));
+      
+      if (isLookupQuery) {
+        eventBus.emit("open-command-palette", { query: trimmed, source: "folder" });
+        logger.info("[COMMAND PALETTE] Opening command palette for /folder search", { query: trimmed });
+        // Emit telemetry for /folder usage
+        eventBus.emit("slash-command-used", { 
+          command: "folder", 
+          invocation_source: "input_dropdown",
+          query: trimmed 
+        });
+        setInput("");
+        onValueChange?.("");
+        return;
+      }
+      // If it's a management operation, fall through to normal chat flow
+    }
+
+    // Check if this is a slash command and emit telemetry
+    const trimmedInput = input.trim();
+    if (trimmedInput.startsWith("/")) {
+      const commandMatch = trimmedInput.match(/^\/(\w+)/);
+      if (commandMatch) {
+        const commandName = commandMatch[1].toLowerCase();
+        // Only emit telemetry for supported commands
+        const supportedCommand = getChatCommands().find(cmd => 
+          cmd.command.slice(1).toLowerCase() === commandName
+        );
+        if (supportedCommand) {
+          eventBus.emit("slash-command-used", { 
+            command: supportedCommand.telemetryKey || commandName,
+            invocation_source: "input_dropdown"
+          });
+        }
+      }
+    }
+
+    if (trimmedInput && !disabled) {
+      onSend(trimmedInput);
       setInput("");
       onValueChange?.("");
     }
@@ -231,7 +313,7 @@ export default function InputArea({
         )}
 
         <motion.div
-          className="group relative rounded-3xl bg-glass-elevated backdrop-blur-glass px-3 py-2 flex items-end gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] focus-within:shadow-[0_0_25px_rgba(var(--accent-primary-rgb),0.35)] transition-all duration-200 ease-out"
+          className="group relative rounded-3xl bg-glass-elevated backdrop-blur-glass px-3 py-2 flex items-end gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] transition-all duration-200 ease-out"
           whileFocus={{ scale: 1.01 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
         >
@@ -251,10 +333,10 @@ export default function InputArea({
               onValueChange?.(newValue);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Message Cerebro..."
+            placeholder="How can Cerebro help you?"
             disabled={disabled}
             autoFocus
-            className="flex-1 bg-transparent text-text-primary placeholder-text-subtle resize-none outline-none text-[15px] leading-[1.5] max-h-[200px] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_rgba(var(--accent-primary-rgb),0.45)] caret-accent-primary caret-transition"
+            className="flex-1 bg-transparent text-text-primary placeholder-text-subtle resize-none outline-none text-[15px] leading-[1.5] max-h-[200px] focus-visible:outline-none caret-accent-primary caret-transition"
             rows={1}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -262,6 +344,7 @@ export default function InputArea({
               target.style.height = Math.min(target.scrollHeight, 200) + "px";
             }}
             aria-label="Message input"
+            data-testid="chat-input"
           />
 
           <div className="flex items-center gap-2">

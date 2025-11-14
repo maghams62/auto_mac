@@ -321,7 +321,7 @@ export function getWebSocketMonitor(): WebSocketMonitor {
       recordHeartbeat: () => {},
       recordConnectionFailure: () => {},
       destroy: () => {},
-    } as WebSocketMonitor;
+    } as unknown as WebSocketMonitor;
   }
 
   if (!_wsMonitor) {
@@ -350,3 +350,48 @@ export const wsMonitor = new Proxy({} as WebSocketMonitor, {
     return value;
   }
 });
+type EventHandler = (payload?: Record<string, any>) => void;
+
+class GlobalEventBus {
+  private handlers: Map<string, Set<EventHandler>> = new Map();
+
+  subscribe(event: string, handler: EventHandler) {
+    if (!this.handlers.has(event)) {
+      this.handlers.set(event, new Set());
+    }
+    this.handlers.get(event)!.add(handler);
+    return () => this.unsubscribe(event, handler);
+  }
+
+  unsubscribe(event: string, handler: EventHandler) {
+    const set = this.handlers.get(event);
+    if (set) {
+      set.delete(handler);
+      if (set.size === 0) {
+        this.handlers.delete(event);
+      }
+    }
+  }
+
+  emit(event: string, payload?: Record<string, any>) {
+    const set = this.handlers.get(event);
+    if (set) {
+      set.forEach(handler => {
+        try {
+          handler(payload);
+        } catch (err) {
+          console.warn(`[EVENT BUS] handler for "${event}" failed`, err);
+        }
+      });
+    }
+  }
+}
+
+let _globalEventBus: GlobalEventBus | null = null;
+
+export function useGlobalEventBus(): GlobalEventBus {
+  if (!_globalEventBus) {
+    _globalEventBus = new GlobalEventBus();
+  }
+  return _globalEventBus;
+}

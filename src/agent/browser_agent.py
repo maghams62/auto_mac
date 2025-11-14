@@ -40,6 +40,21 @@ def _load_browser_runtime():
     }
 
 
+def _reset_browser_instance(reason: str = ""):
+    """Close and clear the cached browser instance."""
+    global _browser_instance
+    if _browser_instance is None:
+        return
+
+    try:
+        logger.info(f"[BROWSER AGENT] Resetting browser instance ({reason})")
+        _browser_instance.close()
+    except Exception as exc:
+        logger.warning(f"[BROWSER AGENT] Error while closing browser instance: {exc}")
+    finally:
+        _browser_instance = None
+
+
 def get_browser():
     """Get or create browser instance."""
     global _browser_instance, _browser_runtime_cache
@@ -152,9 +167,19 @@ def navigate_to_url(url: str, wait_until: str = "domcontentloaded") -> Dict[str,
     """
     logger.info(f"[BROWSER AGENT] Tool: navigate_to_url(url='{url}')")
 
-    try:
-        browser = get_browser()
-        result = browser.navigate(url=url, wait_until=wait_until)
+    max_attempts = 2
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            browser = get_browser()
+            result = browser.navigate(url=url, wait_until=wait_until)
+        except Exception as exc:
+            logger.error(f"[BROWSER AGENT] Error in navigate_to_url: {exc}")
+            result = {
+                "success": False,
+                "error": str(exc),
+                "error_type": "NavigationError",
+            }
 
         if result.get("success"):
             return {
@@ -163,22 +188,32 @@ def navigate_to_url(url: str, wait_until: str = "domcontentloaded") -> Dict[str,
                 "status": result["status"],
                 "message": f"Successfully navigated to {result['url']}"
             }
-        else:
-            return {
-                "error": True,
-                "error_type": "NavigationError",
-                "error_message": result.get("error", "Failed to navigate"),
-                "retry_possible": True
-            }
 
-    except Exception as e:
-        logger.error(f"[BROWSER AGENT] Error in navigate_to_url: {e}")
+        # Handle specific Playwright loop mismatch errors by resetting browser and retrying once
+        error_text = str(result.get("error_message") or result.get("error") or "").lower()
+        if "future belongs to a different loop" in error_text or "event loop is closed" in error_text:
+            if attempt < max_attempts:
+                logger.warning(
+                    "[BROWSER AGENT] Detected Playwright loop mismatch during navigation; "
+                    "resetting browser and retrying"
+                )
+                _reset_browser_instance("loop mismatch during navigation")
+                continue
+
         return {
             "error": True,
-            "error_type": "NavigationError",
-            "error_message": str(e),
-            "retry_possible": False
+            "error_type": result.get("error_type", "NavigationError"),
+            "error_message": result.get("error_message") or result.get("error", "Failed to navigate"),
+            "retry_possible": True
         }
+
+    # If all attempts exhausted
+    return {
+        "error": True,
+        "error_type": "NavigationError",
+        "error_message": "Failed to navigate after retrying with a fresh browser session",
+        "retry_possible": True
+    }
 
 
 @tool

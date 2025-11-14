@@ -99,6 +99,16 @@ class SpotifyPlaybackBackend(ABC):
         pass
 
     @abstractmethod
+    def next_track(self) -> PlaybackResult:
+        """Skip to the next track in the current queue."""
+        pass
+
+    @abstractmethod
+    def previous_track(self) -> PlaybackResult:
+        """Return to the previous track in the current queue."""
+        pass
+
+    @abstractmethod
     def is_available(self) -> bool:
         """Check if this backend is available and authenticated."""
         pass
@@ -132,6 +142,11 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
 
     def _resolve_track_to_uri(self, track_query: str, artist_hint: Optional[str] = None) -> Optional[str]:
         """Search for a track and return its URI."""
+        track_info = self._resolve_track_with_info(track_query, artist_hint)
+        return track_info["uri"] if track_info else None
+
+    def _resolve_track_with_info(self, track_query: str, artist_hint: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Search for a track and return its URI along with track info (name, artist)."""
         try:
             client = self._get_api_client()
             if not client:
@@ -146,7 +161,14 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
             tracks = search_result.get("tracks", {}).get("items", [])
 
             if tracks:
-                return tracks[0]["uri"]
+                track = tracks[0]
+                artists = track.get("artists", [])
+                artist_name = artists[0].get("name", "Unknown Artist") if artists else "Unknown Artist"
+                return {
+                    "uri": track["uri"],
+                    "name": track.get("name", track_query),
+                    "artist": artist_name
+                }
             else:
                 logger.warning(f"[SPOTIFY API BACKEND] No tracks found for query: {query}")
                 return None
@@ -469,20 +491,23 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     retry_possible=True
                 )
 
-            # Check if it's already a URI
+            # Resolve track info (URI, name, artist)
+            track_info = None
             if self._is_spotify_uri(track_identifier):
                 track_uri = track_identifier
+                # For URIs, we don't have track info yet - will try to get it after playback
             else:
-                # Resolve the query to a URI
+                # Resolve the query to get URI and track info
                 logger.info(f"[SPOTIFY API BACKEND] Resolving track query: '{track_identifier}'")
-                track_uri = self._resolve_track_to_uri(track_identifier, artist)
-                if not track_uri:
+                track_info = self._resolve_track_with_info(track_identifier, artist)
+                if not track_info:
                     return PlaybackResult(
                         success=False, action="play_song", backend=self.backend_type,
                         error_type="SongNotFound",
                         error_message=f"Could not find track '{track_identifier}' on Spotify",
                         retry_possible=True
                     )
+                track_uri = track_info["uri"]
 
             # Try to play with device activation logic
             device_id_to_use = self._web_player_device_id
@@ -491,8 +516,15 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
             try:
                 logger.info(f"[SPOTIFY API BACKEND] Attempting direct playback")
                 result = client.play_track(track_uri, device_id=device_id_to_use)
+                # Build message with track info if available
+                if track_info:
+                    message = f"Now playing: {track_info['name']} by {track_info['artist']}"
+                else:
+                    message = "Started track playback"
                 return PlaybackResult(
-                    success=True, action="play_song", message="Started track playback",
+                    success=True, action="play_song", message=message,
+                    track=track_info["name"] if track_info else None,
+                    artist=track_info["artist"] if track_info else None,
                     backend=self.backend_type
                 )
             except Exception as e:
@@ -510,8 +542,15 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     try:
                         logger.info(f"[SPOTIFY API BACKEND] Retrying playback with activated device: {activated_device_id}")
                         result = client.play_track(track_uri, device_id=activated_device_id)
+                        # Build message with track info if available
+                        if track_info:
+                            message = f"Now playing: {track_info['name']} by {track_info['artist']}"
+                        else:
+                            message = "Started track playback"
                         return PlaybackResult(
-                            success=True, action="play_song", message="Started track playback",
+                            success=True, action="play_song", message=message,
+                            track=track_info["name"] if track_info else None,
+                            artist=track_info["artist"] if track_info else None,
                             backend=self.backend_type
                         )
                     except Exception as retry_error:
@@ -742,6 +781,86 @@ class SpotifyAPIBackend(SpotifyPlaybackBackend):
                     retry_possible=True
                 )
 
+    def next_track(self) -> PlaybackResult:
+        """Skip to the next track in the queue using the API backend."""
+        try:
+            client = self._get_api_client()
+            if not client:
+                return PlaybackResult(
+                    success=False, action="next_track", backend=self.backend_type,
+                    error_type="APINotAvailable", error_message="Spotify API not available"
+                )
+
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="next_track", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback control.",
+                    retry_possible=True
+                )
+
+            device_id = self._web_player_device_id
+            if device_id:
+                try:
+                    client.skip_to_next(device_id=device_id)
+                except Exception as device_error:
+                    logger.warning(f"[SPOTIFY API BACKEND] Failed to skip to next track on device {device_id}: {device_error}. Retrying without device.")
+                    client.skip_to_next()
+            else:
+                client.skip_to_next()
+
+            return PlaybackResult(
+                success=True, action="next_track", message="Skipped to the next track",
+                backend=self.backend_type
+            )
+        except Exception as e:
+            logger.error(f"[SPOTIFY API BACKEND] Error skipping to next track: {e}")
+            return PlaybackResult(
+                success=False, action="next_track", backend=self.backend_type,
+                error_type="APIError", error_message=str(e),
+                retry_possible=True
+            )
+
+    def previous_track(self) -> PlaybackResult:
+        """Skip to the previous track in the queue using the API backend."""
+        try:
+            client = self._get_api_client()
+            if not client:
+                return PlaybackResult(
+                    success=False, action="previous_track", backend=self.backend_type,
+                    error_type="APINotAvailable", error_message="Spotify API not available"
+                )
+
+            if not client.has_available_devices():
+                return PlaybackResult(
+                    success=False, action="previous_track", backend=self.backend_type,
+                    error_type="NoDevicesAvailable",
+                    error_message="No Spotify devices available for playback control.",
+                    retry_possible=True
+                )
+
+            device_id = self._web_player_device_id
+            if device_id:
+                try:
+                    client.skip_to_previous(device_id=device_id)
+                except Exception as device_error:
+                    logger.warning(f"[SPOTIFY API BACKEND] Failed to skip to previous track on device {device_id}: {device_error}. Retrying without device.")
+                    client.skip_to_previous()
+            else:
+                client.skip_to_previous()
+
+            return PlaybackResult(
+                success=True, action="previous_track", message="Returned to the previous track",
+                backend=self.backend_type
+            )
+        except Exception as e:
+            logger.error(f"[SPOTIFY API BACKEND] Error skipping to previous track: {e}")
+            return PlaybackResult(
+                success=False, action="previous_track", backend=self.backend_type,
+                error_type="APIError", error_message=str(e),
+                retry_possible=True
+            )
+
 
 class SpotifyAutomationBackend(SpotifyPlaybackBackend):
     """Legacy AppleScript automation backend."""
@@ -827,6 +946,58 @@ class SpotifyAutomationBackend(SpotifyPlaybackBackend):
             logger.error(f"Automation pause failed: {e}")
             return PlaybackResult(
                 success=False, action="pause", backend=self.backend_type,
+                error_type="AutomationError", error_message=str(e)
+            )
+
+    def next_track(self) -> PlaybackResult:
+        """Skip to the next track using automation."""
+        try:
+            automation = self._get_automation()
+            if not automation:
+                return PlaybackResult(
+                    success=False, action="next_track", backend=self.backend_type,
+                    error_type="AutomationNotAvailable", error_message="Spotify automation not available"
+                )
+
+            result = automation.next_track()
+            return PlaybackResult(
+                success=result.get("success", False),
+                action="next_track",
+                message=result.get("message", ""),
+                backend=self.backend_type,
+                error_type=result.get("error_type") if not result.get("success") else None,
+                error_message=result.get("error_message") if not result.get("success") else None
+            )
+        except Exception as e:
+            logger.error(f"Automation next_track failed: {e}")
+            return PlaybackResult(
+                success=False, action="next_track", backend=self.backend_type,
+                error_type="AutomationError", error_message=str(e)
+            )
+
+    def previous_track(self) -> PlaybackResult:
+        """Return to the previous track using automation."""
+        try:
+            automation = self._get_automation()
+            if not automation:
+                return PlaybackResult(
+                    success=False, action="previous_track", backend=self.backend_type,
+                    error_type="AutomationNotAvailable", error_message="Spotify automation not available"
+                )
+
+            result = automation.previous_track()
+            return PlaybackResult(
+                success=result.get("success", False),
+                action="previous_track",
+                message=result.get("message", ""),
+                backend=self.backend_type,
+                error_type=result.get("error_type") if not result.get("success") else None,
+                error_message=result.get("error_message") if not result.get("success") else None
+            )
+        except Exception as e:
+            logger.error(f"Automation previous_track failed: {e}")
+            return PlaybackResult(
+                success=False, action="previous_track", backend=self.backend_type,
                 error_type="AutomationError", error_message=str(e)
             )
 
@@ -1123,6 +1294,34 @@ class SpotifyPlaybackService:
             logger.warning(f"No backend available for status: {e}")
             return PlaybackResult(
                 success=False, action="get_status", backend=None,
+                error_type="NoBackendAvailable", error_message=str(e)
+            )
+
+    def next_track(self) -> PlaybackResult:
+        """Skip to the next track."""
+        try:
+            backend = self._select_backend("next_track")
+            result = backend.next_track()
+            logger.info(f"Next track result: {result.success} (backend: {result.backend.value if result.backend else 'unknown'})")
+            return result
+        except ValueError as e:
+            logger.warning(f"No backend available for next_track: {e}")
+            return PlaybackResult(
+                success=False, action="next_track", backend=None,
+                error_type="NoBackendAvailable", error_message=str(e)
+            )
+
+    def previous_track(self) -> PlaybackResult:
+        """Return to the previous track."""
+        try:
+            backend = self._select_backend("previous_track")
+            result = backend.previous_track()
+            logger.info(f"Previous track result: {result.success} (backend: {result.backend.value if result.backend else 'unknown'})")
+            return result
+        except ValueError as e:
+            logger.warning(f"No backend available for previous_track: {e}")
+            return PlaybackResult(
+                success=False, action="previous_track", backend=None,
                 error_type="NoBackendAvailable", error_message=str(e)
             )
 

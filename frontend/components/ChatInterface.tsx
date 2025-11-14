@@ -1,28 +1,57 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useWebSocket } from "@/lib/useWebSocket";
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense } from "react";
+import { useWebSocket, PlanState } from "@/lib/useWebSocket";
 import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputArea from "./InputArea";
 import ScrollToBottom from "./ScrollToBottom";
-import HelpOverlay from "./HelpOverlay";
-import KeyboardShortcutsOverlay from "./KeyboardShortcutsOverlay";
 import RecordingIndicator from "./RecordingIndicator";
-import SpotifyPlayer from "./SpotifyPlayer";
 import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
 import logger from "@/lib/logger";
 import { usePlanTelemetry } from "@/lib/usePlanTelemetry";
 import Header from "./Header";
-import PlanProgressRail from "./PlanProgressRail";
+import FeedbackBar, { FeedbackChoice } from "./FeedbackBar";
 import ActiveStepChip from "./ActiveStepChip";
-import ReasoningTrace from "./ReasoningTrace";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useBootContext } from "@/components/BootProvider";
+import { useGlobalEventBus } from "@/lib/telemetry";
+import { useToast } from "@/lib/useToast";
+
+// Lazy load non-critical components to improve initial load time
+const HelpOverlay = lazy(() => import("./HelpOverlay"));
+const KeyboardShortcutsOverlay = lazy(() => import("./KeyboardShortcutsOverlay"));
+const SpotifyPlayer = lazy(() => import("./SpotifyPlayer"));
+const PlanProgressRail = lazy(() => import("./PlanProgressRail"));
+const ReasoningTrace = lazy(() => import("./ReasoningTrace"));
 
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
+
+type FinalPlanStatus = PlanState["status"];
+
+interface PendingFeedbackState {
+  planId: string;
+  goal: string;
+  planStatus: FinalPlanStatus;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+type SlashCommandTelemetryPayload = {
+  command: string;
+  invocation_source?: string;
+  query?: string;
+};
+
+const isSlashCommandTelemetryPayload = (
+  payload?: Record<string, any>
+): payload is SlashCommandTelemetryPayload => {
+  return typeof payload?.command === "string";
+};
+
+const FINAL_PLAN_STATUSES = new Set<FinalPlanStatus>(["completed", "failed", "cancelled"]);
 
 export default function ChatInterface() {
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
@@ -32,9 +61,13 @@ export default function ChatInterface() {
   const [planRailCollapsed, setPlanRailCollapsed] = useState(false);
   const [showReasoningTrace, setShowReasoningTrace] = useState(false);
   const [inputValue, setInputValue] = useState("");
+  const { addToast } = useToast();
+  const [pendingFeedback, setPendingFeedback] = useState<PendingFeedbackState | null>(null);
+  const [isFeedbackSubmitting, setIsFeedbackSubmitting] = useState(false);
+  const submittedPlanIdsRef = useRef<Set<string>>(new Set());
 
   // Plan telemetry tracking
-  const { getAnalytics } = usePlanTelemetry(planState);
+  const { currentTelemetry, getAnalytics } = usePlanTelemetry(planState);
   
   // Limit messages to prevent performance issues with very long conversations
   // Must be defined immediately after allMessages to avoid temporal dead zone issues
@@ -44,6 +77,36 @@ export default function ChatInterface() {
     }
     return allMessages.slice(-MAX_VISIBLE_MESSAGES);
   }, [allMessages]);
+  
+  useEffect(() => {
+    if (!planState || !currentTelemetry) {
+      return;
+    }
+
+    const planStatus = planState.status as FinalPlanStatus;
+    if (!FINAL_PLAN_STATUSES.has(planStatus)) {
+      return;
+    }
+
+    const planId = currentTelemetry.planId;
+    if (!planId || submittedPlanIdsRef.current.has(planId)) {
+      return;
+    }
+
+    setPendingFeedback((prev) => {
+      if (prev && prev.planId === planId) {
+        return prev;
+      }
+
+      return {
+        planId,
+        goal: planState.goal || "Unnamed task",
+        planStatus,
+        startedAt: planState.started_at,
+        completedAt: planState.completed_at,
+      };
+    });
+  }, [planState, currentTelemetry]);
   
   const createAbortController = useCallback((timeoutMs: number) => {
     const controller = new AbortController();
@@ -230,6 +293,85 @@ export default function ChatInterface() {
     setInputValue("");
   }, [sendMessage]);
 
+  const handleFeedbackSubmit = useCallback(
+    async (choice: FeedbackChoice, notes?: string) => {
+      if (!pendingFeedback || !planState) {
+        return;
+      }
+
+      setIsFeedbackSubmitting(true);
+      try {
+        const analytics = getAnalytics();
+        const stepSnapshots = planState.steps.map((step) => ({
+          id: step.id,
+          action: step.action,
+          status: step.status,
+          started_at: step.started_at,
+          completed_at: step.completed_at,
+          sequence_number: step.sequence_number,
+          output_preview: step.output_preview
+            ? step.output_preview.slice(0, 400)
+            : undefined,
+          error: step.error,
+        }));
+
+        const payload: Record<string, unknown> = {
+          plan_id: pendingFeedback.planId,
+          goal: pendingFeedback.goal,
+          feedback_type: choice,
+          plan_status: planState.status,
+          duration_ms: analytics?.duration,
+          analytics,
+          plan_started_at: pendingFeedback.startedAt,
+          plan_completed_at: pendingFeedback.completedAt,
+          step_statuses: stepSnapshots,
+          metadata: {
+            message_count: messages.length,
+          },
+        };
+
+        if (notes) {
+          payload.notes = notes;
+        }
+
+        const response = await fetch(`${apiBaseUrl}/api/feedback`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          let detail = "Server returned an error";
+          try {
+            const errorData = await response.json();
+            detail = errorData.detail || errorData.message || detail;
+          } catch {
+            // ignore parse errors
+          }
+          throw new Error(detail);
+        }
+
+        submittedPlanIdsRef.current.add(pendingFeedback.planId);
+        setPendingFeedback(null);
+        addToast(
+          choice === "positive"
+            ? "Thanks for the feedback! Logged for quality tracking."
+            : "Issue flagged for critique follow-up.",
+          choice === "positive" ? "success" : "warning",
+          3500
+        );
+      } catch (error) {
+        console.error("[FEEDBACK] Failed to record feedback", error);
+        addToast("Couldn't record feedback. Please try again.", "error", 4000);
+      } finally {
+        setIsFeedbackSubmitting(false);
+      }
+    },
+    [pendingFeedback, planState, getAnalytics, messages.length, apiBaseUrl, addToast]
+  );
+
   const hasMessages = messages.length > 0;
 
   // Screen reader announcements for voice recording state changes
@@ -325,18 +467,66 @@ export default function ChatInterface() {
     };
   }, [sendMessage, setInputValue]);
 
+  // Handle slash command telemetry
+  const eventBus = useGlobalEventBus();
+  useEffect(() => {
+    if (!eventBus) return;
+
+    const handleSlashCommandTelemetry = async (payload?: Record<string, any>) => {
+      if (!isSlashCommandTelemetryPayload(payload)) {
+        return;
+      }
+
+      try {
+        // Send telemetry to backend
+        const response = await fetch(`${apiBaseUrl}/api/telemetry/slash-command`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            command_name: payload.command,
+            invocation_source: payload.invocation_source || "unknown",
+            timestamp: new Date().toISOString(),
+            query: payload.query,
+          }),
+        });
+
+        if (!response.ok) {
+          logger.warn("[TELEMETRY] Failed to record slash command usage", {
+            command: payload.command,
+            status: response.status,
+          });
+        }
+      } catch (error) {
+        // Don't break user flow if telemetry fails
+        logger.warn("[TELEMETRY] Error recording slash command usage", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    const unsubscribe = eventBus.subscribe("slash-command-used", handleSlashCommandTelemetry);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [eventBus, apiBaseUrl]);
+
   return (
     <>
-      {/* Plan Progress Rail */}
-      <PlanProgressRail
-        planState={planState}
-        isCollapsed={planRailCollapsed}
-        showReasoningTrace={showReasoningTrace}
-        onToggleCollapse={() => setPlanRailCollapsed(!planRailCollapsed)}
-        onToggleReasoningTrace={() => setShowReasoningTrace(!showReasoningTrace)}
-      />
+      {/* Plan Progress Rail - Lazy loaded */}
+      <Suspense fallback={null}>
+        <PlanProgressRail
+          planState={planState}
+          isCollapsed={planRailCollapsed}
+          showReasoningTrace={showReasoningTrace}
+          onToggleCollapse={() => setPlanRailCollapsed(!planRailCollapsed)}
+          onToggleReasoningTrace={() => setShowReasoningTrace(!showReasoningTrace)}
+        />
+      </Suspense>
 
-      {/* Reasoning Trace Panel */}
+      {/* Reasoning Trace Panel - Lazy loaded */}
       <AnimatePresence>
         {planState && showReasoningTrace && (
           <motion.div
@@ -346,7 +536,9 @@ export default function ChatInterface() {
             transition={{ duration: 0.3 }}
             className="fixed top-20 right-4 z-40"
           >
-            <ReasoningTrace planState={planState} />
+            <Suspense fallback={<div className="w-96 h-96 bg-background-secondary rounded-lg" />}>
+              <ReasoningTrace planState={planState} />
+            </Suspense>
           </motion.div>
         )}
       </AnimatePresence>
@@ -361,16 +553,18 @@ export default function ChatInterface() {
         {screenReaderAnnouncement}
       </div>
 
-      <div className="flex-1 flex flex-col min-h-0" role="main">
-        <Header
-          isConnected={isConnected}
-          messageCount={messages.length}
-          onClearSession={() => sendCommand("clear")}
-          onShowHelp={() => setShowHelpOverlay(true)}
-        />
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1 w-full px-6 sm:px-8 lg:px-12" role="region" aria-label="Chat conversation">
-            <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
+      <div className="flex-1 flex flex-row min-h-0" role="main">
+        {/* Main chat area */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <Header
+            isConnected={isConnected}
+            messageCount={messages.length}
+            onClearSession={() => sendCommand("clear")}
+            onShowHelp={() => setShowHelpOverlay(true)}
+          />
+          <div className="flex-1 flex flex-col">
+            <div className="flex-1 w-full px-6 sm:px-8 lg:px-12" role="region" aria-label="Chat conversation">
+              <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
               <div className="flex-1 min-h-0 flex flex-col justify-end gap-6 py-6 sm:py-8 lg:py-10">
                 <div
                   className={cn(
@@ -379,69 +573,29 @@ export default function ChatInterface() {
                   )}
                 >
                   {!hasMessages ? (
-                    <motion.div
-                      className="w-full"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
-                    >
-                      <motion.div
-                        className="text-center max-w-3xl mx-auto space-y-8"
-                        initial={{ scale: 0.95, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ duration: 0.6, delay: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
-                      >
-                        {/* Hero Section */}
-                        <motion.div
-                          className="glass-elevated rounded-3xl p-8 shadow-elevated backdrop-blur-glass"
-                          whileHover={{ scale: 1.01 }}
-                          transition={{ duration: 0.2, ease: "easeOut" }}
-                        >
-                          {/* Animated logo */}
-                          <motion.div
-                            className="mb-6 flex justify-center"
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ duration: 0.5, delay: 0.6, type: "spring", bounce: 0.3 }}
-                          >
+                    <div className="w-full">
+                      <div className="text-center max-w-3xl mx-auto space-y-8">
+                        {/* Hero Section - Simplified animations for better performance */}
+                        <div className="glass-elevated rounded-3xl p-8 shadow-elevated backdrop-blur-glass">
+                          {/* Logo - Simplified animation */}
+                          <div className="mb-6 flex justify-center">
                             <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-accent-primary to-accent-primary-hover flex items-center justify-center shadow-glow-primary">
-                              <motion.span
-                                className="text-3xl font-bold text-white"
-                                animate={{ rotate: [0, -5, 5, 0] }}
-                                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                              >
-                                C
-                              </motion.span>
+                              <span className="text-3xl font-bold text-white">C</span>
                             </div>
-                          </motion.div>
+                          </div>
 
-                          <motion.h1
-                            className="text-5xl font-bold mb-4 text-text-primary"
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.6, delay: 0.8 }}
-                          >
+                          <h1 className="text-5xl font-bold mb-4 text-text-primary">
                             Welcome to Cerebro OS
-                          </motion.h1>
+                          </h1>
 
-                          <motion.p
-                            className="text-text-muted text-xl mb-8 leading-relaxed"
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.6, delay: 1.0 }}
-                          >
+                          <p className="text-text-muted text-xl mb-8 leading-relaxed">
                             Your intelligent Mac assistant powered by AI. Ask me anything about your system,
                             automate tasks, or get help with your daily workflow.
-                          </motion.p>
-                        </motion.div>
+                          </p>
+                        </div>
 
-                        {/* Suggestion Chips */}
-                        <motion.div
-                          className="flex flex-wrap justify-center gap-3"
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.6, delay: 1.2 }}
-                        >
+                        {/* Suggestion Chips - Simplified */}
+                        <div className="flex flex-wrap justify-center gap-3">
                           {[
                             "Show me my system info",
                             "Check my email",
@@ -449,41 +603,22 @@ export default function ChatInterface() {
                             "What's the weather like?",
                             "Help me organize files"
                           ].map((suggestion, index) => (
-                            <motion.button
+                            <button
                               key={suggestion}
                               onClick={() => sendMessage(suggestion)}
                               className="px-4 py-3 bg-surface-elevated/80 hover:bg-surface-elevated/90 border border-surface-outline/30 rounded-xl text-text-primary font-medium transition-all duration-200 ease-out shadow-soft hover:shadow-medium"
-                              whileHover={{ scale: 1.05, y: -2 }}
-                              whileTap={{ scale: 0.95 }}
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{
-                                duration: 0.4,
-                                delay: 1.4 + index * 0.1,
-                                ease: "easeOut"
-                              }}
                             >
                               {suggestion}
-                            </motion.button>
+                            </button>
                           ))}
-                        </motion.div>
+                        </div>
 
-                        {/* Keyboard hint */}
-                        <motion.div
-                          className="text-sm text-text-subtle"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ duration: 0.6, delay: 1.8 }}
-                        >
-                          <motion.span
-                            animate={{ opacity: [0.6, 1, 0.6] }}
-                            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                          >
-                            Press ⌘K to start typing, or Space for voice commands
-                          </motion.span>
-                        </motion.div>
-                      </motion.div>
-                    </motion.div>
+                        {/* Keyboard hint - Simplified */}
+                        <p className="text-sm text-text-subtle text-center">
+                          Press ⌘K to start typing, or Space for voice commands
+                        </p>
+                      </div>
+                    </div>
                   ) : (
                     <div
                       ref={messagesContainerRef}
@@ -574,6 +709,18 @@ export default function ChatInterface() {
                       <ActiveStepChip planState={planState} />
                     </div>
 
+                    {pendingFeedback && (
+                      <div className="mb-4">
+                        <FeedbackBar
+                          goal={pendingFeedback.goal}
+                          planStatus={pendingFeedback.planStatus}
+                          analytics={getAnalytics()}
+                          isSubmitting={isFeedbackSubmitting}
+                          onSubmit={handleFeedbackSubmit}
+                        />
+                      </div>
+                    )}
+
                     <InputArea
                       onSend={handleSend}
                       disabled={!isConnected || isTranscribing}
@@ -590,7 +737,17 @@ export default function ChatInterface() {
             </div>
           </div>
         </div>
+
+        {/* Sidebar with description */}
+        <div className="hidden lg:flex w-80 flex-col justify-center items-start px-12 py-16 border-l border-glass/20">
+          <div className="max-w-xs space-y-2">
+            <p className="text-text-primary text-base leading-[1.7] font-normal tracking-normal">
+              It&apos;s an LLM orchestration engine for the Mac
+            </p>
+          </div>
+        </div>
       </div>
+    </div>
 
       {/* Recording Indicator */}
       <RecordingIndicator
@@ -607,15 +764,25 @@ export default function ChatInterface() {
         }}
       />
 
-      {/* Help and Shortcuts Overlays */}
-      <HelpOverlay isOpen={showHelpOverlay} onClose={() => setShowHelpOverlay(false)} />
-      <KeyboardShortcutsOverlay
-        isOpen={showShortcutsOverlay}
-        onClose={() => setShowShortcutsOverlay(false)}
-      />
+      {/* Help and Shortcuts Overlays - Lazy loaded */}
+      {showHelpOverlay && (
+        <Suspense fallback={null}>
+          <HelpOverlay isOpen={showHelpOverlay} onClose={() => setShowHelpOverlay(false)} />
+        </Suspense>
+      )}
+      {showShortcutsOverlay && (
+        <Suspense fallback={null}>
+          <KeyboardShortcutsOverlay
+            isOpen={showShortcutsOverlay}
+            onClose={() => setShowShortcutsOverlay(false)}
+          />
+        </Suspense>
+      )}
 
-      {/* Spotify Web Player */}
-      <SpotifyPlayer />
+      {/* Spotify Web Player - Lazy loaded */}
+      <Suspense fallback={null}>
+        <SpotifyPlayer />
+      </Suspense>
     </>
   );
 }

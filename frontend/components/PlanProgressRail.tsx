@@ -92,32 +92,32 @@ export default function PlanProgressRail({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "running":
-        return <PlayCircleIcon className="w-4 h-4 text-blue-500 animate-pulse" />;
+        return <PlayCircleIcon className="w-4 h-4 text-accent-primary animate-pulse" />;
       case "completed":
-        return <CheckCircleIcon className="w-4 h-4 text-green-500" />;
+        return <CheckCircleIcon className="w-4 h-4 text-success" />;
       case "failed":
-        return <XCircleIcon className="w-4 h-4 text-red-500" />;
+        return <XCircleIcon className="w-4 h-4 text-accent-danger" />;
       case "skipped":
-        return <SkipForwardIcon className="w-4 h-4 text-gray-400" />;
+        return <SkipForwardIcon className="w-4 h-4 text-text-muted" />;
       default:
-        return <ClockIcon className="w-4 h-4 text-gray-400" />;
+        return <ClockIcon className="w-4 h-4 text-text-muted" />;
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "running":
-        return "border-blue-500 bg-blue-50";
-      case "completed":
-        return "border-green-500 bg-green-50";
-      case "failed":
-        return "border-red-500 bg-red-50";
-      case "skipped":
-        return "border-gray-400 bg-gray-50";
-      default:
-        return "border-gray-300 bg-gray-50";
-    }
-  };
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case "running":
+      return "border-accent-primary/60 bg-accent-primary/10 text-accent-primary";
+    case "completed":
+      return "border-success-border bg-success-bg text-success";
+    case "failed":
+      return "border-danger-border bg-danger-bg text-accent-danger";
+    case "skipped":
+      return "border-surface-outline/60 bg-surface/60 text-text-muted";
+    default:
+      return "border-surface-outline/40 bg-surface/50 text-text-muted";
+  }
+};
 
   return (
     <AnimatePresence>
@@ -125,16 +125,16 @@ export default function PlanProgressRail({
         initial={{ y: -100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: -100, opacity: 0 }}
-        className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-lg"
+        className="fixed top-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-md border-b border-surface-outline/40 shadow-soft"
       >
-        <div className="max-w-4xl mx-auto px-4 py-3">
+        <div className="max-w-4xl mx-auto px-4 py-3 text-text-primary">
           {/* Header with goal and progress */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="text-sm font-medium text-gray-900 truncate">
+              <div className="text-sm font-medium text-text-primary truncate">
                 🎯 {planState.goal}
               </div>
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-text-muted">
                 {completedSteps}/{totalSteps} steps
               </div>
             </div>
@@ -146,8 +146,8 @@ export default function PlanProgressRail({
                   className={cn(
                     "flex items-center gap-1 text-xs transition-colors px-2 py-1 rounded",
                     showReasoningTrace
-                      ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                      ? "text-accent-primary bg-accent-primary/15 hover:bg-accent-primary/20"
+                      : "text-text-muted hover:text-text-primary hover:bg-surface/60"
                   )}
                   title={showReasoningTrace ? "Hide detailed reasoning trace" : "Show detailed reasoning trace"}
                 >
@@ -158,7 +158,7 @@ export default function PlanProgressRail({
 
               <button
                 onClick={onToggleCollapse}
-                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors px-2 py-1 rounded hover:bg-gray-100"
+                className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface/60"
               >
                 {isCollapsed ? (
                   <>
@@ -176,7 +176,7 @@ export default function PlanProgressRail({
           </div>
 
           {/* Progress bar */}
-          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+          <div className="w-full bg-surface-outline/40 rounded-full h-2 mb-3">
             <motion.div
               className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full"
               initial={{ width: 0 }}
@@ -246,9 +246,9 @@ export default function PlanProgressRail({
                       }}
                       className={cn(
                         "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
-                        "border transition-all duration-300 relative overflow-hidden",
+                        "border transition-all duration-300 relative overflow-hidden shadow-soft/40",
                         getStatusColor(step.status),
-                        step.status === "running" && "ring-4 ring-blue-500/70 scale-110"
+                        step.status === "running" && "ring-4 ring-accent-primary/60 scale-110"
                       )}
                     >
                       {getStatusIcon(step.status)}

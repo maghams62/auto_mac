@@ -14,6 +14,7 @@ from typing import List, Optional, Dict, Any
 from langchain_core.tools import tool
 from pathlib import Path
 import logging
+import re
 
 from ..config import get_config_context
 from ..utils import get_temperature_for_model
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-def search_documents(query: str, user_request: str = None, include_images: bool = True) -> Dict[str, Any]:
+def search_documents(query: str, user_request: str = None, include_images: bool = True, top_k: Optional[int] = None) -> Dict[str, Any]:
     """
     Search for documents and optionally images using semantic search with LLM-determined parameters.
 
@@ -33,6 +34,7 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
         query: Natural language search query
         user_request: Original user request for context (optional)
         include_images: Whether to also search for images (default: True)
+        top_k: Optional explicit number of results to return. If provided, overrides LLM-determined value.
 
     Returns:
         Dictionary with results array containing both documents and images:
@@ -53,26 +55,46 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
             "best_result": dict (top result for backward compatibility)
         }
     """
-    logger.info(f"[FILE AGENT] Tool: search_documents(query='{query}', include_images={include_images})")
+    logger.info(f"[FILE AGENT] Tool: search_documents(query='{query}', include_images={include_images}, top_k={top_k})")
 
     try:
         from src.documents import DocumentIndexer, SemanticSearch
         from src.utils import load_config
 
         config = load_config()
+        documents_config = config.get("documents", {})
+        allowed_doc_types = {
+            ext.lower()
+            for ext in documents_config.get("supported_types", [".pdf", ".docx", ".txt"])
+            if isinstance(ext, str) and ext
+        }
         indexer = DocumentIndexer(config)
         search_engine = SemanticSearch(indexer, config)
 
-        # Use LLM to determine optimal search parameters (NO hardcoded top_k!)
-        from .parameter_resolver import ParameterResolver
+        # Determine top_k: use explicit value if provided, otherwise use LLM-determined value
+        if top_k is not None:
+            # Use explicit top_k, but still get other search params from LLM
+            from .parameter_resolver import ParameterResolver
+            resolver = ParameterResolver(config)
+            search_params = resolver.resolve_search_parameters(
+                query=query,
+                context={'user_request': user_request or query, 'previous_steps': []}
+            )
+            # Override top_k with explicit value
+            search_params['top_k'] = max(1, top_k)  # Ensure at least 1
+            logger.info(f"[FILE AGENT] Using explicit top_k={top_k}, other params from LLM: {search_params}")
+        else:
+            # Use LLM to determine optimal search parameters (NO hardcoded top_k!)
+            from .parameter_resolver import ParameterResolver
+            resolver = ParameterResolver(config)
+            search_params = resolver.resolve_search_parameters(
+                query=query,
+                context={'user_request': user_request or query, 'previous_steps': []}
+            )
+            logger.info(f"[FILE AGENT] LLM-determined search params: {search_params}")
 
-        resolver = ParameterResolver(config)
-        search_params = resolver.resolve_search_parameters(
-            query=query,
-            context={'user_request': user_request or query, 'previous_steps': []}
-        )
-
-        logger.info(f"[FILE AGENT] LLM-determined search params: {search_params}")
+        query_normalized = query.lower() if isinstance(query, str) else ""
+        query_tokens = [token for token in re.split(r"\W+", query_normalized) if token]
 
         # Search documents
         doc_results = search_engine.search(query, top_k=search_params.get('top_k', 1))
@@ -81,14 +103,42 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
         
         # Add document results
         for result in doc_results:
+            file_path = Path(result["file_path"])
+            suffix = file_path.suffix.lower()
+
+            # Filter to supported document types so we don't treat images as primary docs
+            if allowed_doc_types and suffix and suffix not in allowed_doc_types:
+                logger.debug(
+                    "[FILE AGENT] Skipping non-document result in document search: %s (extension=%s)",
+                    result["file_path"],
+                    suffix,
+                )
+                continue
+
+            boosted_score = result.get("score", 0.0)
+            content_preview_raw = result.get("content_preview", "")
+            title_normalized = file_path.stem.lower()
+
+            if query_normalized and title_normalized:
+                if query_normalized in title_normalized:
+                    boosted_score = max(boosted_score, 1.5)
+                elif query_tokens and all(token in title_normalized for token in query_tokens):
+                    boosted_score = max(boosted_score, 1.0)
+
+            if query_tokens and content_preview_raw:
+                content_preview_lower = content_preview_raw.lower()
+                if all(token in content_preview_lower for token in query_tokens):
+                    boosted_score = max(boosted_score, 1.2)
+
             all_results.append({
                 "doc_path": result["file_path"],
-                "doc_title": result.get("title", Path(result["file_path"]).name),
-                "relevance_score": result.get("score", 0.0),
-                "content_preview": result.get("content_preview", "")[:500],
+                "doc_title": result.get("title", file_path.name),
+                "relevance_score": boosted_score,
+                "content_preview": content_preview_raw[:500],
+                "file_path": str(file_path),
                 "result_type": "document",
                 "metadata": {
-                    "file_type": Path(result["file_path"]).suffix[1:],
+                    "file_type": suffix[1:],
                     "chunk_count": result.get("chunk_count", 1),
                     "page_count": result.get("total_pages", 0)
                 }
@@ -97,15 +147,26 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
         # Search images if enabled and requested
         if include_images and indexer.image_indexer:
             try:
-                image_results = indexer.image_indexer.search_images(query, top_k=search_params.get('top_k', 1))
+                # Use same top_k for images as documents
+                image_top_k = search_params.get('top_k', 1)
+                logger.info(f"[FILE AGENT] Searching images with query: '{query}' (top_k={image_top_k})")
+                image_results = indexer.image_indexer.search_images(query, top_k=image_top_k)
                 
-                for img_result in image_results:
+                logger.info(f"[FILE AGENT] Image search returned {len(image_results)} results")
+                for i, img_result in enumerate(image_results):
                     file_path = img_result.get('file_path', '')
+                    similarity_score = img_result.get('similarity_score', 0.0)
+                    caption = img_result.get('caption', '')
+                    logger.debug(
+                        f"[FILE AGENT] Image result {i+1}: {img_result.get('file_name', 'unknown')} "
+                        f"(similarity: {similarity_score:.4f}, caption: {caption[:50]}...)"
+                    )
                     all_results.append({
                         "doc_path": file_path,
                         "doc_title": img_result.get('file_name', Path(file_path).name),
-                        "relevance_score": img_result.get('similarity_score', 0.0),
-                        "content_preview": img_result.get('caption', ''),
+                        "relevance_score": similarity_score,
+                        "content_preview": caption,
+                        "file_path": file_path,
                         "result_type": "image",
                         "thumbnail_url": f"/api/files/thumbnail?path={file_path}&max_size=256",
                         "preview_url": f"/api/files/preview?path={file_path}",
@@ -117,9 +178,16 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
                         }
                     })
                     
-                logger.info(f"[FILE AGENT] Found {len(image_results)} image results")
+                if image_results:
+                    top_similarity = image_results[0].get('similarity_score', 0.0)
+                    logger.info(
+                        f"[FILE AGENT] Found {len(image_results)} image results "
+                        f"(top similarity: {top_similarity:.4f})"
+                    )
+                else:
+                    logger.info(f"[FILE AGENT] No image results found for query: '{query}'")
             except Exception as e:
-                logger.warning(f"[FILE AGENT] Image search failed: {e}")
+                logger.error(f"[FILE AGENT] Image search failed: {e}", exc_info=True)
 
         # Sort all results by relevance score
         all_results.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
@@ -133,10 +201,23 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
                 "results": []
             }
 
+        doc_count = sum(1 for r in all_results if r.get("result_type") == "document")
+        image_count = len(all_results) - doc_count
+
         # Return results array and best result for backward compatibility
-        best_result = all_results[0]
+        best_result = next((r for r in all_results if r.get("result_type") == "document"), all_results[0])
+        summary_blurb = []
+        if doc_count:
+            summary_blurb.append(f"{doc_count} document{'s' if doc_count != 1 else ''}")
+        if image_count:
+            summary_blurb.append(f"{image_count} image{'s' if image_count != 1 else ''}")
+        summary_text = ""
+        if summary_blurb:
+            summary_text = f"Found {', '.join(summary_blurb)} matching '{query}'. Top match: {best_result.get('doc_title', 'unknown')}."
+
         return {
             "results": all_results,
+            "best_result": best_result,
             "doc_path": best_result.get("doc_path"),
             "doc_title": best_result.get("doc_title"),
             "relevance_score": best_result.get("relevance_score", 0.0),
@@ -144,7 +225,9 @@ def search_documents(query: str, user_request: str = None, include_images: bool 
             "result_type": best_result.get("result_type", "document"),
             "thumbnail_url": best_result.get("thumbnail_url"),
             "preview_url": best_result.get("preview_url"),
-            "metadata": best_result.get("metadata", {})
+            "metadata": best_result.get("metadata", {}),
+            "summary_blurb": summary_text,
+            "files": all_results  # consumers can render a file list if desired
         }
 
     except Exception as e:
@@ -297,7 +380,20 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
 
     try:
         import fitz  # PyMuPDF
-        import tempfile
+        from pathlib import Path
+        from datetime import datetime
+        from src.utils.screenshot import get_screenshot_dir
+        from src.config.context import get_config_context
+
+        # Get screenshot directory from config
+        context = get_config_context()
+        config = context.data
+        screenshot_dir = get_screenshot_dir(config, ensure_exists=True)
+        
+        # Get document name for filename
+        doc_path_obj = Path(doc_path)
+        doc_stem = doc_path_obj.stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         doc = fitz.open(doc_path)
         screenshot_paths = []
@@ -308,26 +404,46 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
                 page = doc[page_num - 1]
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
 
-                # Save to temp file
-                temp_file = tempfile.NamedTemporaryFile(
-                    delete=False, suffix='.png', prefix=f'page{page_num}_'
-                )
-                pix.save(temp_file.name)
-                screenshot_paths.append(temp_file.name)
+                # Generate predictable filename
+                filename = f"{doc_stem}_p{page_num}_{timestamp}.png"
+                output_path = screenshot_dir / filename
+                
+                # Save to screenshot directory
+                pix.save(str(output_path))
+                
+                # Return path relative to project root for security checks
+                project_root = Path(__file__).resolve().parent.parent.parent
+                try:
+                    relative_path = output_path.resolve().relative_to(project_root)
+                    screenshot_paths.append(str(relative_path))
+                except ValueError:
+                    # If not relative to project root, use absolute path
+                    screenshot_paths.append(str(output_path.resolve()))
+                
                 pages_captured.append(page_num)
-                logger.info(f"[FILE AGENT] Screenshot saved: {temp_file.name}")
+                logger.info(f"[FILE AGENT] Screenshot saved: {output_path} (page {page_num} of {doc_path_obj.name})")
             else:
                 logger.warning(f"[FILE AGENT] Page {page_num} out of range (total: {len(doc)})")
 
         doc.close()
 
+        if not screenshot_paths:
+            logger.warning(f"[FILE AGENT] No screenshots were captured from {doc_path}")
+            return {
+                "error": True,
+                "error_type": "ScreenshotError",
+                "error_message": "No valid pages were captured",
+                "retry_possible": False
+            }
+
+        logger.info(f"[FILE AGENT] Successfully captured {len(screenshot_paths)} screenshot(s) from {doc_path_obj.name}")
         return {
             "screenshot_paths": screenshot_paths,
             "pages_captured": pages_captured
         }
 
     except Exception as e:
-        logger.error(f"[FILE AGENT] Error in take_screenshot: {e}")
+        logger.error(f"[FILE AGENT] Error in take_screenshot: {e}", exc_info=True)
         return {
             "error": True,
             "error_type": "ScreenshotError",
@@ -812,6 +928,7 @@ def list_related_documents(query: str, max_results: int = 10) -> Dict[str, Any]:
     logger.info(f"[FILE LIST] Tool: list_related_documents(query='{query}', max_results={max_results})")
 
     try:
+        import re
         from src.documents import DocumentIndexer, SemanticSearch
         from src.utils import load_config
         from pathlib import Path
@@ -825,56 +942,209 @@ def list_related_documents(query: str, max_results: int = 10) -> Dict[str, Any]:
         if max_results < 1:
             max_results = 10
 
+        # Extract high-signal keywords from query for filtering
+        # Remove common stop words and extract meaningful tokens
+        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "my", "all", "files", "file", "documents", "document", "docs", "doc"}
+        query_lower = query.lower()
+        # Extract words (alphanumeric sequences)
+        query_words = re.findall(r'\b\w+\b', query_lower)
+        # Filter out stop words and short words (< 3 chars), keep meaningful tokens
+        keywords = [w for w in query_words if w not in stop_words and len(w) >= 3]
+        
+        logger.info(f"[FILE LIST] Extracted keywords from query: {keywords}")
+
         # Use search_and_group to get grouped results
         grouped_results = search_engine.search_and_group(query)
 
-        if not grouped_results:
-            logger.info(f"[FILE LIST] No documents found for query: {query}")
-            return {
-                "type": "file_list",
-                "message": f"No documents found matching '{query}'",
-                "files": [],
-                "total_count": 0,
-                "summary_blurb": ""
-            }
+        # Also search for images if image indexer is available
+        image_results = []
+        if indexer.image_indexer:
+            try:
+                logger.info(f"[FILE LIST] Searching images with query: '{query}' (max_results={max_results})")
+                # Search for images with same query
+                image_results = indexer.image_indexer.search_images(query, top_k=max_results)
+                if image_results:
+                    top_similarity = image_results[0].get('similarity_score', 0.0)
+                    logger.info(
+                        f"[FILE LIST] Found {len(image_results)} image results "
+                        f"(top similarity: {top_similarity:.4f})"
+                    )
+                    # Log top results
+                    for i, img_result in enumerate(image_results[:3]):  # Log top 3
+                        logger.debug(
+                            f"[FILE LIST] Image result {i+1}: {img_result.get('file_name', 'unknown')} "
+                            f"(similarity: {img_result.get('similarity_score', 0.0):.4f})"
+                        )
+                else:
+                    logger.info(f"[FILE LIST] No image results found for query: '{query}'")
+            except Exception as e:
+                logger.error(f"[FILE LIST] Image search failed: {e}", exc_info=True)
 
-        # Limit to max_results
-        limited_results = grouped_results[:max_results]
-        top_filenames = [r['file_name'] for r in limited_results[:5]]
-
-        logger.info(f"[FILE LIST] Query: '{query}', Hit count: {len(grouped_results)}, Returning top {len(limited_results)}")
-        logger.info(f"[FILE LIST] Top filenames: {', '.join(top_filenames)}")
-
-        # Transform results to the expected format
-        files = []
-        for result in limited_results:
+        # Combine document and image results
+        all_results = []
+        filtered_out_count = 0
+        
+        # Helper function to check if file matches keywords
+        def matches_keywords(file_path: str, file_name: str, breadcrumb: str = "") -> bool:
+            """Check if file path/name/breadcrumb contains at least one keyword."""
+            if not keywords:
+                return True  # No keywords to filter on
+            
+            search_text = f"{file_path} {file_name} {breadcrumb}".lower()
+            return any(keyword in search_text for keyword in keywords)
+        
+        # Get breadcrumb helper from search results
+        def get_breadcrumb(file_path: str) -> str:
+            """Generate breadcrumb path for display."""
+            try:
+                folders = config.get('documents', {}).get('folders', [])
+                file_path_obj = Path(file_path)
+                
+                for folder in folders:
+                    try:
+                        folder_path = Path(folder)
+                        if file_path_obj.is_relative_to(folder_path):
+                            relative_path = file_path_obj.relative_to(folder_path)
+                            return str(relative_path.parent) if relative_path.parent != Path('.') else str(relative_path)
+                    except (ValueError, OSError):
+                        continue
+                
+                # Fallback: return parent directory name
+                return str(file_path_obj.parent.name) if file_path_obj.parent != file_path_obj else ""
+            except Exception:
+                return ""
+        
+        # Add document results with keyword filtering
+        for result in grouped_results:
             file_path = result['file_path']
             file_name = result['file_name']
             similarity = result.get('max_similarity', 0.0)
             file_type = result.get('file_type', Path(file_path).suffix[1:] if Path(file_path).suffix else '')
             total_pages = result.get('total_pages', 0)
+            breadcrumb = result.get('breadcrumb', get_breadcrumb(file_path))
 
-            files.append({
+            # Apply keyword filtering if keywords were extracted
+            if keywords and not matches_keywords(file_path, file_name, breadcrumb):
+                filtered_out_count += 1
+                logger.debug(
+                    f"[FILE LIST] Filtered out document (no keyword match): {file_name} "
+                    f"(similarity: {similarity:.4f}, keywords: {keywords})"
+                )
+                continue
+
+            # Generate display path (human-friendly breadcrumb)
+            display_path = breadcrumb if breadcrumb else get_breadcrumb(file_path)
+
+            all_results.append({
                 "name": file_name,
                 "path": file_path,
+                "display_path": display_path,
                 "score": round(float(similarity), 4),
+                "result_type": "document",
                 "meta": {
                     "file_type": file_type,
                     "total_pages": total_pages if total_pages > 0 else None
                 }
             })
 
-        # Create summary message
-        count = len(files)
-        message = f"Found {count} document{'s' if count != 1 else ''} matching '{query}'"
+        # Add image results with keyword filtering
+        for img_result in image_results:
+            file_path = img_result.get('file_path', '')
+            file_name = img_result.get('file_name', Path(file_path).name if file_path else '')
+            similarity = img_result.get('similarity_score', 0.0)
+            file_type = Path(file_path).suffix[1:] if file_path and Path(file_path).suffix else 'image'
+            breadcrumb = img_result.get('breadcrumb', get_breadcrumb(file_path))
 
-        return {
+            # Apply keyword filtering if keywords were extracted
+            if keywords and not matches_keywords(file_path, file_name, breadcrumb):
+                filtered_out_count += 1
+                logger.debug(
+                    f"[FILE LIST] Filtered out image (no keyword match): {file_name} "
+                    f"(similarity: {similarity:.4f}, keywords: {keywords})"
+                )
+                continue
+
+            # Generate display path
+            display_path = breadcrumb if breadcrumb else get_breadcrumb(file_path)
+
+            all_results.append({
+                "name": file_name,
+                "path": file_path,
+                "display_path": display_path,
+                "score": round(float(similarity), 4),
+                "result_type": "image",
+                "thumbnail_url": f"/api/files/thumbnail?path={file_path}&max_size=256",
+                "preview_url": f"/api/files/preview?path={file_path}",
+                "meta": {
+                    "file_type": file_type,
+                    "width": img_result.get('width'),
+                    "height": img_result.get('height')
+                }
+            })
+
+        # Sort all results by score (descending)
+        all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
+
+        if not all_results:
+            logger.info(f"[FILE LIST] No documents or images found for query: '{query}' (keywords: {keywords}, filtered: {filtered_out_count})")
+            return {
+                "type": "file_list",
+                "message": f"No documents or images found matching '{query}'",
+                "files": [],
+                "total_count": 0,
+                "summary_blurb": ""
+            }
+
+        # Limit to max_results
+        limited_results = all_results[:max_results]
+        top_filenames = [r['name'] for r in limited_results[:5]]
+
+        logger.info(
+            f"[FILE LIST] Query: '{query}', Keywords: {keywords}, "
+            f"Total results before filtering: {len(grouped_results) + len(image_results)}, "
+            f"Filtered out: {filtered_out_count}, "
+            f"Final results: {len(all_results)}, "
+            f"Returning top {len(limited_results)}"
+        )
+        logger.info(f"[FILE LIST] Top filenames: {', '.join(top_filenames)}")
+        
+        # Log similarity scores for top results
+        for i, result in enumerate(limited_results[:5]):
+            logger.debug(
+                f"[FILE LIST] Result {i+1}: {result['name']} "
+                f"(score: {result['score']:.4f}, type: {result['result_type']})"
+            )
+
+        # Create summary message
+        doc_count = sum(1 for r in limited_results if r.get('result_type') == 'document')
+        img_count = sum(1 for r in limited_results if r.get('result_type') == 'image')
+        count = len(limited_results)
+        
+        if doc_count > 0 and img_count > 0:
+            message = f"Found {count} result{'s' if count != 1 else ''} matching '{query}' ({doc_count} document{'s' if doc_count != 1 else ''}, {img_count} image{'s' if img_count != 1 else ''})"
+        elif img_count > 0:
+            message = f"Found {count} image{'s' if count != 1 else ''} matching '{query}'"
+        else:
+            message = f"Found {count} document{'s' if count != 1 else ''} matching '{query}'"
+        
+        files = limited_results
+
+        result = {
             "type": "file_list",
             "message": message,
             "files": files,
-            "total_count": len(grouped_results),  # Total found, not just returned
+            "total_count": len(all_results),  # Total found, not just returned
             "summary_blurb": ""  # Empty initially, LLM can populate later
         }
+        
+        # CRITICAL: Log the exact result structure for debugging
+        logger.info(f"[FILE LIST] Returning result with type='{result.get('type')}', files count={len(result.get('files', []))}")
+        logger.info(f"[FILE LIST] Result keys: {list(result.keys())}")
+        if result.get("files"):
+            logger.info(f"[FILE LIST] First file structure: {list(result['files'][0].keys()) if result['files'] else 'empty'}")
+            logger.info(f"[FILE LIST] Sample file: name='{result['files'][0].get('name')}', path='{result['files'][0].get('path')}', result_type='{result['files'][0].get('result_type')}'")
+        
+        return result
 
     except Exception as e:
         logger.error(f"[FILE LIST] Error in list_related_documents: {e}")

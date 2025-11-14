@@ -331,16 +331,26 @@ def generate_day_overview(filters: str = "today") -> Dict[str, Any]:
         # 1. Get calendar events
         calendar_result = calendar_agent.execute("list_calendar_events", {"days_ahead": days_ahead})
         meetings = []
-        if not calendar_result.get("error"):
+        calendar_error = None
+        if calendar_result.get("error"):
+            calendar_error = calendar_result.get("error_message", "Unknown calendar error")
+            logger.warning(f"[DAILY OVERVIEW] Calendar agent returned error: {calendar_error}")
+        else:
             meetings = calendar_result.get("events", [])
+            logger.debug(f"[DAILY OVERVIEW] Calendar agent returned {len(meetings)} events")
 
         # 2. Get reminders/todos
         reminders_result = reminders_agent.execute("list_reminders", {
             "include_completed": time_params.get("include_completed", False)
         })
         todos = []
-        if not reminders_result.get("error"):
+        reminders_error = None
+        if reminders_result.get("error"):
+            reminders_error = reminders_result.get("error_message", "Unknown reminders error")
+            logger.warning(f"[DAILY OVERVIEW] Reminders agent returned error: {reminders_error}")
+        else:
             todos = reminders_result.get("reminders", [])
+            logger.debug(f"[DAILY OVERVIEW] Reminders agent returned {len(todos)} reminders")
 
         # 3. Get recent emails for action items
         email_result = email_agent.execute("read_latest_emails", {
@@ -348,9 +358,14 @@ def generate_day_overview(filters: str = "today") -> Dict[str, Any]:
             "limit": 50  # Get enough emails to find action items
         })
         email_action_items = []
-        if not email_result.get("error"):
+        email_error = None
+        if email_result.get("error"):
+            email_error = email_result.get("error_message", "Unknown email error")
+            logger.warning(f"[DAILY OVERVIEW] Email agent returned error: {email_error}")
+        else:
             emails = email_result.get("emails", [])
             email_action_items = _classify_email_action_items(emails)
+            logger.debug(f"[DAILY OVERVIEW] Email agent returned {len(emails)} emails, {len(email_action_items)} action items")
 
         # 4. Check for calendar backfill opportunities
         backfill_suggestions = _analyze_backfill_opportunities(
@@ -374,16 +389,16 @@ def generate_day_overview(filters: str = "today") -> Dict[str, Any]:
                     filtered_meetings.append(meeting)
             meetings = filtered_meetings
 
-        # 5. Generate summary
+        # 5. Generate summary - always include all three sections
         summary_parts = []
-        if meetings:
-            summary_parts.append(f"{len(meetings)} meeting{'s' if len(meetings) != 1 else ''}")
-        if todos:
-            summary_parts.append(f"{len(todos)} reminder{'s' if len(todos) != 1 else ''}")
-        if email_action_items:
-            summary_parts.append(f"{len(email_action_items)} email action{'s' if len(email_action_items) != 1 else ''}")
+        # Always include meetings count, even if 0
+        summary_parts.append(f"{len(meetings)} meeting{'s' if len(meetings) != 1 else ''}")
+        # Always include reminders count, even if 0
+        summary_parts.append(f"{len(todos)} reminder{'s' if len(todos) != 1 else ''}")
+        # Always include email actions count, even if 0
+        summary_parts.append(f"{len(email_action_items)} email action{'s' if len(email_action_items) != 1 else ''}")
 
-        summary = f"Your {filters} includes: {', '.join(summary_parts) if summary_parts else 'No scheduled items'}"
+        summary = f"Your {filters} includes: {', '.join(summary_parts)}"
 
         # 6. Structure the response
         overview = {
@@ -394,17 +409,20 @@ def generate_day_overview(filters: str = "today") -> Dict[str, Any]:
                 "meetings": {
                     "count": len(meetings),
                     "items": meetings,
-                    "description": f"Calendar events for {filters}"
+                    "description": f"Calendar events for {filters}",
+                    "error": calendar_error if calendar_error else None
                 },
                 "reminders": {
                     "count": len(todos),
                     "items": todos,
-                    "description": f"Reminders and todos for {filters}"
+                    "description": f"Reminders and todos for {filters}",
+                    "error": reminders_error if reminders_error else None
                 },
                 "email_action_items": {
                     "count": len(email_action_items),
                     "items": email_action_items,
-                    "description": f"Time-sensitive emails requiring action (last {email_window_hours} hours)"
+                    "description": f"Time-sensitive emails requiring action (last {email_window_hours} hours)",
+                    "error": email_error if email_error else None
                 },
                 "calendar_backfill_suggestions": {
                     "count": len(backfill_suggestions),
@@ -417,6 +435,11 @@ def generate_day_overview(filters: str = "today") -> Dict[str, Any]:
                 "calendar_days_ahead": days_ahead,
                 "email_window_hours": email_window_hours,
                 "include_completed_reminders": time_params.get("include_completed", False)
+            },
+            "errors": {
+                "calendar": calendar_error if calendar_error else None,
+                "reminders": reminders_error if reminders_error else None,
+                "email": email_error if email_error else None
             }
         }
 

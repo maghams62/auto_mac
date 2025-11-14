@@ -15,6 +15,14 @@ import time
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from opentelemetry import trace  # type: ignore
+    from opentelemetry.trace import Status, StatusCode  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    trace = None  # type: ignore
+    Status = None  # type: ignore
+    StatusCode = None  # type: ignore
+
 from . import ALL_AGENT_TOOLS
 from .feasibility_checker import FeasibilityChecker
 from .verifier import OutputVerifier
@@ -24,6 +32,19 @@ from ..utils.message_personality import get_generic_success_message
 from ..utils.performance_monitor import get_performance_monitor
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_set_span_status(span, code, description: str) -> None:
+    """Set span status safely when OpenTelemetry is available."""
+    if not span or not Status or not StatusCode:
+        return
+    try:
+        if code == StatusCode.ERROR and description:
+            span.set_status(Status(code, description))
+        else:
+            span.set_status(Status(code))
+    except Exception:
+        pass
 
 
 class ResultCapture:
@@ -131,6 +152,9 @@ class AgentState(TypedDict):
     
     # Result capture for non-blocking execution
     result_capture: Optional[ResultCapture]  # Thread-safe result capture mechanism
+    
+    # Telemetry
+    correlation_id: Optional[str]  # Correlation ID for telemetry tracking
 
 
 class AutomationAgent:
@@ -403,7 +427,8 @@ class AutomationAgent:
 
         if self._handle_cancellation(state, "planning"):
             if span:
-                span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+                if StatusCode:
+                    _safe_set_span_status(span, StatusCode.OK, "cancelled")
                 record_event(span, "planning_cancelled")
                 span.end()
             return state
@@ -429,6 +454,40 @@ class AutomationAgent:
         full_user_request = state.get("user_request", "")
         logger.info(f"User request: {full_user_request}")
         state["original_user_request"] = full_user_request
+
+        # Fast-fail known unsupported stock queries (private companies)
+        private_companies = {
+            "openai": "OpenAI is a private company and does not have a publicly traded stock price.",
+            "spacex": "SpaceX is privately held and its stock price is not available to the public.",
+        }
+        user_lower = full_user_request.lower()
+        stock_keywords = ("stock", "stocks", "price", "prices", "share", "shares", "ticker")
+        has_stock_intent = any(keyword in user_lower for keyword in stock_keywords)
+        for company, message in private_companies.items():
+            if company in user_lower and has_stock_intent:
+                logger.info(f"[PLANNING] Detected request for private company '{company}'. Failing fast.")
+                state["status"] = "error"
+                error_result = {
+                    "status": "error",
+                    "error": True,
+                    "error_type": "PrivateCompany",
+                    "message": f"{message} Please provide a publicly traded company (e.g., AAPL, MSFT).",
+                    "details": message,
+                    "suggestion": "Provide a company with an exchange-listed ticker symbol.",
+                }
+                state["final_result"] = error_result
+                result_capture = state.get("result_capture")
+                if result_capture:
+                    result_capture.set(error_result)
+                if span:
+                    if StatusCode:
+                        _safe_set_span_status(span, StatusCode.OK, "unsupported_request")
+                    record_event(span, "planning_not_supported", {
+                        "reason": "private_company",
+                        "company": company
+                    })
+                    span.end()
+                return state
 
         # Build planning prompt
         system_prompt = self.prompts.get("system", "")
@@ -1777,8 +1836,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         # Don't override statuses already set (error/cancelled)
         if state.get("status") == "error":
             logger.info("Final status: error (preserved from earlier stage)")
-            if finalize_span:
-                finalize_span.set_status(trace.Status(trace.StatusCode.OK, "error_status_preserved"))
+            if finalize_span and StatusCode:
+                _safe_set_span_status(finalize_span, StatusCode.OK, "error_status_preserved")
                 record_event(finalize_span, "finalization_completed", {"status": "error_preserved"})
                 finalize_span.end()
             return state
@@ -1803,8 +1862,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 record_reply_status("reply_cancelled", correlation_id, {"reason": summary["message"]})
 
             logger.info("Final status: cancelled")
-            if finalize_span:
-                finalize_span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+            if finalize_span and StatusCode:
+                _safe_set_span_status(finalize_span, StatusCode.OK, "cancelled")
                 record_event(finalize_span, "finalization_completed", {"status": "cancelled"})
                 finalize_span.end()
             return state
@@ -1818,6 +1877,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         
         # CRITICAL: Final commitment verification using reasoning trace
         memory = state.get("memory")
+        interaction_id = state.get("interaction_id")
         if memory and memory.is_reasoning_trace_enabled():
             try:
                 self._verify_commitments_fulfilled(state, memory)
@@ -2018,7 +2078,14 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 # Normal status handling
                 email_status_value = (email_result.get("status") or "").lower()
 
-                if email_status_value == "sent":
+                if email_result.get("duplicate_prevented"):
+                    duplicate_note = email_message or "Email was already sent recently; skipped duplicate send."
+                    summary["status"] = "success"
+                    if base_message:
+                        summary["message"] = f"{base_message.rstrip('. ')}. {duplicate_note}"
+                    else:
+                        summary["message"] = duplicate_note
+                elif email_status_value == "sent":
                     if base_message:
                         if "email" not in base_message.lower() and "sent" not in base_message.lower():
                             summary["message"] = f"{base_message.rstrip('. ')}. Email sent as requested."
@@ -2131,27 +2198,47 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         failure_details = verification_result.get("message") or "Spotify is not reporting playback."
 
             if playback_success and playback_success_message:
+                # Use track info from play_step_result if available (most accurate)
+                # Only use verification_result for status check, not for track identification
+                if play_step_result:
+                    track = play_step_result.get("track") or play_step_result.get("song_name")
+                    artist = play_step_result.get("track_artist") or play_step_result.get("artist")
+                    if track and artist:
+                        # Override the generic success message with specific track info
+                        playback_success_message = f"Now playing: {track} by {artist}. Started playback in Spotify."
                 _append_summary_message(playback_success_message)
 
             if not playback_success:
                 if summary["status"] == "success":
                     summary["status"] = "partial_success"
 
-                # Provide more informative messages based on verification result
-                if verification_result and not verification_result.get("error"):
+                # Provide more informative messages - prefer play_step_result track info over verification_result
+                track = None
+                artist = None
+                status = None
+                
+                # First, try to get track info from play_step_result (most accurate)
+                if play_step_result:
+                    track = play_step_result.get("track") or play_step_result.get("song_name")
+                    artist = play_step_result.get("track_artist") or play_step_result.get("artist")
+                
+                # Fall back to verification_result only if play_step_result doesn't have track info
+                if not track and verification_result and not verification_result.get("error"):
                     track = verification_result.get("track")
                     artist = verification_result.get("track_artist") or verification_result.get("artist")
                     status = verification_result.get("status", "").lower()
 
-                    if track and artist:
-                        if status == "paused":
-                            note = f"Track loaded and ready: {track} by {artist} (currently paused)"
-                        elif status == "stopped":
-                            note = f"Track loaded: {track} by {artist} (playback stopped)"
-                        else:
-                            note = f"Track loaded: {track} by {artist} (status: {status})"
+                if track and artist:
+                    if status == "paused":
+                        note = f"Track loaded and ready: {track} by {artist} (currently paused)"
+                    elif status == "stopped":
+                        note = f"Track loaded: {track} by {artist} (playback stopped)"
+                    elif status:
+                        note = f"Track loaded: {track} by {artist} (status: {status})"
                     else:
-                        note = verification_result.get("message") or playback_failure_message
+                        note = f"Track loaded: {track} by {artist}"
+                elif verification_result and not verification_result.get("error"):
+                    note = verification_result.get("message") or playback_failure_message
                 else:
                     note = failure_details or playback_failure_message
 
@@ -2180,6 +2267,27 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
         state["final_result"] = summary
         state["status"] = "completed"
+
+        # Persist interaction outcome to session memory
+        if memory and interaction_id:
+            interaction_metadata = {
+                "goal": summary.get("goal", ""),
+                "status": summary.get("status", "unknown"),
+                "correlation_id": correlation_id,
+                "steps_executed": summary.get("steps_executed"),
+                "completed_at": datetime.now().isoformat()
+            }
+
+            updated = memory.update_interaction(
+                interaction_id,
+                agent_response=summary,
+                plan=steps,
+                step_results=step_results_dict,
+                metadata=interaction_metadata
+            )
+
+            if not updated:
+                logger.warning(f"[FINALIZE] Failed to update interaction {interaction_id} in session memory")
 
         # CRITICAL: Capture result immediately so agent.run() can return even if graph.invoke() hangs
         result_capture = state.get("result_capture")
@@ -2759,8 +2867,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             "take_screenshot",
             "extract_section",
             "create_keynote_with_images",
-            "create_keynote",
-            "create_pages_doc"
+            "create_keynote"
         ]
         return action in verify_actions
 
@@ -2833,6 +2940,18 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             registry = AgentRegistry(self.config, session_manager=self.session_manager)
             handler = SlashCommandHandler(registry, session_manager=self.session_manager, config=self.config)
             is_command, result = handler.handle(user_request, session_id=session_id)
+            
+            if not is_command:
+                # Unsupported slash command - strip leading slash and fall through to orchestrator
+                # This allows commands like /maps to be treated as natural language
+                logger.debug(f"[SLASH COMMANDS] Ignoring unsupported command: {user_request[:50]}")
+                # Remove leading slash and command word, keep the rest as natural language
+                parts = user_request.strip().split(None, 1)
+                if len(parts) > 1:
+                    user_request = parts[1]  # Keep task part only
+                else:
+                    user_request = user_request.lstrip('/').strip()  # Remove slash if no task
+                # Continue to orchestrator with cleaned message
             
             if is_command:
                 # Check if this is a retry_with_orchestrator result
@@ -2908,12 +3027,28 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             for verb in delivery_verbs
         )
 
-        if (user_request_lower.startswith('explain ') or
-            user_request_lower.startswith('summarize ') or
-            user_request_lower.startswith('summarise ') or
-            user_request_lower.startswith('describe ') or
-            user_request_lower.startswith('what is ') or
-            user_request_lower.startswith('tell me about ')) and not has_delivery_intent:
+        explain_exclusion_keywords = [
+            "bluesky",
+            "bsky",
+            "sky feed",
+            "bluesky feed",
+            "twitter",
+            "tweet",
+            "tweets",
+            "post on bluesky",
+            "bluesky post",
+            "x post",
+            "timeline",
+        ]
+
+        if ((user_request_lower.startswith('explain ') or
+             user_request_lower.startswith('summarize ') or
+             user_request_lower.startswith('summarise ') or
+             user_request_lower.startswith('describe ') or
+             user_request_lower.startswith('what is ') or
+             user_request_lower.startswith('tell me about ')) and
+                not has_delivery_intent and
+                not any(keyword in user_request_lower for keyword in explain_exclusion_keywords)):
             # This is a standalone explain request - use the ExplainPipeline service
             try:
                 from ..services.explain_pipeline import ExplainPipeline
@@ -2957,11 +3092,24 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             session_context = self.session_manager.get_langgraph_context(session_id)
             logger.info(f"[SESSION] Loaded context for session: {user_id}/{session_id}")
 
-            # Start reasoning trace if enabled
-            if memory and memory.is_reasoning_trace_enabled():
-                interaction_id = memory.add_interaction(user_request=user_request)
-                memory.start_reasoning_trace(interaction_id)
-                logger.debug(f"[REASONING TRACE] Started trace for interaction {interaction_id}")
+            if memory:
+                # Pre-register interaction so we can update it once execution finishes.
+                interaction_metadata = {
+                    "status": "in_progress",
+                    "correlation_id": correlation_id
+                }
+                interaction_id = memory.add_interaction(
+                    user_request=user_request,
+                    agent_response=None,
+                    plan=[],
+                    step_results={},
+                    metadata=interaction_metadata
+                )
+
+                # Start reasoning trace if enabled
+                if memory.is_reasoning_trace_enabled():
+                    memory.start_reasoning_trace(interaction_id)
+                    logger.debug(f"[REASONING TRACE] Started trace for interaction {interaction_id}")
 
         # Record initial reasoning step
         telemetry.record_reasoning_step(correlation_id, "request_received",
@@ -3070,6 +3218,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             # Define callback to handle final_state logging when graph completes
             def handle_graph_completion(future):
                 """Callback to log session data when graph execution completes."""
+                captured_result = None
                 try:
                     final_state = future.result()
                     if self.session_manager and session_id:
@@ -3081,17 +3230,34 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         # Get the result that was already captured
                         captured_result = result_capture.get()
                         if captured_result:
-                            memory.add_interaction(
-                                user_request=user_request,
-                                agent_response=captured_result,
-                                plan=final_state.get("steps", []),
-                                step_results=final_state.get("step_results", {}),
-                                metadata={
-                                    "goal": final_state.get("goal", ""),
-                                    "status": final_state.get("status", "unknown"),
-                                    "correlation_id": correlation_id
-                                }
-                            )
+                            if interaction_id:
+                                updated = memory.update_interaction(
+                                    interaction_id,
+                                    agent_response=captured_result,
+                                    plan=final_state.get("steps", []),
+                                    step_results=final_state.get("step_results", {}),
+                                    metadata={
+                                        "goal": final_state.get("goal", ""),
+                                        "status": final_state.get("status", "unknown"),
+                                        "correlation_id": correlation_id
+                                    }
+                                )
+                                if not updated:
+                                    logger.warning(f"[SESSION] Failed to update interaction {interaction_id} during completion callback")
+                            else:
+                                logger.warning("[SESSION] interaction_id missing; creating fallback interaction entry")
+                                memory.add_interaction(
+                                    user_request=user_request,
+                                    agent_response=captured_result,
+                                    plan=final_state.get("steps", []),
+                                    step_results=final_state.get("step_results", {}),
+                                    metadata={
+                                        "goal": final_state.get("goal", ""),
+                                        "status": final_state.get("status", "unknown"),
+                                        "correlation_id": correlation_id
+                                    }
+                                )
+
                             self.session_manager.save_session(session_id)
                             logger.info(f"[SESSION] Recorded full interaction for session: {session_id} (after graph completion)")
 
@@ -3136,32 +3302,66 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         vision_usage = final_state.get("vision_usage", {})
                         if vision_usage:
                             memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
-                        memory.add_interaction(
-                            user_request=user_request,
-                            agent_response=captured_result,
-                            plan=final_state.get("steps", []),
-                            step_results=final_state.get("step_results", {}),
-                            metadata={
-                                "goal": final_state.get("goal", ""),
-                                "status": final_state.get("status", "unknown")
-                            }
-                        )
+                        if interaction_id:
+                            updated = memory.update_interaction(
+                                interaction_id,
+                                agent_response=captured_result,
+                                plan=final_state.get("steps", []),
+                                step_results=final_state.get("step_results", {}),
+                                metadata={
+                                    "goal": final_state.get("goal", ""),
+                                    "status": final_state.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
+                            if not updated:
+                                logger.warning(f"[SESSION] Failed to update interaction {interaction_id} after quick completion")
+                        else:
+                            logger.warning("[SESSION] interaction_id missing; recording fallback interaction entry")
+                            memory.add_interaction(
+                                user_request=user_request,
+                                agent_response=captured_result,
+                                plan=final_state.get("steps", []),
+                                step_results=final_state.get("step_results", {}),
+                                metadata={
+                                    "goal": final_state.get("goal", ""),
+                                    "status": final_state.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
                         self.session_manager.save_session(session_id)
                         logger.info(f"[SESSION] Recorded interaction for session: {session_id}")
                     else:
                         # Graph still running, record with available result
                         # Callback will update with full state later
                         logger.debug(f"[SESSION] Recording interaction while graph may still be running")
-                        memory.add_interaction(
-                            user_request=user_request,
-                            agent_response=captured_result,
-                            plan=[],
-                            step_results={},
-                            metadata={
-                                "goal": "",
-                                "status": captured_result.get("status", "unknown")
-                            }
-                        )
+                        if interaction_id:
+                            updated = memory.update_interaction(
+                                interaction_id,
+                                agent_response=captured_result,
+                                plan=[],
+                                step_results={},
+                                metadata={
+                                    "goal": "",
+                                    "status": captured_result.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
+                            if not updated:
+                                logger.warning(f"[SESSION] Failed to update interaction {interaction_id} while graph still running")
+                        else:
+                            logger.warning("[SESSION] interaction_id missing during interim update; creating fallback entry")
+                            memory.add_interaction(
+                                user_request=user_request,
+                                agent_response=captured_result,
+                                plan=[],
+                                step_results={},
+                                metadata={
+                                    "goal": "",
+                                    "status": captured_result.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
                         self.session_manager.save_session(session_id)
                 
                 # Return immediately - executor and callback handle cleanup
@@ -3184,16 +3384,33 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                         vision_usage = final_state.get("vision_usage", {})
                         if vision_usage:
                             memory.shared_context["vision_session_count"] = vision_usage.get("session_count", 0)
-                        memory.add_interaction(
-                            user_request=user_request,
-                            agent_response=result,
-                            plan=final_state.get("steps", []),
-                            step_results=final_state.get("step_results", {}),
-                            metadata={
-                                "goal": final_state.get("goal", ""),
-                                "status": final_state.get("status", "unknown")
-                            }
-                        )
+                        if interaction_id:
+                            updated = memory.update_interaction(
+                                interaction_id,
+                                agent_response=result,
+                                plan=final_state.get("steps", []),
+                                step_results=final_state.get("step_results", {}),
+                                metadata={
+                                    "goal": final_state.get("goal", ""),
+                                    "status": final_state.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
+                            if not updated:
+                                logger.warning(f"[SESSION] Failed to update interaction {interaction_id} after graph completion fallback")
+                        else:
+                            logger.warning("[SESSION] interaction_id missing; recording fallback interaction entry after graph completion")
+                            memory.add_interaction(
+                                user_request=user_request,
+                                agent_response=result,
+                                plan=final_state.get("steps", []),
+                                step_results=final_state.get("step_results", {}),
+                                metadata={
+                                    "goal": final_state.get("goal", ""),
+                                    "status": final_state.get("status", "unknown"),
+                                    "correlation_id": correlation_id
+                                }
+                            )
                         self.session_manager.save_session(session_id)
                 except concurrent.futures.TimeoutError:
                     logger.error(f"[AGENT] graph.invoke() also timed out - agent may be stuck")

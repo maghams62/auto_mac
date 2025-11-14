@@ -117,8 +117,8 @@ class SpotifyAutomation:
                     "error": True,
                     "error_type": "PlaybackError",
                     "error_message": f"Failed to pause music: {error_msg}",
-                    "retry_possible": True
-                }
+                "retry_possible": True
+            }
 
         except subprocess.TimeoutExpired:
             logger.error("[SPOTIFY AUTOMATION] Pause command timed out")
@@ -131,6 +131,128 @@ class SpotifyAutomation:
             }
         except Exception as e:
             logger.error(f"[SPOTIFY AUTOMATION] Error pausing music: {e}")
+            return {
+                "success": False,
+                "error": True,
+                "error_type": "SpotifyError",
+                "error_message": f"Error controlling Spotify: {str(e)}",
+                "retry_possible": True
+            }
+
+    def next_track(self) -> Dict[str, Any]:
+        """
+        Skip to the next track in Spotify.
+
+        Returns:
+            Dictionary with success status and message
+        """
+        logger.info("[SPOTIFY AUTOMATION] Skipping to next track")
+
+        try:
+            applescript = '''
+            tell application "Spotify"
+                activate
+                next track
+            end tell
+            '''
+
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "action": "next_track",
+                    "message": "Skipped to the next track.",
+                    "status": "skipped_next"
+                }
+            else:
+                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                logger.error(f"[SPOTIFY AUTOMATION] Next track failed: {error_msg}")
+                return {
+                    "success": False,
+                    "error": True,
+                    "error_type": "PlaybackError",
+                    "error_message": f"Failed to skip track: {error_msg}",
+                    "retry_possible": True
+                }
+
+        except subprocess.TimeoutExpired:
+            logger.error("[SPOTIFY AUTOMATION] Next track command timed out")
+            return {
+                "success": False,
+                "error": True,
+                "error_type": "TimeoutError",
+                "error_message": "Next track command timed out - Spotify may not be responding",
+                "retry_possible": True
+            }
+        except Exception as e:
+            logger.error(f"[SPOTIFY AUTOMATION] Error skipping to next track: {e}")
+            return {
+                "success": False,
+                "error": True,
+                "error_type": "SpotifyError",
+                "error_message": f"Error controlling Spotify: {str(e)}",
+                "retry_possible": True
+            }
+
+    def previous_track(self) -> Dict[str, Any]:
+        """
+        Return to the previous track in Spotify.
+
+        Returns:
+            Dictionary with success status and message
+        """
+        logger.info("[SPOTIFY AUTOMATION] Returning to previous track")
+
+        try:
+            applescript = '''
+            tell application "Spotify"
+                activate
+                previous track
+            end tell
+            '''
+
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "action": "previous_track",
+                    "message": "Replaying the previous track.",
+                    "status": "skipped_previous"
+                }
+            else:
+                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                logger.error(f"[SPOTIFY AUTOMATION] Previous track failed: {error_msg}")
+                return {
+                    "success": False,
+                    "error": True,
+                    "error_type": "PlaybackError",
+                    "error_message": f"Failed to replay previous track: {error_msg}",
+                    "retry_possible": True
+                }
+
+        except subprocess.TimeoutExpired:
+            logger.error("[SPOTIFY AUTOMATION] Previous track command timed out")
+            return {
+                "success": False,
+                "error": True,
+                "error_type": "TimeoutError",
+                "error_message": "Previous track command timed out - Spotify may not be responding",
+                "retry_possible": True
+            }
+        except Exception as e:
+            logger.error(f"[SPOTIFY AUTOMATION] Error returning to previous track: {e}")
             return {
                 "success": False,
                 "error": True,
@@ -514,4 +636,3 @@ end tell'''
                 "error_message": f"Error searching and playing song: {str(e)}",
                 "retry_possible": True
             }
-

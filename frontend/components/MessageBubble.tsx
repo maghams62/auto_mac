@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useMemo, useEffect, useState } from "react";
+import React, { memo, useMemo, useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { Message, PlanState } from "@/lib/useWebSocket";
 import { formatTimestamp } from "@/lib/utils";
@@ -91,6 +91,22 @@ function renderMessageWithLinks(text: string, isUser: boolean): React.ReactNode 
 const MessageBubble = memo(function MessageBubble({ message, index, planState }: MessageBubbleProps) {
   const { addToast } = useToast();
   const [isCanvasOpen, setIsCanvasOpen] = useState(false);
+  const toastShownRef = useRef<Set<string>>(new Set());
+  
+  // DEBUG: Log files prop to verify it's received
+  useEffect(() => {
+    if (message.files) {
+      console.log(`[MessageBubble] Message ${index} has files:`, {
+        filesCount: message.files.length,
+        filesType: typeof message.files,
+        isArray: Array.isArray(message.files),
+        firstFile: message.files[0] ? Object.keys(message.files[0]) : null,
+        allFiles: message.files
+      });
+    } else {
+      console.log(`[MessageBubble] Message ${index} has NO files prop`);
+    }
+  }, [message.files, index]);
   const isUser = message.type === "user";
   const isSystem = message.type === "system";
   const isError = message.type === "error";
@@ -139,26 +155,27 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     return null;
   }, [message.message, isUser, isPlan]);
 
-  // Detect delivery actions from message content
-  const messageText = message.message?.toLowerCase() || "";
-  const hasEmailAction = messageText.includes("email sent") || messageText.includes("sent an email") || 
-                         messageText.includes("email delivered") || messageText.match(/email.*to.*sent/i);
-  const hasDownloadAction = messageText.includes("downloaded") || messageText.includes("saved to") ||
-                            messageText.includes("file saved") || messageText.match(/saved.*file/i);
-  const hasSendAction = messageText.includes("sent") && (messageText.includes("message") || messageText.includes("whatsapp") || messageText.includes("imessage"));
-  const hasDraftAction = messageText.includes("draft") && messageText.includes("saved");
+  // Memoize delivery status to prevent unnecessary recalculations
+  const deliveryStatus = useMemo(() => {
+    const messageText = message.message?.toLowerCase() || "";
+    const hasEmailAction = messageText.includes("email sent") || messageText.includes("sent an email") || 
+                           messageText.includes("email delivered") || messageText.match(/email.*to.*sent/i);
+    const hasDownloadAction = messageText.includes("downloaded") || messageText.includes("saved to") ||
+                              messageText.includes("file saved") || messageText.match(/saved.*file/i);
+    const hasSendAction = messageText.includes("sent") && (messageText.includes("message") || messageText.includes("whatsapp") || messageText.includes("imessage"));
+    const hasDraftAction = messageText.includes("draft") && messageText.includes("saved");
 
-  // Determine delivery status
-  let deliveryStatus: { icon: string; text: string; variant: "success" | "warning" } | null = null;
-  if (hasEmailAction) {
-    deliveryStatus = { icon: "✅", text: "Email sent", variant: "success" };
-  } else if (hasDownloadAction) {
-    deliveryStatus = { icon: "✅", text: "File saved", variant: "success" };
-  } else if (hasSendAction) {
-    deliveryStatus = { icon: "✅", text: "Message sent", variant: "success" };
-  } else if (hasDraftAction) {
-    deliveryStatus = { icon: "⚠", text: "Draft saved", variant: "warning" };
-  }
+    if (hasEmailAction) {
+      return { icon: "✅", text: "Email sent", variant: "success" as const };
+    } else if (hasDownloadAction) {
+      return { icon: "✅", text: "File saved", variant: "success" as const };
+    } else if (hasSendAction) {
+      return { icon: "✅", text: "Message sent", variant: "success" as const };
+    } else if (hasDraftAction) {
+      return { icon: "⚠", text: "Draft saved", variant: "warning" as const };
+    }
+    return null;
+  }, [message.message]);
 
   // Extract artifacts (file paths, email addresses, URLs) from message
   const artifacts = useMemo(() => {
@@ -177,6 +194,9 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     }
     
     // Match email addresses (for email confirmations)
+    const messageText = message.message?.toLowerCase() || "";
+    const hasEmailAction = messageText.includes("email sent") || messageText.includes("sent an email") || 
+                           messageText.includes("email delivered") || messageText.match(/email.*to.*sent/i);
     if (hasEmailAction) {
       const emailPattern = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
       const emailMatches = Array.from(message.message.matchAll(emailPattern));
@@ -191,7 +211,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     // Remove duplicates
     const unique = Array.from(new Map(found.map(a => [a.path, a])).values());
     return unique.slice(0, 5); // Limit to 5 artifacts
-  }, [message.message, isUser, hasEmailAction]);
+  }, [message.message, isUser]);
 
   // Check if plan execution is complete (no more status messages after plan)
   const [isPlanExecuting, setIsPlanExecuting] = useState(isPlan);
@@ -203,15 +223,22 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     }
   }, [isPlan]);
 
-  // Trigger toast for delivery events
+  // Trigger toast for delivery events (only if no completion_event exists)
+  // Use message timestamp + content as unique key to prevent duplicate toasts
   useEffect(() => {
-    if (isAssistant && deliveryStatus) {
-      addToast(
-        deliveryStatus.text,
-        deliveryStatus.variant === "success" ? "success" : "warning"
-      );
+    if (isAssistant && deliveryStatus && !message.completion_event) {
+      const messageKey = `${message.timestamp}-${message.message}`;
+      
+      // Only show toast if we haven't shown it for this message yet
+      if (!toastShownRef.current.has(messageKey)) {
+        toastShownRef.current.add(messageKey);
+        addToast(
+          deliveryStatus.text,
+          deliveryStatus.variant === "success" ? "success" : "warning"
+        );
+      }
     }
-  }, [isAssistant, deliveryStatus, addToast]);
+  }, [isAssistant, message.timestamp, message.message, message.completion_event, deliveryStatus, addToast]);
 
   return (
     <motion.div
@@ -378,17 +405,8 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           </div>
         )}
 
-        {/* File list (for list_related_documents results) */}
-        {isAssistant && message.files && message.files.length > 0 && (
-          <FileList
-            files={message.files}
-            summaryBlurb={undefined} // Could be extracted from message if needed
-            totalCount={undefined} // Could be extracted from message if needed
-          />
-        )}
-
-        {/* File list (for search results) */}
-        {isAssistant && message.files && message.files.length > 0 && (
+        {/* File list (consolidated - handles both list_related_documents and search results) */}
+        {isAssistant && message.files && Array.isArray(message.files) && message.files.length > 0 && (
           <FileList
             files={message.files}
             summaryBlurb={message.message}
@@ -396,8 +414,17 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           />
         )}
 
+        {/* Document list (separate from files array) */}
+        {isAssistant && message.documents && Array.isArray(message.documents) && message.documents.length > 0 && (
+          <DocumentList
+            documents={message.documents}
+            summaryMessage={message.message}
+            totalCount={undefined}
+          />
+        )}
+
         {/* Artifact cards (only show if no file list or document list) */}
-        {isAssistant && artifacts.length > 0 && !message.files && (
+        {isAssistant && artifacts.length > 0 && !message.files && !message.documents && (
           <div className="mt-3 space-y-2">
             {artifacts.map((artifact, idx) => (
               <ArtifactCard

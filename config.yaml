@@ -5,7 +5,7 @@ openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
   model: "gpt-4o"  # Highest generally available reasoning model
   embedding_model: "text-embedding-3-small"
-  temperature: 0.7
+  temperature: 0.2
   max_tokens: 2000
 
 # Reasoning Trace Configuration (Experimental)

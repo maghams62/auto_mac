@@ -18,10 +18,12 @@ try:
     import faiss
     from openai import OpenAI
     from sklearn.metrics.pairwise import cosine_similarity
+    from src.utils.openai_client import PooledOpenAIClient
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
     OpenAI = None
+    PooledOpenAIClient = None
     logger = logging.getLogger(__name__)
     logger.warning("[MEMORY EXTRACTION] OpenAI/FAISS not available - LLM classification disabled")
 
@@ -73,6 +75,7 @@ class MemoryExtractionPipeline:
         self,
         user_memory_store: UserMemoryStore,
         openai_client: Optional[Any] = None,
+        config: Optional[Dict[str, Any]] = None,
         similarity_threshold: float = 0.87,
         min_confidence: float = 0.7,
         max_memories_per_interaction: int = 3
@@ -83,12 +86,33 @@ class MemoryExtractionPipeline:
         Args:
             user_memory_store: UserMemoryStore instance to store memories
             openai_client: OpenAI client for LLM classification
+            config: Optional configuration dictionary for pooled client
             similarity_threshold: Cosine similarity threshold for deduplication (0.87 = very similar)
             min_confidence: Minimum confidence score to store memory
             max_memories_per_interaction: Maximum memories to extract per interaction
         """
         self.user_memory_store = user_memory_store
-        self.openai_client = openai_client or OpenAI()
+        self.config = config
+        
+        # Use pooled client if config provided, otherwise use provided client or create new one
+        if openai_client:
+            # Use provided client (backward compatibility)
+            self.openai_client = openai_client
+        elif config and PooledOpenAIClient:
+            # Use pooled client for connection reuse (20-40% faster)
+            self.openai_client = PooledOpenAIClient.get_client(config)
+            logger.info("[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse")
+        else:
+            # Fallback to direct client
+            self.openai_client = OpenAI() if OpenAI else None
+        
+        # Global rate limiter for LLM calls
+        if config:
+            from src.utils.rate_limiter import get_rate_limiter
+            self.rate_limiter = get_rate_limiter(config=config)
+        else:
+            self.rate_limiter = None
+        
         self.similarity_threshold = similarity_threshold
         self.min_confidence = min_confidence
         self.max_memories_per_interaction = max_memories_per_interaction
@@ -176,6 +200,34 @@ Agent: {agent_response}
 
             return result
 
+    async def extract_and_store_async(
+        self,
+        user_request: str,
+        agent_response: Optional[Dict[str, Any]],
+        interaction_id: Optional[str] = None
+    ) -> ExtractionResult:
+        """
+        Async version of extract_and_store for background operations.
+        
+        Args:
+            user_request: The user's message/request
+            agent_response: The agent's response (can be None)
+            interaction_id: Unique identifier for this interaction
+
+        Returns:
+            ExtractionResult with details of what was processed
+        """
+        # Run synchronous version in thread pool to avoid blocking
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.extract_and_store,
+            user_request,
+            agent_response,
+            interaction_id
+        )
+
     def _extract_memories_llm(
         self,
         user_request: str,
@@ -204,6 +256,21 @@ Agent: {agent_response}
                 agent_response=agent_response_text
             )
 
+            # Acquire rate limit slot if rate limiter is available
+            if self.rate_limiter:
+                import asyncio
+                # Estimate tokens: prompt + response (conservative estimate)
+                estimated_tokens = len(prompt.split()) * 1.3 + 1000  # ~1.3 tokens per word + response
+                try:
+                    # Run async rate limiter in sync context
+                    asyncio.run(self.rate_limiter.acquire(estimated_tokens=int(estimated_tokens)))
+                except RuntimeError:
+                    # If event loop is already running, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.rate_limiter.acquire(estimated_tokens=int(estimated_tokens)))
+                    loop.close()
+
             # Call LLM
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o",  # Use reasoning model for classification
@@ -215,6 +282,11 @@ Agent: {agent_response}
                 max_tokens=1000,
                 response_format={"type": "json_object"}  # Ensure JSON response
             )
+            
+            # Record actual usage if rate limiter is available
+            if self.rate_limiter and hasattr(response, 'usage') and hasattr(response.usage, 'total_tokens'):
+                actual_tokens = response.usage.total_tokens
+                self.rate_limiter.record_usage(actual_tokens=actual_tokens)
 
             # Parse response
             content = response.choices[0].message.content

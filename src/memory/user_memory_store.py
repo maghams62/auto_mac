@@ -29,10 +29,12 @@ try:
     import faiss
     from openai import OpenAI
     from sklearn.metrics.pairwise import cosine_similarity
+    from src.utils.openai_client import PooledOpenAIClient
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
     OpenAI = None  # Define as None for type hints
+    PooledOpenAIClient = None
     logger.warning("[USER MEMORY] FAISS/OpenAI not available - semantic search disabled")
 
 
@@ -166,7 +168,8 @@ class UserMemoryStore:
         user_id: str,
         storage_dir: str = "data/user_memory",
         embedding_model: str = "text-embedding-3-small",
-        openai_client: Optional[Any] = None  # OpenAI client when available
+        openai_client: Optional[Any] = None,  # OpenAI client when available
+        config: Optional[Dict[str, Any]] = None  # Optional config for batch settings
     ):
         """
         Initialize user memory store.
@@ -176,17 +179,43 @@ class UserMemoryStore:
             storage_dir: Base directory for memory storage
             embedding_model: OpenAI embedding model to use
             openai_client: Pre-configured OpenAI client (optional)
+            config: Optional configuration dictionary for batch embeddings settings
         """
         self.user_id = user_id
         self.storage_dir = Path(storage_dir) / user_id
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.embedding_model = embedding_model
 
+        # Read batch embeddings config
+        if config:
+            perf_config = config.get("performance", {})
+            batch_config = perf_config.get("batch_embeddings", {})
+            if batch_config.get("enabled", True):
+                self.batch_size = batch_config.get("batch_size", 100)
+            else:
+                self.batch_size = 1  # Disable batching if disabled
+            
+            # Read background tasks config for memory updates
+            background_config = perf_config.get("background_tasks", {})
+            self._background_memory_updates = background_config.get("memory_updates", True)
+        else:
+            self.batch_size = 100  # Default fallback
+            self._background_memory_updates = True  # Default to enabled
+
         # Thread safety
         self._lock = RLock()
 
-        # OpenAI client for embeddings
-        self.openai_client = openai_client or OpenAI()
+        # OpenAI client for embeddings - use pooled client if config provided
+        if openai_client:
+            # Use provided client (backward compatibility)
+            self.openai_client = openai_client
+        elif config and PooledOpenAIClient:
+            # Use pooled client for connection reuse (20-40% faster)
+            self.openai_client = PooledOpenAIClient.get_client(config)
+            logger.info("[USER MEMORY] Using pooled OpenAI client for connection reuse")
+        else:
+            # Fallback to direct client
+            self.openai_client = OpenAI() if OpenAI else None
 
         # In-memory data
         self.profile: Optional[UserProfile] = None
@@ -303,17 +332,20 @@ class UserMemoryStore:
             logger.error(f"[USER MEMORY] Failed to get embedding: {e}")
             return None
     
-    def _get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[Optional[List[float]]]:
+    def _get_embeddings_batch(self, texts: List[str], batch_size: Optional[int] = None) -> List[Optional[List[float]]]:
         """
         Get embeddings for multiple texts in batches (faster).
         
         Args:
             texts: List of texts to embed
-            batch_size: Number of texts per API call
+            batch_size: Number of texts per API call (uses config default if None)
             
         Returns:
             List of embeddings (same length as texts, None for failures)
         """
+        # Use instance batch_size from config if not provided
+        if batch_size is None:
+            batch_size = self.batch_size
         if not FAISS_AVAILABLE or not texts:
             return [None] * len(texts)
         
@@ -423,6 +455,43 @@ class UserMemoryStore:
             logger.debug(f"[USER MEMORY] Added memory: {memory.memory_id}")
             return memory
     
+    async def add_memory_async(
+        self,
+        content: str,
+        category: str = "general",
+        tags: Optional[List[str]] = None,
+        salience_score: float = 1.0,
+        source_interaction_id: Optional[str] = None,
+        ttl_days: Optional[int] = None
+    ) -> MemoryEntry:
+        """
+        Async version of add_memory for background operations.
+        
+        Args:
+            content: Memory content
+            category: Memory category
+            tags: Optional tags
+            salience_score: Salience score (0.0-1.0)
+            source_interaction_id: Source interaction ID
+            ttl_days: Time-to-live in days
+            
+        Returns:
+            Created MemoryEntry
+        """
+        # Run synchronous version in thread pool to avoid blocking
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.add_memory,
+            content,
+            category,
+            tags,
+            salience_score,
+            source_interaction_id,
+            ttl_days
+        )
+    
     def add_memories_batch(
         self,
         memory_data: List[Dict[str, Any]]
@@ -460,6 +529,13 @@ class UserMemoryStore:
             
             # Get embeddings in batch
             batch_embeddings = self._get_embeddings_batch(texts_to_embed)
+            
+            # Track batch operation
+            try:
+                from src.utils.performance_monitor import get_performance_monitor
+                get_performance_monitor().record_batch_operation("memory_embeddings", len(texts_to_embed))
+            except Exception:
+                pass
             
             # Assign embeddings to memories
             for memory, embedding in zip(new_memories, batch_embeddings):

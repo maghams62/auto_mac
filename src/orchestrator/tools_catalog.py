@@ -259,29 +259,53 @@ def _generate_toolspec_from_tool(tool) -> ToolSpec:
     )
 
 
-def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
+def generate_tool_catalog(force_refresh: bool = False, config: Optional[Dict[str, Any]] = None) -> List[ToolSpec]:
     """
     Generate tool catalog from existing LangChain tools.
     
     Results are cached globally for performance. The cache is invalidated
     if the tool signatures change.
+    
+    Caching can be disabled via performance.caching.tool_catalog config flag.
 
     Args:
         force_refresh: Force regeneration even if cached
+        config: Optional configuration dictionary to check caching flags
         
     Returns:
         List of ToolSpec objects (cached after first call)
     """
     global _tool_catalog_cache, _tool_catalog_hash
     
+    # Check if caching is enabled
+    caching_enabled = True
+    if config:
+        perf_config = config.get("performance", {})
+        caching_config = perf_config.get("caching", {})
+        caching_enabled = caching_config.get("tool_catalog", True)
+    
     # Compute hash of available tools for cache invalidation
     tool_signatures = [f"{t.name}:{t.description[:50]}" for t in ALL_AGENT_TOOLS]
     current_hash = hashlib.md5("".join(tool_signatures).encode()).hexdigest()
     
-    # Return cached catalog if available and unchanged
-    if not force_refresh and _tool_catalog_cache is not None and _tool_catalog_hash == current_hash:
+    # Return cached catalog if available and unchanged (only if caching enabled)
+    if caching_enabled and not force_refresh and _tool_catalog_cache is not None and _tool_catalog_hash == current_hash:
         logger.debug(f"[TOOL CATALOG] Using cached catalog ({len(_tool_catalog_cache)} tools)")
+        # Track cache hit
+        try:
+            from ..utils.performance_monitor import get_performance_monitor
+            get_performance_monitor().record_cache_hit("tool_catalog")
+        except Exception:
+            pass
         return _tool_catalog_cache
+    
+    # Track cache miss
+    if caching_enabled:
+        try:
+            from ..utils.performance_monitor import get_performance_monitor
+            get_performance_monitor().record_cache_miss("tool_catalog")
+        except Exception:
+            pass
     
     logger.info(f"[TOOL CATALOG] Generating tool catalog (force_refresh={force_refresh})")
     
@@ -404,25 +428,6 @@ def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
                 "No text overlays on images"
             ],
             description="Create Keynote presentations with images/screenshots as slides. Use this when user wants to display screenshots or images in a presentation."
-        ),
-        "create_pages_doc": ToolSpec(
-            name="create_pages_doc",
-            kind="tool",
-            io={
-                "in": ["title: str", "content: str", "output_path: Optional[str]"],
-                "out": ["pages_path", "message"]
-            },
-            strengths=[
-                "Formatted document creation",
-                "macOS Pages integration",
-                "Preserves text structure"
-            ],
-            limits=[
-                "macOS Pages required",
-                "Basic formatting only",
-                "No advanced styling"
-            ],
-            description="Create Pages documents from content"
         ),
         "reply_to_user": ToolSpec(
             name="reply_to_user",
@@ -711,9 +716,10 @@ def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
                 "out": ["query", "results", "num_results", "message"]
             },
             strengths=[
-                "PRIMARY web search tool (DuckDuckGo HTML endpoint) - use this first for finding information online",
+                "PRIMARY web search tool - uses DuckDuckGo ONLY (no Google)",
+                "DuckDuckGo HTML endpoint - free, no API keys required",
                 "Returns structured results with titles, links, and snippets",
-                "Fast and reliable, no API keys required",
+                "Fast and reliable, privacy-focused search",
                 "Good for finding documentation, websites, and general information"
             ],
             limits=[
@@ -721,7 +727,7 @@ def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
                 "Limited to search results (doesn't extract page content)",
                 "DuckDuckGo HTML payload occasionally omits snippets for certain pages"
             ],
-            description="Perform DuckDuckGo web searches and extract structured results. LEVEL 1 tool in browser hierarchy—use this first when you need to find information on the web."
+            description="Perform DuckDuckGo web searches (DuckDuckGo ONLY, no Google). LEVEL 1 tool in browser hierarchy—use this first when you need to find information on the web. Uses DuckDuckGo exclusively."
         ),
         "navigate_to_url": ToolSpec(
             name="navigate_to_url",
@@ -916,10 +922,13 @@ def generate_tool_catalog(force_refresh: bool = False) -> List[ToolSpec]:
 
     logger.info(f"Generated tool catalog with {len(catalog)} tools ({len(added_tool_names)} unique)")
     
-    # Cache the generated catalog
-    _tool_catalog_cache = catalog
-    _tool_catalog_hash = current_hash
-    logger.info(f"[TOOL CATALOG] Cached tool catalog for future requests")
+    # Cache the generated catalog (only if caching enabled)
+    if caching_enabled:
+        _tool_catalog_cache = catalog
+        _tool_catalog_hash = current_hash
+        logger.info(f"[TOOL CATALOG] Cached tool catalog for future requests")
+    else:
+        logger.debug(f"[TOOL CATALOG] Caching disabled, not storing catalog")
     
     return catalog
 

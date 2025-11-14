@@ -7,9 +7,9 @@ import json
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from threading import Event
+from threading import Event, Lock
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -37,6 +37,12 @@ from src.agent.agent_registry import AgentRegistry
 from src.memory import SessionManager
 from src.utils import load_config, save_config
 from src.workflow import WorkflowOrchestrator
+from src.services.feedback_logger import get_feedback_logger
+from src.utils.trajectory_logger import get_trajectory_logger
+from src.utils.error_logger import log_error_with_context
+from src.utils.api_logging import log_api_request, log_websocket_event, sanitize_payload
+from telemetry.config import get_tracer, sanitize_value, set_span_error
+import time
 
 # Initialize telemetry
 from telemetry import init_telemetry
@@ -104,8 +110,24 @@ agent_registry = AgentRegistry(config_manager.get_config(), session_manager=sess
 # Initialize automation agent with session support
 agent = AutomationAgent(config_manager.get_config(), session_manager=session_manager)
 
-# Initialize workflow orchestrator for indexing
-orchestrator = WorkflowOrchestrator(config_manager.get_config())
+# Lazy-load workflow orchestrator for indexing (only initialize when needed)
+_orchestrator = None
+_orchestrator_lock = Lock()
+
+# Feedback logger (singleton)
+feedback_logger = get_feedback_logger()
+
+def get_orchestrator():
+    """Lazy-load WorkflowOrchestrator on first access to improve startup time."""
+    global _orchestrator
+    if _orchestrator is None:
+        with _orchestrator_lock:
+            # Double-check pattern to avoid race conditions
+            if _orchestrator is None:
+                logger.info("[PERF] Initializing WorkflowOrchestrator (lazy load)")
+                _orchestrator = WorkflowOrchestrator(config_manager.get_config())
+                logger.info("[PERF] WorkflowOrchestrator initialized")
+    return _orchestrator
 
 # Initialize recurring task scheduler
 from src.automation.recurring_scheduler import RecurringTaskScheduler
@@ -115,8 +137,9 @@ recurring_scheduler = RecurringTaskScheduler(
     session_manager=session_manager
 )
 
-# Store references for hot-reload
-config_manager.update_components(agent_registry, agent, orchestrator)
+# Store references for hot-reload (orchestrator will be lazy-loaded)
+config_manager.update_components(agent_registry, agent, None)  # Will be set when orchestrator is first accessed
+
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -139,8 +162,15 @@ class ConnectionManager:
                 self.active_connections[session_id] = websocket
                 self.websocket_to_session[websocket] = session_id
                 logger.info(f"Client connected with session {session_id}. Total connections: {len(self.active_connections)}")
-                # Try to send any queued messages for this session
-                if session_id in self._failed_messages:
+            
+            # Log WebSocket connection
+            log_websocket_event(
+                event_type="connect",
+                session_id=session_id,
+                config=None  # TODO: Get config from app state
+            )
+            # Try to send any queued messages for this session
+            if session_id in self._failed_messages:
                     queued = self._failed_messages.pop(session_id, [])
                     if queued:
                         logger.info(f"[CONNECTION MANAGER] 🔄 Sending {len(queued)} queued messages for session {session_id} on reconnect")
@@ -167,6 +197,13 @@ class ConnectionManager:
                 # Clear failed messages for this session
                 self._failed_messages.pop(session_id, None)
                 logger.info(f"Client disconnected (session: {session_id}). Total connections: {len(self.active_connections)}")
+                
+                # Log WebSocket disconnection
+                log_websocket_event(
+                    event_type="disconnect",
+                    session_id=session_id,
+                    config=None  # TODO: Get config from app state
+                )
 
     def _is_websocket_healthy(self, websocket: WebSocket) -> bool:
         """Check if WebSocket is in a valid state for sending."""
@@ -209,6 +246,19 @@ class ConnectionManager:
         try:
             await websocket.send_json(message)
             logger.debug(f"[CONNECTION MANAGER] Message sent successfully (retry: {retry_count})")
+            
+            # Log WebSocket message
+            async with self._lock:
+                session_id = self.websocket_to_session.get(websocket)
+            if session_id:
+                log_websocket_event(
+                    event_type="message",
+                    session_id=session_id,
+                    message_type=message.get("type"),
+                    payload=message,
+                    config=None  # TODO: Get config from app state
+                )
+            
             return True
         except Exception as e:
             logger.warning(f"[CONNECTION MANAGER] Error sending message (attempt {retry_count + 1}/{self._max_retries}): {e}")
@@ -293,6 +343,21 @@ class SystemStats(BaseModel):
     uptime: str
 
 
+class FeedbackPayload(BaseModel):
+    plan_id: str
+    goal: str
+    feedback_type: str  # "positive" | "negative"
+    plan_status: str
+    duration_ms: Optional[int] = None
+    analytics: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    session_id: Optional[str] = None
+    plan_started_at: Optional[str] = None
+    plan_completed_at: Optional[str] = None
+    step_statuses: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 async def has_active_task(session_id: str) -> bool:
     """Check if a session already has an in-flight agent execution."""
     async with _session_tasks_lock:
@@ -316,8 +381,13 @@ def format_result_message(result: Dict[str, Any]) -> str:
     
     # Check for other structured results
     if result.get("error"):
-        # Try error_message first, fall back to message, then generic
-        error_text = result.get('error_message') or result.get('message') or 'Unknown error'
+        # Try error_message first, fall back to message or the error value itself
+        error_value = result.get("error")
+        error_text = result.get('error_message') or result.get('message')
+        if not error_text and isinstance(error_value, str):
+            error_text = error_value
+        if not error_text:
+            error_text = 'Unknown error'
         return f"❌ **Error:** {error_text}"
     
     # Handle reply type results (from reply_to_user tool) - combine message and details
@@ -331,6 +401,28 @@ def format_result_message(result: Dict[str, Any]) -> str:
         
         # Combine message and details if both exist
         if message and details:
+            # Check for duplicate content - if details contains the same text as message, skip details
+            message_clean = message.strip()
+            details_clean = details.strip()
+            
+            # Check if details is a duplicate or subset of message
+            if message_clean and details_clean:
+                # If details is identical to message, skip it
+                if details_clean == message_clean:
+                    return message
+                # If details starts with the same text as message, skip the duplicate part
+                if details_clean.startswith(message_clean):
+                    # Extract only the additional content
+                    additional = details_clean[len(message_clean):].strip()
+                    if additional:
+                        separator = "\n\n" if message.rstrip().endswith((".", "!", "?")) else "\n\n"
+                        return f"{message}{separator}{additional}"
+                    else:
+                        return message
+                # If message is a subset of details, use details only
+                if message_clean in details_clean and len(details_clean) > len(message_clean) * 1.5:
+                    return details
+            
             # If message ends with punctuation, add space; otherwise add newline
             separator = "\n\n" if message.rstrip().endswith((".", "!", "?")) else "\n\n"
             return f"{message}{separator}{details}"
@@ -1236,6 +1328,67 @@ async def get_stats():
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/telemetry/slash-command")
+async def record_slash_command_telemetry(data: Dict[str, Any] = Body(...)):
+    """Record slash command usage telemetry from frontend."""
+    try:
+        command_name = data.get("command_name", "unknown")
+        invocation_source = data.get("invocation_source", "unknown")
+        timestamp = data.get("timestamp")
+        
+        # Record via performance monitor (same as backend does)
+        from src.utils.performance_monitor import get_performance_monitor
+        try:
+            get_performance_monitor().record_batch_operation("slash_command_usage", 1)
+        except Exception as e:
+            logger.warning(f"[TELEMETRY] Failed to record batch operation: {e}")
+        
+        # Log structured entry
+        logger.info(
+            "[SLASH COMMANDS] Command invoked",
+            extra={
+                "command": command_name,
+                "invocation_source": invocation_source,
+                "timestamp": timestamp,
+            },
+        )
+        
+        return {"status": "recorded", "command": command_name}
+    except Exception as e:
+        # Don't break user flow if telemetry fails
+        logger.warning(f"[TELEMETRY] Error recording slash command telemetry: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/feedback")
+async def record_user_feedback(payload: FeedbackPayload):
+    """Persist thumbs-up/down feedback for completed plans."""
+    feedback_type = (payload.feedback_type or "").strip().lower()
+    if feedback_type not in {"positive", "negative"}:
+        raise HTTPException(status_code=400, detail="feedback_type must be 'positive' or 'negative'")
+
+    entry = payload.dict(exclude_none=True)
+    entry.pop("feedback_type", None)
+
+    try:
+        await feedback_logger.log_async(feedback_type, entry)
+        log_fn = logger.warning if feedback_type == "negative" else logger.info
+        log_fn(
+            "[USER FEEDBACK] Recorded feedback entry",
+            extra={
+                "feedback_type": feedback_type,
+                "plan_id": payload.plan_id,
+                "goal": payload.goal,
+                "plan_status": payload.plan_status,
+            },
+        )
+        return {"status": "recorded", "feedback_type": feedback_type}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"[USER FEEDBACK] Failed to record feedback: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to record feedback")
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
     """Synchronous chat endpoint (for simple requests)"""
@@ -1406,7 +1559,7 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
         # Document search
         if "document" in requested_types:
             try:
-                grouped_results = orchestrator.search.search_and_group(query)
+                grouped_results = get_orchestrator().search.search_and_group(query)
                 doc_limit = limit if len(requested_types) == 1 else limit // 2
 
                 for result in grouped_results[:doc_limit]:
@@ -1440,9 +1593,9 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                 logger.error(f"Error searching documents: {e}")
 
         # Image search
-        if "image" in requested_types and orchestrator.indexer.image_indexer:
+        if "image" in requested_types and get_orchestrator().indexer.image_indexer:
             try:
-                image_results = orchestrator.indexer.image_indexer.search_images(query, top_k=limit // 2)
+                image_results = get_orchestrator().indexer.image_indexer.search_images(query, top_k=limit // 2)
 
                 for result in image_results:
                     all_results.append({
@@ -1858,7 +2011,7 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                             
                             # Run indexing in thread pool with cancel event
                             result = await asyncio.to_thread(
-                                orchestrator.reindex_documents,
+                                get_orchestrator().reindex_documents,
                                 cancel_event=indexing_cancel_event
                             )
                             
@@ -2127,13 +2280,13 @@ async def reindex_documents():
             return {"status": "error", "message": "No folders configured for indexing"}
 
         # Run indexing synchronously (this is a simple MVP - in production might want async)
-        indexed_docs = orchestrator.indexer.index_documents(folders)
+        indexed_docs = get_orchestrator().indexer.index_documents(folders)
 
         # Get stats
-        doc_stats = orchestrator.indexer.get_stats()
+        doc_stats = get_orchestrator().indexer.get_stats()
         image_stats = {}
-        if orchestrator.indexer.image_indexer:
-            image_stats = orchestrator.indexer.image_indexer.get_stats()
+        if get_orchestrator().indexer.image_indexer:
+            image_stats = get_orchestrator().indexer.image_indexer.get_stats()
 
         total_docs = doc_stats.get('total_documents', 0)
         total_images = image_stats.get('total_images', 0)
@@ -2193,18 +2346,36 @@ class FilePreviewRequest(BaseModel):
     path: str
 
 
-@app.get("/api/files/preview")
-async def preview_file(path: str):
+@app.api_route("/api/files/preview", methods=["GET", "HEAD"])
+async def preview_file(path: str, request: Request):
     """
     Preview a file from whitelisted directories (data/reports, data/presentations, etc.).
+    
+    This endpoint enforces security by only allowing files from configured safe directories.
+    It supports both HEAD (for pre-flight checks) and GET (for actual file content) methods.
+    All requests are instrumented with OpenTelemetry spans and structured logging for
+    debugging preview issues.
     
     Returns file content with appropriate content-type headers for preview.
     Security: Only allows files from configured safe directories.
     """
+    from pathlib import Path
+    from fastapi.responses import FileResponse, StreamingResponse, Response
+    from telemetry.config import get_tracer
+    from opentelemetry import trace
+    
+    # Get request method for telemetry
+    method = request.method
+    tracer = get_tracer("api_server")
+    span = tracer.start_span("file_preview")
+    
     try:
-        import os
-        from pathlib import Path
-        from fastapi.responses import FileResponse, StreamingResponse
+        # Log request start with structured data
+        logger.info(f"[FILE PREVIEW] {method} request for path: {path}")
+        
+        # Set telemetry attributes (all as strings/primitives for OpenTelemetry compatibility)
+        span.set_attribute("file_preview.method", method)
+        span.set_attribute("file_preview.path_param", str(path))
         
         file_path = Path(path)
         
@@ -2213,6 +2384,10 @@ async def preview_file(path: str):
             # Try relative to project root
             project_root = Path(__file__).resolve().parent
             file_path = (project_root / file_path).resolve()
+        
+        resolved_path_str = str(file_path.resolve())
+        span.set_attribute("file_preview.resolved_path", resolved_path_str)
+        logger.debug(f"[FILE PREVIEW] Resolved path: {resolved_path_str}")
         
         # Security: Whitelist allowed directories
         allowed_roots = [
@@ -2227,24 +2402,44 @@ async def preview_file(path: str):
         for folder in document_folders:
             allowed_roots.append(Path(folder).resolve())
         
+        # Log allowed roots on first request (debugging aid)
+        if not hasattr(preview_file, '_logged_allowed_roots'):
+            allowed_roots_str = [str(r) for r in allowed_roots]
+            logger.info(f"[FILE PREVIEW] Allowed directories: {allowed_roots_str}")
+            preview_file._logged_allowed_roots = True
+        
         # Check if file is within an allowed directory
         is_allowed = False
+        matched_root = None
         for allowed_root in allowed_roots:
             try:
                 file_path.resolve().relative_to(allowed_root.resolve())
                 is_allowed = True
+                matched_root = str(allowed_root)
                 break
             except ValueError:
                 continue
         
+        span.set_attribute("file_preview.is_allowed", str(is_allowed))
+        if matched_root:
+            span.set_attribute("file_preview.matched_root", matched_root)
+        
         if not is_allowed:
-            raise HTTPException(
-                status_code=403,
-                detail=f"File path not in allowed directories. Allowed: {[str(r) for r in allowed_roots]}"
-            )
+            error_msg = f"File path not in allowed directories. Allowed: {[str(r) for r in allowed_roots]}"
+            logger.warning(f"[FILE PREVIEW] Access denied for {resolved_path_str}. Allowed roots: {[str(r) for r in allowed_roots]}")
+            span.set_attribute("file_preview.status_code", "403")
+            span.set_attribute("file_preview.error_type", "HTTPException")
+            span.set_status(trace.Status(trace.StatusCode.ERROR, "Access denied"))
+            span.end()
+            raise HTTPException(status_code=403, detail=error_msg)
         
         # Check if file exists
         if not file_path.exists() or not file_path.is_file():
+            logger.warning(f"[FILE PREVIEW] File not found: {resolved_path_str}")
+            span.set_attribute("file_preview.status_code", "404")
+            span.set_attribute("file_preview.error_type", "FileNotFoundError")
+            span.set_status(trace.Status(trace.StatusCode.ERROR, "File not found"))
+            span.end()
             raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
         
         # Determine content type
@@ -2263,9 +2458,31 @@ async def preview_file(path: str):
         }
         
         content_type = content_types.get(ext, "application/octet-stream")
+        span.set_attribute("file_preview.ext", ext)
+        span.set_attribute("file_preview.content_type", content_type)
+        
+        # For HEAD requests, return headers only (no body)
+        if method == "HEAD":
+            logger.info(f"[FILE PREVIEW] HEAD request successful for {resolved_path_str} (content-type: {content_type})")
+            span.set_attribute("file_preview.status_code", "200")
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            span.end()
+            return Response(
+                status_code=200,
+                headers={
+                    "Content-Type": content_type,
+                    "Content-Length": str(file_path.stat().st_size) if file_path.exists() else "0",
+                }
+            )
+        
+        # For GET requests, return file content
+        logger.info(f"[FILE PREVIEW] GET request successful for {resolved_path_str} (content-type: {content_type})")
         
         # For PDFs and images, return file directly
         if ext in [".pdf", ".png", ".jpg", ".jpeg", ".gif"]:
+            span.set_attribute("file_preview.status_code", "200")
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            span.end()
             return FileResponse(
                 str(file_path),
                 media_type=content_type,
@@ -2276,22 +2493,40 @@ async def preview_file(path: str):
         if ext in [".html", ".txt", ".md"]:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
+            span.set_attribute("file_preview.status_code", "200")
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            span.end()
             return StreamingResponse(
                 iter([content]),
                 media_type=content_type
             )
         
         # For other files, return as download
+        span.set_attribute("file_preview.status_code", "200")
+        span.set_status(trace.Status(trace.StatusCode.OK))
+        span.end()
         return FileResponse(
             str(file_path),
             media_type=content_type,
             filename=file_path.name
         )
         
-    except HTTPException:
+    except HTTPException as e:
+        # HTTPException is expected for 403/404, log and re-raise
+        span.set_attribute("file_preview.status_code", str(e.status_code))
+        span.set_attribute("file_preview.error_type", "HTTPException")
+        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e.detail)))
+        span.end()
         raise
     except Exception as e:
-        logger.error(f"Error previewing file: {e}")
+        # Unexpected errors
+        error_type = type(e).__name__
+        logger.error(f"[FILE PREVIEW] Unexpected error previewing file {path}: {e}", exc_info=True)
+        span.set_attribute("file_preview.status_code", "500")
+        span.set_attribute("file_preview.error_type", error_type)
+        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+        span.record_exception(e)
+        span.end()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2585,6 +2820,21 @@ async def startup_event():
 
     logger.info("Starting Bluesky notification service...")
     await bluesky_notifications.start()
+    
+    # Background warm-up: Initialize heavy components after server is ready
+    async def warm_up_orchestrator():
+        # Small delay to ensure server is fully ready to accept requests
+        await asyncio.sleep(2)
+        try:
+            logger.info("[PERF] Background: Warming up WorkflowOrchestrator...")
+            # Trigger lazy initialization in background
+            get_orchestrator()
+            logger.info("[PERF] Background: WorkflowOrchestrator warmed up")
+        except Exception as e:
+            logger.warning(f"[PERF] Background warm-up failed (non-critical): {e}")
+    
+    # Start background task (fire and forget)
+    asyncio.create_task(warm_up_orchestrator())
 
 
 @app.on_event("shutdown")

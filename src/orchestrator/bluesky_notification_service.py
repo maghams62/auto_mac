@@ -114,10 +114,6 @@ class BlueskyNotificationService:
             for notification in new_notifications:
                 await self._broadcast_notification(notification, "notification")
 
-            # Broadcast new timeline mentions
-            for post in new_posts:
-                await self._broadcast_notification(post, "timeline_mention")
-
         except BlueskyAPIError as e:
             logger.warning(f"[BLUESKY NOTIFICATIONS] Failed to poll notifications: {e}")
         except Exception as e:

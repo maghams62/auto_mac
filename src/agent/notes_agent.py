@@ -16,7 +16,7 @@ INTEGRATION PATTERN:
 Acts as a persistent storage layer for information.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 import logging
 
@@ -358,3 +358,49 @@ def execute_notes_agent_tools(tool_name: str, arguments: Dict[str, Any]) -> Dict
             "error_message": str(e),
             "retry_possible": False
         }
+
+
+class NotesAgent:
+    """
+    Thin wrapper exposing the notes tools via a CalendarAgent-style interface.
+
+    Some orchestrators (registry, slash commands, daily overview) expect each
+    domain to provide a class with `get_tools()` and `execute()` APIs. The notes
+    module previously only exposed individual tools, so any attempt to lazy-load
+    a NotesAgent would fail, causing upstream workflows to stall before replying.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.tools = {tool.name: tool for tool in NOTES_AGENT_TOOLS}
+        logger.info(f"[NOTES AGENT] Initialized with {len(self.tools)} tools")
+
+    def get_tools(self) -> List:
+        return NOTES_AGENT_TOOLS
+
+    def get_hierarchy(self) -> str:
+        return NOTES_AGENT_HIERARCHY
+
+    def execute(self, tool_name: str, inputs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if tool_name not in self.tools:
+            return {
+                "error": True,
+                "error_type": "ToolNotFound",
+                "error_message": f"Notes agent tool '{tool_name}' not found",
+                "available_tools": list(self.tools.keys()),
+            }
+
+        tool = self.tools[tool_name]
+        params = inputs or {}
+        logger.info(f"[NOTES AGENT] Executing: {tool_name}")
+
+        try:
+            return tool.invoke(params)
+        except Exception as exc:
+            logger.error(f"[NOTES AGENT] Execution error: {exc}")
+            return {
+                "error": True,
+                "error_type": "ExecutionError",
+                "error_message": str(exc),
+                "retry_possible": False,
+            }

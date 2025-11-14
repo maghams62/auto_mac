@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, KeyboardEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 import { overlayFade, modalSlideDown } from "@/lib/motion";
 import { duration, easing } from "@/lib/motion";
+import logger from "@/lib/logger";
 
 interface SearchResult {
   result_type: "document" | "image";
@@ -29,15 +30,21 @@ interface SearchResult {
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
+  onMount?: () => void;
   onOpenDocument?: (filePath: string, highlightOffsets?: [number, number][]) => void;
   onOpenExternal?: (filePath: string) => void;
+  initialQuery?: string;
+  source?: "files" | "folder";
 }
 
 export default function CommandPalette({
   isOpen,
   onClose,
+  onMount,
   onOpenDocument,
-  onOpenExternal
+  onOpenExternal,
+  initialQuery = "",
+  source = "files"
 }: CommandPaletteProps) {
   const baseUrl = getApiBaseUrl();
 
@@ -92,8 +99,8 @@ export default function CommandPalette({
     }
   }, [previewMode, previewData]);
 
-  // Debounced search
-  const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  // Debounced search - use ref instead of state to avoid infinite loop
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const performSearch = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim()) {
@@ -125,34 +132,36 @@ export default function CommandPalette({
 
   // Debounced search effect
   useEffect(() => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
 
     const timer = setTimeout(() => {
       performSearch(query);
     }, 200);
 
-    setDebounceTimer(timer);
+    debounceTimerRef.current = timer;
 
     return () => {
-      if (timer) {
-        clearTimeout(timer);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [query, performSearch, debounceTimer]);
+  }, [query, performSearch]); // Remove debounceTimer from deps
 
   // Reset state when opening
   useEffect(() => {
     if (isOpen) {
-      setQuery("");
+      setQuery(initialQuery);
       setResults([]);
       setSelectedIndex(0);
       setPreviewMode('closed');
       setPreviewData(null);
       setIsLoading(false);
+      logger.info("[COMMAND PALETTE] Opened", { source, initialQuery });
+      onMount?.();
     }
-  }, [isOpen]);
+  }, [isOpen, initialQuery, onMount, source]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -259,6 +268,7 @@ export default function CommandPalette({
           variants={modalSlideDown}
           className="relative w-full max-w-4xl max-h-[80vh] flex"
           onClick={(e) => e.stopPropagation()}
+          data-testid="command-palette"
         >
           {/* Main Search Panel */}
           <div className={cn(
@@ -275,9 +285,10 @@ export default function CommandPalette({
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search documents..."
+                  placeholder={source === "folder" ? "Search folders and files..." : "Search documents..."}
                   className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg"
                   autoFocus
+                  data-testid="command-palette-query"
                 />
                 {isLoading && (
                   <motion.div
@@ -308,6 +319,7 @@ export default function CommandPalette({
                   onMouseEnter={() => setSelectedIndex(index)}
                   onPreviewToggle={() => togglePreview(result)}
                   getFileIcon={getFileIcon}
+                  dataTestId={`files-result-item-${index}`}
                 />
               ))}
             </div>
@@ -335,6 +347,7 @@ export default function CommandPalette({
                 exit={{ opacity: 0, x: 20, width: 0 }}
                 transition={{ duration: 0.2 }}
                 className="bg-glass-elevated backdrop-blur-glass rounded-r-2xl border border-glass border-l-0 shadow-elevated overflow-hidden"
+                data-testid="files-preview-pane"
               >
                 <DocumentPreview
                   result={previewData}
@@ -360,6 +373,7 @@ interface SearchResultItemProps {
   onMouseEnter: () => void;
   onPreviewToggle: () => void;
   getFileIcon: (fileType: string) => string;
+  dataTestId?: string;
 }
 
 function SearchResultItem({
@@ -368,7 +382,8 @@ function SearchResultItem({
   onClick,
   onMouseEnter,
   onPreviewToggle,
-  getFileIcon
+  getFileIcon,
+  dataTestId
 }: SearchResultItemProps) {
   return (
     <motion.button
@@ -382,6 +397,7 @@ function SearchResultItem({
           ? "bg-glass-hover shadow-inset-border"
           : "hover:bg-glass-hover/50"
       )}
+      data-testid={dataTestId || "files-result-item"}
     >
       <div className="flex items-start gap-3">
         {/* File Icon or Thumbnail */}

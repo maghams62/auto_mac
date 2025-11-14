@@ -32,6 +32,10 @@ except ImportError:
     STOCK_AGENT_TOOLS = []
     STOCK_AGENT_HIERARCHY = ""
 try:
+    from .stock_agent_hybrid import STOCK_AGENT_TOOLS as STOCK_AGENT_HYBRID_TOOLS
+except ImportError:
+    STOCK_AGENT_HYBRID_TOOLS = []
+try:
     from .screen_agent import SCREEN_AGENT_TOOLS, SCREEN_AGENT_HIERARCHY
 except ImportError:
     SCREEN_AGENT_TOOLS = []
@@ -74,6 +78,7 @@ ALL_AGENT_TOOLS = (
     CRITIC_AGENT_TOOLS +
     KNOWLEDGE_AGENT_TOOLS +
     STOCK_AGENT_TOOLS +
+    STOCK_AGENT_HYBRID_TOOLS +
     SCREEN_AGENT_TOOLS +
     REPORT_AGENT_TOOLS +
     GOOGLE_FINANCE_AGENT_TOOLS +

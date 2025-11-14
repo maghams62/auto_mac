@@ -573,6 +573,12 @@ tail -f data/app.log | grep -E "(Planning|Executing|Step)"
 
 ---
 
+## Session Memory Controls
+
+`config.memory.auto_reset_on_success` determines whether `SessionMemory` trims its active window after each successful slash command. The default is `false`, preserving multi-hop context. Only switch it on for isolated, high-churn slash sessions (e.g., demo kiosks) where every command should start from a clean slate. When enabling it, update the UI copy to warn that conversation history will not persist and rely on per-interaction metadata (`preserve_context` / `reset_context`) for any exceptions.
+
+---
+
 ## Troubleshooting
 
 ### Issue: "Tool not found"

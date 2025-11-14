@@ -103,6 +103,14 @@ def setup_structured_logging(config: Dict[str, Any]) -> None:
     backup_count = log_config.get('backup_count', 5)
     json_format = log_config.get('json_format', True)
     
+    # Check if async logging is enabled (for future async handler implementation)
+    perf_config = config.get('performance', {})
+    background_config = perf_config.get('background_tasks', {})
+    async_logging_enabled = background_config.get('logging', True)
+    
+    # Note: Currently using synchronous handlers. When async logging is implemented,
+    # use async_logging_enabled flag to choose between async and sync handlers.
+    
     # Create log directory
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)

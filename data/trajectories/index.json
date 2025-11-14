@@ -1,0 +1,52 @@
+{
+  "trajectories": [
+    {
+      "session_id": "bccd96bf-e4d6-4e20-bb0f-5e13409b6851",
+      "filename": "bccd96bf-e4d6-4e20-bb0f-5e13409b6851_20251114_185012.jsonl",
+      "created_at": "2025-11-14T18:50:12.325385Z",
+      "path": "trajectories/bccd96bf-e4d6-4e20-bb0f-5e13409b6851_20251114_185012.jsonl"
+    },
+    {
+      "session_id": "e79fb65f-d965-4858-8515-3ce849b73553",
+      "filename": "e79fb65f-d965-4858-8515-3ce849b73553_20251114_185012.jsonl",
+      "created_at": "2025-11-14T18:50:12.332251Z",
+      "path": "trajectories/e79fb65f-d965-4858-8515-3ce849b73553_20251114_185012.jsonl"
+    },
+    {
+      "session_id": "bccd96bf-e4d6-4e20-bb0f-5e13409b6851",
+      "filename": "bccd96bf-e4d6-4e20-bb0f-5e13409b6851_20251114_185012.jsonl",
+      "created_at": "2025-11-14T18:50:12.934510Z",
+      "path": "trajectories/bccd96bf-e4d6-4e20-bb0f-5e13409b6851_20251114_185012.jsonl"
+    },
+    {
+      "session_id": "e79fb65f-d965-4858-8515-3ce849b73553",
+      "filename": "e79fb65f-d965-4858-8515-3ce849b73553_20251114_185145.jsonl",
+      "created_at": "2025-11-14T18:51:45.784539Z",
+      "path": "trajectories/e79fb65f-d965-4858-8515-3ce849b73553_20251114_185145.jsonl"
+    },
+    {
+      "session_id": "5605e29f-97a1-4a35-97de-4409c6c767a5",
+      "filename": "5605e29f-97a1-4a35-97de-4409c6c767a5_20251114_185306.jsonl",
+      "created_at": "2025-11-14T18:53:06.960421Z",
+      "path": "trajectories/5605e29f-97a1-4a35-97de-4409c6c767a5_20251114_185306.jsonl"
+    },
+    {
+      "session_id": "3e73dc3f-719b-4668-ac5f-33de6fe6b1b3",
+      "filename": "3e73dc3f-719b-4668-ac5f-33de6fe6b1b3_20251114_185306.jsonl",
+      "created_at": "2025-11-14T18:53:06.975794Z",
+      "path": "trajectories/3e73dc3f-719b-4668-ac5f-33de6fe6b1b3_20251114_185306.jsonl"
+    },
+    {
+      "session_id": "5605e29f-97a1-4a35-97de-4409c6c767a5",
+      "filename": "5605e29f-97a1-4a35-97de-4409c6c767a5_20251114_185307.jsonl",
+      "created_at": "2025-11-14T18:53:07.568961Z",
+      "path": "trajectories/5605e29f-97a1-4a35-97de-4409c6c767a5_20251114_185307.jsonl"
+    },
+    {
+      "session_id": "3e73dc3f-719b-4668-ac5f-33de6fe6b1b3",
+      "filename": "3e73dc3f-719b-4668-ac5f-33de6fe6b1b3_20251114_185318.jsonl",
+      "created_at": "2025-11-14T18:53:18.310760Z",
+      "path": "trajectories/3e73dc3f-719b-4668-ac5f-33de6fe6b1b3_20251114_185318.jsonl"
+    }
+  ]
+}

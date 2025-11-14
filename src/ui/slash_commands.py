@@ -16,7 +16,7 @@ Available Commands:
     /reddit <task>          - Talk directly to Reddit Agent
     /twitter <task>         - Talk directly to Twitter Agent
     /bluesky <task>         - Talk directly to Bluesky Agent
-    /spotify <task>         - Control Spotify playback (play/pause)
+    /spotify <task>         - Control Spotify playback (play, pause, skip)
     /music <task>           - Control Spotify playback (alias)
     /whatsapp <task>        - Read and analyze WhatsApp messages
     /wa <task>              - WhatsApp (alias)
@@ -35,9 +35,11 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 import re
+from collections import defaultdict
 
 from ..utils.screenshot import get_screenshot_dir
 from ..services.explain_pipeline import ExplainPipeline
+from ..utils.performance_monitor import get_performance_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +230,7 @@ class SlashCommandParser:
         {"command": "/folder", "label": "Folder Agent", "description": "List & reorganize folders"},
         {"command": "/explain", "label": "Explain", "description": "Explain documents using AI"},
         {"command": "/browse", "label": "Browser", "description": "Search the web & extract content"},
+        {"command": "/search", "label": "Search", "description": "Search the web using DuckDuckGo (no API key required)"},
         {"command": "/present", "label": "Presentations", "description": "Create Keynote/Pages docs"},
         {"command": "/email", "label": "Email", "description": "Read, summarize & draft emails"},
         {"command": "/write", "label": "Writing", "description": "Generate reports, notes, slides"},
@@ -257,9 +260,9 @@ class SlashCommandParser:
         "file": "Handle file operations: search, organize, zip, screenshots",
         "folder": "Folder management: list, organize, rename files (LLM-driven, sandboxed)",
         "explain": "Explain document content using semantic search and AI synthesis",
-        "google": "DuckDuckGo web search (legacy name), fast structured results without a browser",
-        "browser": "Web browsing: search Google, navigate URLs, extract content",
-        "presentation": "Create presentations: Keynote, Pages documents",
+        "google": "DuckDuckGo web search (legacy name) - uses DuckDuckGo ONLY, fast structured results without a browser. Use /search as the primary command.",
+        "browser": "Web browsing: navigate URLs, extract content (use /search for DuckDuckGo search)",
+        "presentation": "Create presentations: Keynote (Pages is disabled)",
         "email": "Read, compose, send, and summarize emails via Mail.app",
         "writing": "Generate content: reports, slide decks, meeting notes",
         "maps": "Plan trips with stops, get directions, open Maps",
@@ -271,7 +274,7 @@ class SlashCommandParser:
         "twitter": "Track Twitter lists and activity",
         "bluesky": "Search Bluesky posts, summarize activity, and publish updates",
         "report": "Create PDF reports strictly from local files (or stock data when requested)",
-        "spotify": "Control Spotify playback: play music, pause music, get status",
+        "spotify": "Control Spotify playback: play, pause, skip, go back, get status",
         "whatsapp": "Read WhatsApp messages, summarize conversations, extract action items",
         "celebration": "Trigger celebratory confetti effects with emoji notifications",
         "weather": "Get weather forecasts for locations and timeframes (today, tomorrow, week)",
@@ -304,9 +307,9 @@ class SlashCommandParser:
             '/explain this document about AI',
         ],
         "google": [
-            '/google Python async programming tutorials',
+            '/search Python async programming tutorials',
             '/search latest AI news',
-            '/google site:github.com machine learning',
+            '/search site:github.com machine learning',
         ],
         "browse": [
             '/browse Search for Python tutorials',
@@ -314,7 +317,7 @@ class SlashCommandParser:
         ],
         "present": [
             '/present Create a Keynote about AI trends',
-            '/present Make a Pages document with this report',
+            '/present Make a Keynote presentation with this report',
         ],
         "email": [
             '/email Read the latest 10 emails',
@@ -350,12 +353,19 @@ class SlashCommandParser:
         "spotify": [
             '/spotify play',
             '/spotify pause',
+            '/spotify skip',
+            '/spotify next song',
+            '/spotify back one track',
             '/spotify play Viva la Vida',
             '/spotify play Viva la something',
             '/spotify play that song called Viva la something',
             '/spotify play album Abbey Road',
             '/spotify play artist The Beatles',
             '/spotify status',
+            '/spotify queue up that song where mj moonwalks',
+            '/spotify put on the random access memories album',
+            '/spotify spin up some chill lofi beats',
+            "/spotify what's playing",
             '/music pause',
         ],
         "whatsapp": [
@@ -377,6 +387,7 @@ class SlashCommandParser:
         "bluesky": [
             '/bluesky search "agent ecosystems" limit:8',
             '/bluesky summarize "mac automation" 12h',
+            '/bluesky summarise "mac automation" 12h',
             '/bluesky post "Testing the Bluesky integration ✨"',
             '/bluesky reply https://bsky.app/profile/user.bsky.social/post/abc123 "Great post!"',
             '/bluesky like https://bsky.app/profile/user.bsky.social/post/abc123',
@@ -808,7 +819,7 @@ class SlashCommandParser:
             "  /browse <task>        - Search web, navigate, extract content",
             "",
             "📊 **Presentations:**",
-            "  /present <task>       - Create Keynote/Pages documents",
+            "  /present <task>       - Create Keynote presentations",
             "",
             "📧 **Email:**",
             "  /email <task>         - Compose and send emails",
@@ -901,6 +912,7 @@ class SlashCommandHandler:
         self.config = config or {}
         self.parser = SlashCommandParser()
         self.explain_pipeline = ExplainPipeline(agent_registry)
+        self._usage_metrics = defaultdict(int)
         logger.info("[SLASH COMMANDS] Handler initialized")
 
     def handle(self, message: str, session_id: Optional[str] = None) -> Tuple[bool, Any]:
@@ -921,6 +933,17 @@ class SlashCommandHandler:
         if not parsed:
             # Not a slash command
             return False, None
+
+        command_name = parsed.get("command", "unknown")
+        self._usage_metrics[command_name] += 1
+        logger.info(
+            "[SLASH COMMANDS] Command invoked",
+            extra={"command": command_name, "count": self._usage_metrics[command_name]},
+        )
+        try:
+            get_performance_monitor().record_batch_operation("slash_command_usage", 1)
+        except Exception:
+            pass
 
         # Handle special commands
         if parsed["command"] == "help":
@@ -1417,7 +1440,7 @@ class SlashCommandHandler:
         # 2. Short free-form text heuristic (post mode)
         # If text is short (≤128 chars) and doesn't contain explicit keywords, treat as post
         search_keywords = ["search", "find", "lookup", "scan", "query"]
-        summary_keywords = ["summarize", "summary", "analyze", "last", "recent"]
+        summary_keywords = ["summarize", "summarise", "summary", "analyze", "analyse", "last", "recent"]
         has_search_keyword = any(kw in lower for kw in search_keywords)
         has_summary_keyword = any(kw in lower for kw in summary_keywords)
 
@@ -1438,7 +1461,7 @@ class SlashCommandHandler:
             }
 
         # Explicit summaries
-        if lower.startswith(("summarize", "summary", "analyze")):
+        if lower.startswith(("summarize", "summarise", "summary", "analyze", "analyse")):
             action_word = text.split(None, 1)[0]
             remainder = text[len(action_word):].strip()
 
@@ -1865,6 +1888,11 @@ class SlashCommandHandler:
             value = result.get(key)
             if isinstance(value, str):
                 artifacts.append(value)
+        
+        # Handle screenshot_paths (list of paths)
+        screenshot_paths = result.get("screenshot_paths")
+        if isinstance(screenshot_paths, list):
+            artifacts.extend(screenshot_paths)
 
         status = "error" if result.get("error") else result.get("status", "success")
 
@@ -2121,17 +2149,18 @@ class SlashCommandHandler:
         task_lower = task.lower().strip()
         
         # Extract title and content from task
-        # Pattern: "Create a Keynote about X" or "Make a Pages document with Y"
+        # Pattern: "Create a Keynote about X" or "Make a presentation with Y"
         title_match = re.search(r'(?:about|on|for|titled?)\s+([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
         title = title_match.group(1).strip() if title_match else "Presentation"
         
-        # Check for Pages document
+        # Note: Pages is disabled, always use Keynote
+        # Check for Pages document requests and redirect to Keynote
         if any(kw in task_lower for kw in ["pages", "document", "doc"]):
             # Extract content description
             content_desc = re.sub(r'^(create|make|generate)\s+(?:a\s+)?pages?\s+(?:document|doc)?\s*', '', task_lower, flags=re.IGNORECASE)
             content_desc = re.sub(r'\s+with\s+.+$', '', content_desc).strip()
             
-            return "create_pages_doc", {
+            return "create_keynote", {
                 "title": title,
                 "content": content_desc or task
             }, None
@@ -2525,12 +2554,40 @@ class SlashCommandHandler:
             task: User task string
             
         Returns:
-            Tuple of (tool_name, parameters, status_msg)
+            Tuple of (tool_name, parameters, status_msg) or (None, {}, None) to use orchestrator
         """
-        # Report command typically uses create_detailed_report
-        # Extract topic/title
-        title_match = re.search(r'(?:report|on|about)\s+([^,]+?)(?:\s+with|\s+containing|$)', task.lower())
-        title = title_match.group(1).strip() if title_match else "Report"
+        task_lower = task.lower()
+        
+        # Detect local file requests - keywords: "files", "my [topic] files", "local files"
+        # Pattern: "my [topic] files" or "all my [topic] files" or "[topic] files"
+        local_files_pattern = r'(?:all\s+)?(?:my\s+)?([^,]+?)\s+files'
+        if re.search(local_files_pattern, task_lower) or 'local files' in task_lower:
+            # Route to orchestrator - it will plan: create_local_document_report → compose_email
+            logger.info(f"[SLASH COMMAND] Detected local files request, routing to orchestrator: {task}")
+            return None, {}, None
+        
+        # Detect stock report requests without "files" keyword
+        # Pattern: "stock report", "report on [company] stock", etc.
+        if 'stock' in task_lower and 'files' not in task_lower:
+            # Could route to create_stock_report, but let orchestrator handle it for flexibility
+            # (orchestrator can plan create_stock_report → compose_email if needed)
+            logger.info(f"[SLASH COMMAND] Detected stock report request, routing to orchestrator: {task}")
+            return None, {}, None
+        
+        # For simple content-based reports, use create_detailed_report
+        # Extract topic/title - remove action words and email-related phrases
+        # Pattern: extract topic after "report on/about" but before "and email", "files", etc.
+        title_match = re.search(
+            r'(?:report|on|about)\s+([^,]+?)(?:\s+(?:and|with|containing|files|email)|$)',
+            task_lower
+        )
+        if title_match:
+            title = title_match.group(1).strip()
+            # Clean up title - remove common action words
+            title = re.sub(r'^(all|my|the|a|an)\s+', '', title)
+            title = title.strip()
+        else:
+            title = "Report"
         
         return "create_detailed_report", {
             "content": task,
@@ -2585,52 +2642,108 @@ class SlashCommandHandler:
 
         Routing Logic (Priority Order):
         1. Pause/Stop → pause_music (exact match: "pause", "stop")
-        2. Status → get_spotify_status (contains: "status", "what", "current", "playing")
-        3. Album/Artist Play → play_album/play_artist (contains "album"/"artist" keyword)
-        4. Song Play → play_song (contains "play"/"start"/"resume" + song name)
-        5. Simple Play → play_music (just "play"/"start"/"resume" without song name)
-        6. Default → play_music
+        2. Skip Forward → next_track (phrases like "skip", "skip this", "next song")
+        3. Skip Back → previous_track (phrases like "previous", "back one track", "rewind", "restart song")
+        4. Status → get_spotify_status (questions like "what's playing?", "status", "what song is this?")
+        5. Album/Artist Play → play_album/play_artist (contains "album"/"artist" keyword)
+        6. Song Play → play_song (contains play/start/resume + a title or descriptive text)
+        7. Simple Play → play_music (just "play"/"start"/"resume" without extra context)
+        8. Default → play_music
 
         Content Extraction:
         - Album commands: Extract text after "album" keyword
         - Artist commands: Extract text after "artist" keyword
-        - Song commands: Remove play keywords and natural language prefixes
-        - Preserves rest as content name (may be fuzzy/imprecise)
+        - Song commands: Remove natural language prefixes ("that song called", "queue up", "put on", etc.)
+        - Synonyms like "queue up", "spin up", "put on" are normalized to "play" before parsing
 
         Examples:
         - "/spotify pause" → ("pause_music", {}, None)
-        - "/spotify play" → ("play_music", {}, None)
+        - "/spotify skip" → ("next_track", {}, None)
+        - "/spotify back one track" → ("previous_track", {}, None)
         - "/spotify play album Abbey Road" → ("play_album", {"album_name": "Abbey Road"}, None)
         - "/spotify play artist The Beatles" → ("play_artist", {"artist_name": "The Beatles"}, None)
         - "/spotify play Viva la Vida" → ("play_song", {"song_name": "Viva la Vida"}, None)
-        - "/spotify play Viva la something" → ("play_song", {"song_name": "Viva la something"}, None)
-        - "/spotify play that song called Viva la something" → ("play_song", {"song_name": "Viva la something"}, None)
+        - "/spotify queue up that song where mj moonwalks" → ("play_song", {"song_name": "that song where mj moonwalks"}, None)
         - "/spotify status" → ("get_spotify_status", {}, None)
         - "/spotify what's playing" → ("get_spotify_status", {}, None)
         
         Args:
-            task: User task string (e.g., "play Viva la Vida", "pause", "status")
+            task: User task string (e.g., "play Viva la Vida", "skip", "status")
             
         Returns:
             Tuple of (tool_name, parameters, status_msg)
-            - tool_name: "play_music" | "pause_music" | "get_spotify_status" | "play_song"
+            - tool_name: "play_music" | "pause_music" | "next_track" | "previous_track" | "get_spotify_status" | "play_song" | "play_album" | "play_artist"
             - parameters: Dict with tool-specific params (e.g., {"song_name": "..."} for play_song)
             - status_msg: Optional status message (None for Spotify commands)
         """
-        task_lower = task.lower().strip()
-        task_original = task.strip()
-        
-        # Priority 1: Check for pause/stop (exact match, highest priority)
-        pause_pattern = re.match(r'^(pause|stop)$', task_lower)
-        if pause_pattern:
+        raw_lower = task.lower().strip()
+        raw_original = task.strip()
+
+        # Priority 1: Pause/stop (exact matches)
+        if re.match(r'^(pause|stop)$', raw_lower):
             return "pause_music", {}, None
-        
-        # Priority 2: Check for status requests
-        # Only match question-style phrases to avoid catching "start playing [song]"
-        # Patterns: "what's playing", "what is playing", "currently playing", "status", etc.
+
+        # Priority 2: Skip forward (next track)
+        next_patterns = [
+            r'^(next|skip|skip song|skip track|skip this|skip it|skip forward|skip ahead|next song|next track)$',
+            r'^(skip to next)( song| track)?$',
+            r'^(go to next)( song| track)?$',
+        ]
+        for pattern in next_patterns:
+            if re.match(pattern, raw_lower):
+                return "next_track", {}, None
+        if any(word in raw_lower for word in ["skip", "next"]) and any(token in raw_lower for token in ["song", "track"]):
+            if not any(exclusion in raw_lower for exclusion in ["previous", "prev", "back"]):
+                return "next_track", {}, None
+
+        # Priority 3: Skip backward (previous track / rewind / restart)
+        previous_patterns = [
+            r'^(previous|prev|back)$',
+            r'^(previous|prev|back)\s+(song|track)$',
+            r'^back one\s+(song|track)$',
+            r'^go back( one)?( song| track)?$',
+            r'^(rewind|rewind song|rewind track)$',
+            r'^(restart|restart song|restart track)$',
+        ]
+        for pattern in previous_patterns:
+            if re.match(pattern, raw_lower):
+                return "previous_track", {}, None
+        if any(word in raw_lower for word in ["previous", "prev", "back", "rewind", "restart"]) and any(token in raw_lower for token in ["song", "track"]):
+            return "previous_track", {}, None
+
+        # Normalize synonyms that imply "play"
+        replacements = [
+            ("queue up", "play"),
+            ("queue", "play"),
+            ("cue up", "play"),
+            ("put on", "play"),
+            ("spin up", "play"),
+            ("throw on", "play"),
+            ("start up", "play"),
+            ("fire up", "play"),
+            ("bump", "play"),
+            ("blast", "play"),
+            ("jam out to", "play"),
+            ("jam out", "play"),
+            ("jam to", "play"),
+            ("jam", "play"),
+        ]
+        normalized_lower = raw_lower
+        normalized_original = raw_original
+        for phrase, replacement in replacements:
+            pattern = re.compile(r'\b' + re.escape(phrase) + r'\b', re.IGNORECASE)
+            normalized_lower = pattern.sub(replacement, normalized_lower)
+            normalized_original = pattern.sub(replacement, normalized_original)
+
+        task_lower = re.sub(r"\s+", " ", normalized_lower).strip()
+        task_original = re.sub(r"\s+", " ", normalized_original).strip()
+
+        # Priority 4: Status / "what's playing?" queries
         status_patterns = [
             r"^(what|which|who)\s+(is|'s|are)\s+(playing|current)",
             r"^(what|which|who)\s+(playing|current)",
+            r"^(what|which)\s+(song|track)\s+(is|'s)\s+(this|that|currently)",
+            r"^(what|which)\s+(song|track)\s+is\s+playing",
             r"^status$",
             r"^current\s+(track|song|playing)",
             r"^now\s+playing",
@@ -2638,35 +2751,28 @@ class SlashCommandHandler:
         for pattern in status_patterns:
             if re.match(pattern, task_lower):
                 return "get_spotify_status", {}, None
-        
-        # Also check if "playing" appears with question words (but not "play [song]")
+
         if "playing" in task_lower:
-            # Check if it's a question-style phrase, not a play command
             question_words = ["what", "which", "who", "current", "now"]
             words_before_playing = task_lower.split("playing")[0].strip().split()
-            # Check if any question word appears in the last 2 words before "playing"
             if words_before_playing:
                 last_words = words_before_playing[-2:] if len(words_before_playing) >= 2 else words_before_playing
                 if any(qw in last_words for qw in question_words):
                     return "get_spotify_status", {}, None
-            # Also check for "what's" or "what is" before "playing"
             if "what" in task_lower and "playing" in task_lower:
                 what_pos = task_lower.find("what")
                 playing_pos = task_lower.find("playing")
                 if what_pos < playing_pos:
                     return "get_spotify_status", {}, None
-        
-        # Priority 3: Check for album/artist play requests
-        # Pattern: play/start/resume + album/artist + name
-        play_keywords = ["play", "start", "resume"]
+
+        # Priority 5: Album/artist play requests
+        play_keywords = ["play", "start", "resume", "continue"]
         play_match = re.search(r'\b(' + '|'.join(play_keywords) + r')\b', task_lower)
 
         if play_match:
-            # Extract everything after the play keyword
             play_pos = play_match.end()
             after_play = task_original[play_pos:].strip()
 
-            # Check for album commands
             album_match = re.search(r'\balbum\b', after_play, re.IGNORECASE)
             if album_match:
                 album_pos = album_match.end()
@@ -2674,7 +2780,6 @@ class SlashCommandHandler:
                 if album_name:
                     return "play_album", {"album_name": album_name}, None
 
-            # Check for artist commands
             artist_match = re.search(r'\bartist\b', after_play, re.IGNORECASE)
             if artist_match:
                 artist_pos = artist_match.end()
@@ -2682,32 +2787,31 @@ class SlashCommandHandler:
                 if artist_name:
                     return "play_artist", {"artist_name": artist_name}, None
 
-        # Priority 4: Check for song play requests
-        # Pattern: play/start/resume + song name (more than just the keyword)
+        # Priority 6: Song play requests
         if play_match:
-            # Extract everything after the play keyword
             play_pos = play_match.end()
             after_play = task_original[play_pos:].strip()
 
-            # Remove natural language prefixes
             natural_lang_patterns = [
                 r"^that\s+song\s+called\s+",
+                r"^the\s+song\s+called\s+",
                 r"^the\s+song\s+",
                 r"^song\s+",
                 r"^track\s+",
+                r"^play\s+me\s+",
+                r"^play\s+us\s+",
             ]
             for pattern in natural_lang_patterns:
-                after_play = re.sub(pattern, '', after_play, flags=re.IGNORECASE).strip()
+                after_play = re.sub(pattern, "", after_play, flags=re.IGNORECASE).strip()
 
-            # If there's substantial content after "play", it's a song name
             if after_play and len(after_play) > 2:
                 return "play_song", {"song_name": after_play}, None
-        
-        # Priority 4: Simple play without song name
+
+        # Priority 7: Simple play
         if play_match:
             return "play_music", {}, None
-        
-        # Priority 5: Default to play
+
+        # Priority 8: Default fallback
         return "play_music", {}, None
 
     def _get_llm_response_for_blocked_search(self, query: str, agent) -> str:

@@ -3,9 +3,22 @@ Helper functions for instrumenting tools with OpenTelemetry.
 Provides one-line instrumentation for new tools and future integrations.
 """
 
-from typing import Dict, Any, Optional, Callable
-from opentelemetry import trace
-from .config import get_tracer, sanitize_value, record_event, set_span_error, log_structured
+from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
+
+from .config import (
+    get_tracer,
+    sanitize_value,
+    record_event,
+    set_span_error,
+    log_structured,
+    trace,
+    _OPENTELEMETRY_AVAILABLE,
+)
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span  # pragma: no cover
+else:  # Fallback when OpenTelemetry is not installed
+    Span = Any  # type: ignore
 
 _tracer = get_tracer("auto_mac.tools")
 
@@ -30,17 +43,21 @@ def log_tool_step(tool_name: str, status: str, metadata: Optional[Dict[str, Any]
         span.set_attribute("operation", "start")
 
         # Record tool start event
+        event_metadata = {k: v for k, v in metadata.items() if k != "_span"}
         record_event(span, "tool_execution_start", {
             "tool_name": tool_name,
             "correlation_id": correlation_id,
-            **metadata
+            **event_metadata
         })
 
         # Store span in metadata for later completion
+        # Note: We don't set "_span" as an attribute (it's not telemetry-compatible)
+        # Instead, we store it in the metadata dict for internal use only
         metadata["_span"] = span
 
+        log_data = {k: v for k, v in metadata.items() if k != "_span"}
         log_structured("info", f"Tool {tool_name} started",
-                      tool_name=tool_name, correlation_id=correlation_id, **metadata)
+                      tool_name=tool_name, correlation_id=correlation_id, **log_data)
 
     elif status in ["success", "error", "cancelled"]:
         span = metadata.get("_span")
@@ -49,32 +66,38 @@ def log_tool_step(tool_name: str, status: str, metadata: Optional[Dict[str, Any]
             span.set_attribute("final_status", status)
 
             if status == "success":
-                span.set_status(trace.Status(trace.StatusCode.OK))
+                if _OPENTELEMETRY_AVAILABLE:
+                    span.set_status(trace.Status(trace.StatusCode.OK))
+                event_metadata = {k: v for k, v in metadata.items() if k != "_span"}
                 record_event(span, "tool_execution_success", {
                     "tool_name": tool_name,
                     "correlation_id": correlation_id,
-                    **metadata
+                    **event_metadata
                 })
             elif status == "error":
                 error_msg = metadata.get("error_message", "Unknown error")
+                event_metadata = {k: v for k, v in metadata.items() if k != "_span"}
                 set_span_error(span, Exception(error_msg), {
                     "tool_name": tool_name,
                     "correlation_id": correlation_id,
-                    **metadata
+                    **event_metadata
                 })
             elif status == "cancelled":
-                span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+                if _OPENTELEMETRY_AVAILABLE:
+                    span.set_status(trace.Status(trace.StatusCode.OK, "cancelled"))
+                event_metadata = {k: v for k, v in metadata.items() if k != "_span"}
                 record_event(span, "tool_execution_cancelled", {
                     "tool_name": tool_name,
                     "correlation_id": correlation_id,
-                    **metadata
+                    **event_metadata
                 })
 
             span.end()
 
+            log_data = {k: v for k, v in metadata.items() if k != "_span"}
             log_structured("info" if status == "success" else "error",
                           f"Tool {tool_name} {status}",
-                          tool_name=tool_name, correlation_id=correlation_id, **metadata)
+                          tool_name=tool_name, correlation_id=correlation_id, **log_data)
 
 def instrument_tool_execution(tool_name: str, correlation_id: Optional[str] = None):
     """
@@ -121,7 +144,7 @@ def instrument_tool_execution(tool_name: str, correlation_id: Optional[str] = No
         return wrapper
     return decorator
 
-def create_tool_span(tool_name: str, correlation_id: Optional[str] = None) -> trace.Span:
+def create_tool_span(tool_name: str, correlation_id: Optional[str] = None) -> Span:
     """
     Create a span for tool execution. Useful for manual span management.
 
@@ -191,10 +214,11 @@ def record_reply_status(status: str, correlation_id: Optional[str] = None,
         span.set_attribute("correlation_id", correlation_id)
     span.set_attribute("reply_status", status)
 
-    if status == "reply_missing":
-        span.set_status(trace.Status(trace.StatusCode.ERROR, "Reply not found"))
-    elif status == "fallback_used":
-        span.set_status(trace.Status(trace.StatusCode.OK, "Fallback reply used"))
+    if _OPENTELEMETRY_AVAILABLE:
+        if status == "reply_missing":
+            span.set_status(trace.Status(trace.StatusCode.ERROR, "Reply not found"))
+        elif status == "fallback_used":
+            span.set_status(trace.Status(trace.StatusCode.OK, "Fallback reply used"))
 
     record_event(span, f"reply_{status}", {
         "status": status,

@@ -412,7 +412,8 @@ Complete specification of available tools for the automation agent.
 - `output_path` (string): Path to save the presentation
 
 ### create_pages_doc
-**Description:** Create Pages documents from content
+**Status:** DISABLED - Pages automation is unreliable. Use create_keynote or create_local_document_report instead.
+**Description:** [DISABLED] Create Pages documents from content - This tool is disabled due to reliability issues.
 **Parameters:**
 - `title` (string, required): Document title
 - `content` (string, required): Document content
@@ -642,20 +643,43 @@ Complete specification of available tools for the automation agent.
 
 ---
 
-## SPOTIFY Agent (3 tools)
+## SPOTIFY Agent (8 tools)
+
+### play_music
+**Description:** Start or resume Spotify playback.
+**Parameters:** None
+
+### pause_music
+**Description:** Pause current Spotify playback.
+**Parameters:** None
+
+### next_track
+**Description:** Skip to the next track in the current queue or playlist.
+**Parameters:** None
+
+### previous_track
+**Description:** Return to the previous track (Spotify restarts the current track if pressed twice quickly).
+**Parameters:** None
+
+### get_spotify_status
+**Description:** Get current Spotify playback status, track title, and artist information.
+**Parameters:** None
 
 ### play_song
-**Description:** Play a song on Spotify
+**Description:** Play a specific song on Spotify using semantic disambiguation (handles fuzzy or descriptive queries).
 **Parameters:**
-- `query` (string, required): Song name or search query
+- `song_name` (string, required): Song title, lyric snippet, or descriptive query.
+- `reasoning_context` (object): Optional reasoning metadata for disambiguation.
 
-### pause_playback
-**Description:** Pause current Spotify playback
-**Parameters:** None
+### play_album
+**Description:** Play an album on Spotify.
+**Parameters:**
+- `album_name` (string, required): Album title or descriptive query.
 
-### resume_playback
-**Description:** Resume Spotify playback
-**Parameters:** None
+### play_artist
+**Description:** Play an artist's top tracks on Spotify.
+**Parameters:**
+- `artist_name` (string, required): Artist name or descriptive query.
 
 ---
 

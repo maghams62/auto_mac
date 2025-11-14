@@ -42,10 +42,17 @@ class PromptRepository:
     Each category entry is a list of Markdown files relative to ``prompts/examples``.
     """
 
-    def __init__(self, repo_root: Optional[Path] = None) -> None:
+    def __init__(self, repo_root: Optional[Path] = None, config: Optional[Dict[str, Any]] = None) -> None:
         self.repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[1]
         self.examples_dir = self.repo_root / "prompts" / "examples"
         self._index = self._load_index()
+        
+        # Check if prompt template caching is enabled
+        self._caching_enabled = True
+        if config:
+            perf_config = config.get("performance", {})
+            caching_config = perf_config.get("caching", {})
+            self._caching_enabled = caching_config.get("prompt_templates", True)
 
     # --------------------------------------------------------------------- #
     # Internal helpers
@@ -96,13 +103,9 @@ class PromptRepository:
 
         return []
 
-    @lru_cache(maxsize=256)  # Increased cache size for better hit rate
-    def load_category(self, category: str) -> str:
+    def _load_category_uncached(self, category: str) -> str:
         """
-        Load and concatenate all prompt snippets for a category.
-
-        The result is cached to avoid re-reading files across calls.
-        Cache size increased to 256 for better performance.
+        Internal method to load category without caching.
         """
         files = self._index.get("categories", {}).get(category, [])
         if not files:
@@ -121,6 +124,36 @@ class PromptRepository:
                 logger.error("Failed to read prompt file %s: %s", path, exc)
 
         return "\n\n".join(section for section in sections if section)
+    
+    @lru_cache(maxsize=256)  # Increased cache size for better hit rate
+    def _load_category_cached(self, category: str) -> str:
+        """
+        Cached version of load_category.
+        """
+        # Track cache hit (LRU cache handles this automatically, but we track for telemetry)
+        try:
+            from src.utils.performance_monitor import get_performance_monitor
+            # Check if this is a cache hit by seeing if it's already in cache
+            cache_info = self._load_category_cached.cache_info()
+            if cache_info.hits > 0:
+                get_performance_monitor().record_cache_hit("prompt_templates")
+            else:
+                get_performance_monitor().record_cache_miss("prompt_templates")
+        except Exception:
+            pass
+        return self._load_category_uncached(category)
+    
+    def load_category(self, category: str) -> str:
+        """
+        Load and concatenate all prompt snippets for a category.
+
+        The result is cached if performance.caching.prompt_templates is enabled.
+        Cache size is 256 for better performance.
+        """
+        if self._caching_enabled:
+            return self._load_category_cached(category)
+        else:
+            return self._load_category_uncached(category)
 
     def load_categories(self, categories: Iterable[str]) -> List[Tuple[str, str]]:
         """
