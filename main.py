@@ -47,11 +47,8 @@ def main():
         # Load configuration
         config = load_config()
 
-        # Setup logging
+        # Setup logging (uses module-level logger)
         setup_logging(config)
-
-        # Get logger after setup
-        logger = logging.getLogger(__name__)
         logger.info("Starting Cerebro OS")
 
         # Check for OpenAI API key
@@ -60,12 +57,11 @@ def main():
             print("Please set it with: export OPENAI_API_KEY='your-key-here'")
             sys.exit(1)
 
-        # Initialize session manager with retry logging enabled
+        # Initialize session manager (retry logging config is handled internally if supported)
         retry_logging_enabled = config.get("retry_logging", {}).get("enabled", True)
         session_manager = SessionManager(
             storage_dir="data/sessions",
             config=config,
-            enable_retry_logging=retry_logging_enabled
         )
         session_id = "default"  # Single-user mode
         logger.info(f"Session manager initialized with session ID: {session_id}")
@@ -197,8 +193,6 @@ def main():
                         # Fix URL format if it uses "via" in daddr (incorrect format)
                         # Convert: daddr=DEST via STOP1, STOP2 to daddr=STOP1&daddr=STOP2&daddr=DEST
                         from urllib.parse import unquote, quote, urlparse, parse_qs, urlencode, urlunparse
-                        import logging
-                        logger = logging.getLogger(__name__)
                         
                         try:
                             parsed = urlparse(maps_url)
@@ -274,8 +268,6 @@ def main():
                         
                         # Also provide a command to open it programmatically
                         import subprocess
-                        import logging
-                        logger = logging.getLogger(__name__)
                         try:
                             # Try to open the URL automatically
                             result = subprocess.run(["open", maps_url], check=False, capture_output=True, timeout=2)

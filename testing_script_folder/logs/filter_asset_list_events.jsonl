@@ -1,0 +1,30 @@
+{"timestamp": "2025-11-17T22:46:23.153909+00:00", "action": "task_started", "details": {"task": "filter_asset_list"}}
+{"timestamp": "2025-11-17T22:46:23.154021+00:00", "action": "navigate", "details": {"url": "https://empmassimo23.service-now.com/now/nav/ui/classic/params/target/alm_asset_list.do", "via": "module_url"}}
+{"timestamp": "2025-11-17T22:46:27.147622+00:00", "action": "frame_detected", "details": {"frame": "gsft_main"}}
+{"timestamp": "2025-11-17T22:46:27.323971+00:00", "action": "click", "details": {"selector": "a.list_filter_toggle"}}
+{"timestamp": "2025-11-17T22:46:27.848946+00:00", "action": "select", "details": {"selector": "field", "label": "Asset tag", "index": 0}}
+{"timestamp": "2025-11-17T22:46:28.159155+00:00", "action": "select", "details": {"selector": "operator", "label": "is empty", "index": 0}}
+{"timestamp": "2025-11-17T22:46:28.720311+00:00", "action": "click", "details": {"selector": "button[name='and-button']", "index": 0}}
+{"timestamp": "2025-11-17T22:46:29.675124+00:00", "action": "select", "details": {"selector": "field", "label": "Asset function", "index": 1}}
+{"timestamp": "2025-11-17T22:46:30.003375+00:00", "action": "select", "details": {"selector": "operator", "label": "is", "index": 1}}
+{"timestamp": "2025-11-17T22:46:30.340209+00:00", "action": "select", "details": {"selector": "value_select", "label": "-- None --", "index": 1}}
+{"timestamp": "2025-11-17T22:46:30.817832+00:00", "action": "click", "details": {"selector": "button[name='and-button']", "index": 1}}
+{"timestamp": "2025-11-17T22:46:31.304795+00:00", "action": "select", "details": {"selector": "field", "label": "Serial number", "index": 2}}
+{"timestamp": "2025-11-17T22:46:31.626191+00:00", "action": "select", "details": {"selector": "operator", "label": "is empty", "index": 2}}
+{"timestamp": "2025-11-17T22:46:32.566617+00:00", "action": "click", "details": {"selector": "button[name='and-button']", "index": 2}}
+{"timestamp": "2025-11-17T22:46:33.005063+00:00", "action": "select", "details": {"selector": "field", "label": "Model category", "index": 3}}
+{"timestamp": "2025-11-17T22:46:33.329397+00:00", "action": "select", "details": {"selector": "operator", "label": "is", "index": 3}}
+{"timestamp": "2025-11-17T22:46:33.841839+00:00", "action": "fill", "details": {"selector": "input.filter-reference-input", "text": "Consumable", "index": 3}}
+{"timestamp": "2025-11-17T22:46:35.230639+00:00", "action": "lookup_search", "details": {"value": "Consumable", "index": 3}}
+{"timestamp": "2025-11-17T22:46:36.204255+00:00", "action": "lookup_select", "details": {"value": "Consumable", "index": 3}}
+{"timestamp": "2025-11-17T22:46:36.852869+00:00", "action": "click", "details": {"selector": "button[name='and-button']", "index": 3}}
+{"timestamp": "2025-11-17T22:46:37.278316+00:00", "action": "select", "details": {"selector": "field", "label": "Assigned to", "index": 4}}
+{"timestamp": "2025-11-17T22:46:37.590615+00:00", "action": "select", "details": {"selector": "operator", "label": "is", "index": 4}}
+{"timestamp": "2025-11-17T22:46:38.000220+00:00", "action": "fill", "details": {"selector": "input.filter-reference-input", "text": "Valentine Granberry", "index": 4}}
+{"timestamp": "2025-11-17T22:46:39.366897+00:00", "action": "lookup_search", "details": {"value": "Valentine Granberry", "index": 4}}
+{"timestamp": "2025-11-17T22:46:40.336549+00:00", "action": "lookup_select", "details": {"value": "Valentine Granberry", "index": 4}}
+{"timestamp": "2025-11-17T22:46:40.974363+00:00", "action": "click", "details": {"selector": "button[aria-label='Run filter']"}}
+{"timestamp": "2025-11-17T22:46:42.997417+00:00", "action": "table_detected", "details": {"selector": "table.data_list_table"}}
+{"timestamp": "2025-11-17T22:46:43.125614+00:00", "action": "rows_extracted", "details": {"count": 6}}
+{"timestamp": "2025-11-17T22:46:43.126469+00:00", "action": "results_saved", "details": {"path": "/Users/siddharthsuresh/Downloads/auto_mac/testing_script_folder/logs/filter_asset_list_results.json", "row_count": 6}}
+{"timestamp": "2025-11-17T22:46:43.126474+00:00", "action": "task_completed", "details": {"task": "filter_asset_list", "status": "success"}}

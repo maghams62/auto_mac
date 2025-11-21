@@ -37985,3 +37985,72 @@ Final status: error (preserved from earlier stage)
 {"timestamp": "2025-11-11T19:27:45.666321Z", "level": "INFO", "logger": "__main__", "message": "WebSocket client disconnected (normal disconnect)", "session_id": "7a3213c6-1271-41e8-aad1-6263d4eba32f", "request_id": "1ce2eb4f-a776-4d58-bec9-69fa6f738055"}
 {"timestamp": "2025-11-11T19:27:45.667365Z", "level": "INFO", "logger": "__main__", "message": "WebSocket client disconnected", "session_id": "7a3213c6-1271-41e8-aad1-6263d4eba32f", "request_id": "1ce2eb4f-a776-4d58-bec9-69fa6f738055", "total_connections": 0}
 {"timestamp": "2025-11-11T19:27:45.667626Z", "level": "INFO", "logger": "__main__", "message": "WebSocket client disconnected (normal disconnect)", "session_id": "7a3213c6-1271-41e8-aad1-6263d4eba32f", "request_id": "1ce2eb4f-a776-4d58-bec9-69fa6f738055"}
+2025-11-18 12:55:31,680 - __main__ - INFO - Starting Cerebro OS
+2025-11-18 12:55:31,680 - __main__ - ERROR - Application error: SessionManager.__init__() got an unexpected keyword argument 'enable_retry_logging'
+Traceback (most recent call last):
+  File "/Users/siddharthsuresh/Downloads/auto_mac/main.py", line 62, in main
+    session_manager = SessionManager(
+                      ^^^^^^^^^^^^^^^
+TypeError: SessionManager.__init__() got an unexpected keyword argument 'enable_retry_logging'
+2025-11-18 12:55:47,394 - __main__ - INFO - Starting Cerebro OS
+2025-11-18 12:55:47,394 - src.memory.session_manager - INFO - [SESSION MANAGER] Write-behind caching enabled (interval: 30s)
+2025-11-18 12:55:47,394 - src.memory.session_manager - INFO - [SESSION MANAGER] Initialized with storage: data/sessions, reasoning_trace=True, active_window=5, persistent_memory=True, msgpack=False
+2025-11-18 12:55:47,394 - __main__ - INFO - Session manager initialized with session ID: default
+2025-11-18 12:55:47,394 - __main__ - INFO - Retry logging enabled for better error recovery
+2025-11-18 12:55:47,394 - src.agent.agent_registry - INFO - [AGENT REGISTRY] Session management enabled
+2025-11-18 12:55:47,394 - src.agent.agent_registry - INFO - [AGENT REGISTRY] Lazy loading enabled - agents will be initialized on first use
+2025-11-18 12:55:47,394 - src.workflow - INFO - Initializing workflow components...
+2025-11-18 12:55:47,482 - src.workflow - INFO - Workflow components initialized (DocumentIndexer will be lazy-loaded)
+2025-11-18 12:55:47,671 - src.agent.agent - INFO - [AUTOMATION AGENT] Session management enabled
+2025-11-18 12:55:47,687 - src.utils.performance_monitor - INFO - [PERFORMANCE MONITOR] Initialized
+2025-11-18 12:55:47,687 - src.utils.openai_client - INFO - [POOLED CLIENT] Created OpenAI client with connection pooling (max_connections=100, keepalive=50, expiry=30s)
+2025-11-18 12:55:47,719 - src.agent.verifier - INFO - [VERIFIER] Using pooled OpenAI client
+2025-11-18 12:55:47,727 - src.agent.agent - INFO - [PROMPT LOADING] Loaded agent-scoped examples for 'automation' agent via PromptRepository
+2025-11-18 12:55:47,729 - src.services.explain_pipeline - INFO - [EXPLAIN PIPELINE] Initialized
+2025-11-18 12:55:47,729 - src.ui.slash_commands - INFO - [SLASH COMMANDS] Handler initialized
+2025-11-18 12:55:47,734 - src.memory.session_memory - INFO - [SESSION MEMORY] Reasoning trace enabled for session default
+2025-11-18 12:55:47,734 - src.memory.context_bus - INFO - [CONTEXT BUS] Initialized
+2025-11-18 12:55:47,734 - src.memory.session_memory - INFO - [SESSION MEMORY] Created session: default (active window: 5)
+2025-11-18 12:55:47,735 - src.memory.user_memory_store - INFO - [USER MEMORY] Using pooled OpenAI client for connection reuse
+2025-11-18 12:55:47,736 - src.workflow - INFO - [PERF] Initializing DocumentIndexer (lazy load)
+2025-11-18 12:55:47,736 - src.documents.indexer - INFO - [DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+2025-11-18 12:55:47,796 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Using pooled OpenAI client for embeddings and LLM reasoning
+2025-11-18 12:55:47,796 - src.documents.image_indexer - INFO - Loading existing image index
+2025-11-18 12:55:47,802 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Loaded FAISS index with 1 vectors
+2025-11-18 12:55:47,802 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Loaded 2 images from index (FAISS index has 1 vectors)
+2025-11-18 12:55:47,803 - src.documents.indexer - INFO - Image indexer initialized
+2025-11-18 12:55:47,803 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-18 12:55:47,803 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-18 12:55:47,814 - src.documents.indexer - INFO - Loaded 592 document chunks
+2025-11-18 12:55:47,814 - src.workflow - INFO - [PERF] DocumentIndexer initialized
+2025-11-18 12:56:57,846 - __main__ - INFO - Starting Cerebro OS
+2025-11-18 12:56:57,846 - src.memory.session_manager - INFO - [SESSION MANAGER] Write-behind caching enabled (interval: 30s)
+2025-11-18 12:56:57,846 - src.memory.session_manager - INFO - [SESSION MANAGER] Initialized with storage: data/sessions, reasoning_trace=True, active_window=5, persistent_memory=True, msgpack=False
+2025-11-18 12:56:57,846 - __main__ - INFO - Session manager initialized with session ID: default
+2025-11-18 12:56:57,846 - __main__ - INFO - Retry logging enabled for better error recovery
+2025-11-18 12:56:57,846 - src.agent.agent_registry - INFO - [AGENT REGISTRY] Session management enabled
+2025-11-18 12:56:57,846 - src.agent.agent_registry - INFO - [AGENT REGISTRY] Lazy loading enabled - agents will be initialized on first use
+2025-11-18 12:56:57,847 - src.workflow - INFO - Initializing workflow components...
+2025-11-18 12:56:57,878 - src.workflow - INFO - Workflow components initialized (DocumentIndexer will be lazy-loaded)
+2025-11-18 12:56:58,051 - src.agent.agent - INFO - [AUTOMATION AGENT] Session management enabled
+2025-11-18 12:56:58,055 - src.utils.performance_monitor - INFO - [PERFORMANCE MONITOR] Initialized
+2025-11-18 12:56:58,055 - src.utils.openai_client - INFO - [POOLED CLIENT] Created OpenAI client with connection pooling (max_connections=100, keepalive=50, expiry=30s)
+2025-11-18 12:56:58,055 - src.agent.verifier - INFO - [VERIFIER] Using pooled OpenAI client
+2025-11-18 12:56:58,061 - src.agent.agent - INFO - [PROMPT LOADING] Loaded agent-scoped examples for 'automation' agent via PromptRepository
+2025-11-18 12:56:58,094 - src.services.explain_pipeline - INFO - [EXPLAIN PIPELINE] Initialized
+2025-11-18 12:56:58,094 - src.ui.slash_commands - INFO - [SLASH COMMANDS] Handler initialized
+2025-11-18 12:56:58,098 - src.memory.session_memory - INFO - [SESSION MEMORY] Reasoning trace enabled for session default
+2025-11-18 12:56:58,098 - src.memory.context_bus - INFO - [CONTEXT BUS] Initialized
+2025-11-18 12:56:58,098 - src.memory.session_memory - INFO - [SESSION MEMORY] Created session: default (active window: 5)
+2025-11-18 12:56:58,098 - src.memory.user_memory_store - INFO - [USER MEMORY] Using pooled OpenAI client for connection reuse
+2025-11-18 12:56:58,100 - src.workflow - INFO - [PERF] Initializing DocumentIndexer (lazy load)
+2025-11-18 12:56:58,100 - src.documents.indexer - INFO - [DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+2025-11-18 12:56:58,100 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Using pooled OpenAI client for embeddings and LLM reasoning
+2025-11-18 12:56:58,100 - src.documents.image_indexer - INFO - Loading existing image index
+2025-11-18 12:56:58,102 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Loaded FAISS index with 1 vectors
+2025-11-18 12:56:58,102 - src.documents.image_indexer - INFO - [IMAGE INDEXER] Loaded 2 images from index (FAISS index has 1 vectors)
+2025-11-18 12:56:58,102 - src.documents.indexer - INFO - Image indexer initialized
+2025-11-18 12:56:58,102 - src.documents.indexer - INFO - Loading existing FAISS index
+2025-11-18 12:56:58,102 - src.documents.indexer - INFO - Loading FAISS index
+2025-11-18 12:56:58,107 - src.documents.indexer - INFO - Loaded 592 document chunks
+2025-11-18 12:56:58,107 - src.workflow - INFO - [PERF] DocumentIndexer initialized

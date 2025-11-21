@@ -1,0 +1,5 @@
+{"timestamp": "2025-11-17T22:46:14.590462+00:00", "action": "navigate", "details": {"url": "https://empmassimo23.service-now.com/navpage.do"}}
+{"timestamp": "2025-11-17T22:46:16.170315+00:00", "action": "fill", "details": {"field": "username", "selector": "input#user_name"}}
+{"timestamp": "2025-11-17T22:46:16.347851+00:00", "action": "fill", "details": {"field": "password", "selector": "input#user_password", "value_masked": true}}
+{"timestamp": "2025-11-17T22:46:16.937695+00:00", "action": "click", "details": {"selector": "button#sysverb_login"}}
+{"timestamp": "2025-11-17T22:46:23.153078+00:00", "action": "login_success", "details": {}}
