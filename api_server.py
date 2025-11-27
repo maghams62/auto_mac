@@ -358,6 +358,19 @@ class FeedbackPayload(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+# Conversation History Models
+class ConversationMessage(BaseModel):
+    role: str  # 'user' | 'assistant' | 'system'
+    content: str
+    timestamp: Optional[str] = None
+    message_id: Optional[str] = None
+
+class ConversationHistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ConversationMessage]
+    total_messages: int
+
+
 async def has_active_task(session_id: str) -> bool:
     """Check if a session already has an in-flight agent execution."""
     async with _session_tasks_lock:
@@ -1302,6 +1315,15 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Electron launcher"""
+    return {
+        "status": "ok",
+        "service": "Cerebro OS API",
+        "timestamp": datetime.now().isoformat()
+    }
+
 @app.get("/api/stats", response_model=SystemStats)
 async def get_stats():
     """Get system statistics"""
@@ -1327,6 +1349,71 @@ async def get_stats():
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/conversation/history/{session_id}", response_model=ConversationHistoryResponse)
+async def get_conversation_history(session_id: str, limit: int = 100):
+    """
+    Retrieve conversation history for a given session.
+    Returns the most recent messages in chronological order.
+    """
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span("get_conversation_history") as span:
+        span.set_attribute("session_id", session_id)
+        span.set_attribute("limit", limit)
+
+        try:
+            # Get session from SessionManager
+            session = session_manager.get_session(session_id)
+            if not session:
+                logger.info(f"No session found for {session_id}, returning empty history")
+                # Return empty history instead of 404 - session may not exist yet
+                return ConversationHistoryResponse(
+                    session_id=session_id,
+                    messages=[],
+                    total_messages=0
+                )
+
+            # Get conversation history from session
+            conversation_history = getattr(session, 'conversation_history', [])
+
+            # Take the most recent messages (up to limit)
+            history = conversation_history[-limit:] if conversation_history else []
+
+            # Convert to API format
+            messages = []
+            for msg in history:
+                # Handle different message formats
+                role = msg.get("role", "assistant")
+                content = msg.get("content", "")
+
+                # Skip empty messages
+                if not content:
+                    continue
+
+                messages.append(ConversationMessage(
+                    role=role,
+                    content=content,
+                    timestamp=msg.get("timestamp", datetime.now().isoformat()),
+                    message_id=msg.get("message_id", msg.get("id"))
+                ))
+
+            span.set_attribute("messages_count", len(messages))
+            logger.info(f"Retrieved {len(messages)} messages for session {session_id}")
+
+            return ConversationHistoryResponse(
+                session_id=session_id,
+                messages=messages,
+                total_messages=len(messages)
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history: {e}", exc_info=True)
+            set_span_error(span, e)
+            # Return empty history on error instead of raising exception
+            return ConversationHistoryResponse(
+                session_id=session_id,
+                messages=[],
+                total_messages=0
+            )
 
 @app.post("/api/telemetry/slash-command")
 async def record_slash_command_telemetry(data: Dict[str, Any] = Body(...)):
@@ -1388,6 +1475,61 @@ async def record_user_feedback(payload: FeedbackPayload):
     except Exception as exc:
         logger.error(f"[USER FEEDBACK] Failed to record feedback: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to record feedback")
+
+
+class FrontendLogEntry(BaseModel):
+    timestamp: str
+    level: str
+    message: str
+    context: Optional[Dict[str, Any]] = None
+    error: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/logs")
+async def receive_frontend_log(log_entry: FrontendLogEntry):
+    """Receive and store frontend logs for unified logging"""
+    try:
+        # Sanitize log entry
+        sanitized_context = sanitize_value(log_entry.context or {}) if log_entry.context else {}
+        sanitized_error = sanitize_value(log_entry.error or {}) if log_entry.error else None
+        
+        # Write to unified log file
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        log_file = log_dir / f"frontend-{datetime.now().strftime('%Y-%m-%d')}.log"
+        
+        log_line = {
+            "timestamp": log_entry.timestamp,
+            "level": log_entry.level,
+            "message": log_entry.message,
+            "context": sanitized_context,
+        }
+        if sanitized_error:
+            log_line["error"] = sanitized_error
+        
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_line) + "\n")
+        
+        # Also log to backend logger with appropriate level
+        log_message = f"[FRONTEND] {log_entry.message}"
+        extra = {"context": sanitized_context}
+        if sanitized_error:
+            extra["error"] = sanitized_error
+        
+        if log_entry.level.upper() == "ERROR":
+            logger.error(log_message, extra=extra)
+        elif log_entry.level.upper() == "WARN":
+            logger.warning(log_message, extra=extra)
+        elif log_entry.level.upper() == "DEBUG":
+            logger.debug(log_message, extra=extra)
+        else:
+            logger.info(log_message, extra=extra)
+        
+        return {"status": "logged"}
+    except Exception as exc:
+        logger.error(f"[LOGS] Failed to store frontend log: {exc}", exc_info=True)
+        # Don't raise error - logging failures shouldn't break the app
+        return {"status": "error", "message": str(exc)}
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
@@ -1506,6 +1648,193 @@ async def list_agents():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/commands")
+async def list_commands():
+    """List all available commands/actions for the launcher"""
+    try:
+        from src.agent.agent_registry import AgentRegistry
+        registry = AgentRegistry(config_manager.get_config())
+
+        # Map agent names to categories and icons
+        agent_metadata = {
+            "file_agent": {"title": "Search Files", "category": "Files", "icon": "📄", "description": "Search and manage documents", "keywords": ["file", "document", "search", "pdf", "doc"]},
+            "folder_agent": {"title": "Browse Folders", "category": "Files", "icon": "📁", "description": "Navigate and organize folders", "keywords": ["folder", "directory", "browse", "organize"]},
+            "email_agent": {"title": "Email", "category": "Communication", "icon": "📧", "description": "Compose and send emails", "keywords": ["email", "mail", "send", "compose"]},
+            "imessage_agent": {"title": "iMessage", "category": "Communication", "icon": "💬", "description": "Send iMessages", "keywords": ["imessage", "message", "text", "sms"]},
+            "browser_agent": {"title": "Web Search", "category": "Web", "icon": "🌐", "description": "Search the web", "keywords": ["web", "search", "google", "browser"]},
+            "google_agent": {"title": "Google", "category": "Web", "icon": "🔍", "description": "Search with Google", "keywords": ["google", "search"]},
+            "presentation_agent": {"title": "Presentations", "category": "Productivity", "icon": "📊", "description": "Create Keynote presentations", "keywords": ["keynote", "presentation", "slides", "deck"]},
+            "writing_agent": {"title": "Writing", "category": "Productivity", "icon": "✍️", "description": "Generate documents and content", "keywords": ["write", "document", "pages", "content"]},
+            "spotify_agent": {"title": "Spotify", "category": "Media", "icon": "🎵", "description": "Control Spotify playback", "keywords": ["spotify", "music", "play", "song"]},
+            "calendar_agent": {"title": "Calendar", "category": "Productivity", "icon": "📅", "description": "Manage calendar events", "keywords": ["calendar", "event", "schedule", "meeting"]},
+            "notes_agent": {"title": "Notes", "category": "Productivity", "icon": "📝", "description": "Create and manage notes", "keywords": ["note", "notes", "write"]},
+            "reminders_agent": {"title": "Reminders", "category": "Productivity", "icon": "⏰", "description": "Set reminders", "keywords": ["reminder", "todo", "task"]},
+            "maps_agent": {"title": "Maps", "category": "Navigation", "icon": "🗺️", "description": "Plan routes and trips", "keywords": ["maps", "directions", "route", "travel"]},
+            "weather_agent": {"title": "Weather", "category": "Information", "icon": "🌤️", "description": "Get weather information", "keywords": ["weather", "forecast", "temperature"]},
+            "discord_agent": {"title": "Discord", "category": "Communication", "icon": "💬", "description": "Send Discord messages", "keywords": ["discord", "message", "chat"]},
+            "whatsapp_agent": {"title": "WhatsApp", "category": "Communication", "icon": "💬", "description": "Send WhatsApp messages", "keywords": ["whatsapp", "message", "chat"]},
+            "bluesky_agent": {"title": "Bluesky", "category": "Social", "icon": "🦋", "description": "Post to Bluesky", "keywords": ["bluesky", "social", "post"]},
+            "twitter_agent": {"title": "Twitter", "category": "Social", "icon": "🐦", "description": "Post to Twitter", "keywords": ["twitter", "tweet", "social"]},
+            "reddit_agent": {"title": "Reddit", "category": "Social", "icon": "🤖", "description": "Browse Reddit", "keywords": ["reddit", "browse"]},
+            "knowledge_agent": {"title": "Knowledge", "category": "Information", "icon": "📚", "description": "Look up information", "keywords": ["knowledge", "wiki", "information", "learn"]},
+            "voice_agent": {"title": "Voice", "category": "Accessibility", "icon": "🎤", "description": "Text-to-speech and transcription", "keywords": ["voice", "speak", "tts", "transcribe"]},
+            "shortcuts_agent": {"title": "Shortcuts", "category": "Automation", "icon": "⚡", "description": "Run Shortcuts", "keywords": ["shortcut", "automation", "workflow"]},
+            "system_control_agent": {"title": "System Control", "category": "System", "icon": "⚙️", "description": "Control system settings", "keywords": ["system", "settings", "control"]},
+        }
+
+        commands = []
+        for agent_name, agent_instance in registry.agents.items():
+            # Get metadata or use defaults
+            metadata = agent_metadata.get(agent_name, {
+                "title": agent_name.replace("_", " ").title(),
+                "category": "General",
+                "icon": "⚙️",
+                "description": f"{agent_name} operations",
+                "keywords": [agent_name.replace("_agent", "")]
+            })
+
+            commands.append({
+                "id": agent_name,
+                "title": metadata["title"],
+                "description": metadata["description"],
+                "category": metadata["category"],
+                "icon": metadata["icon"],
+                "keywords": metadata["keywords"],
+                "handler_type": "agent"
+            })
+
+        # Add Spotify control commands (direct API calls)
+        spotify_controls = [
+            {
+                "id": "spotify_play_pause",
+                "title": "Play/Pause",
+                "description": "Toggle Spotify playback",
+                "category": "Spotify",
+                "icon": "⏯️",
+                "keywords": ["spotify", "play", "pause", "toggle", "music"],
+                "handler_type": "spotify_control",
+                "endpoint": "/api/spotify/toggle"  # Will implement toggle endpoint
+            },
+            {
+                "id": "spotify_next",
+                "title": "Next Track",
+                "description": "Skip to next Spotify track",
+                "category": "Spotify",
+                "icon": "⏭️",
+                "keywords": ["spotify", "next", "skip", "forward"],
+                "handler_type": "spotify_control",
+                "endpoint": "/api/spotify/next"
+            },
+            {
+                "id": "spotify_previous",
+                "title": "Previous Track",
+                "description": "Go to previous Spotify track",
+                "category": "Spotify",
+                "icon": "⏮️",
+                "keywords": ["spotify", "previous", "back", "rewind"],
+                "handler_type": "spotify_control",
+                "endpoint": "/api/spotify/previous"
+            }
+        ]
+        commands.extend(spotify_controls)
+
+        # Add all slash commands from slash_commands.py
+        # Commands that need input (with_input) vs immediate execution (immediate)
+        slash_commands = [
+            # Files & Folders
+            {"id": "files", "title": "Files", "icon": "📄", "type": "with_input", "placeholder": "What to do with files...", "category": "Files", "description": "Talk directly to File Agent", "keywords": ["file", "files", "document", "search"]},
+            {"id": "folder", "title": "Folder", "icon": "📁", "type": "with_input", "placeholder": "What to do with folders...", "category": "Files", "description": "Browse and organize folders", "keywords": ["folder", "directory", "browse"]},
+            {"id": "browse", "title": "Browse", "icon": "🌐", "type": "with_input", "placeholder": "What to browse...", "category": "Web", "description": "Talk directly to Browser Agent", "keywords": ["browse", "web", "browser"]},
+            
+            # Communication
+            {"id": "email", "title": "Email", "icon": "📧", "type": "with_input", "placeholder": "What to email...", "category": "Communication", "description": "Compose and send emails", "keywords": ["email", "mail", "send"]},
+            {"id": "message", "title": "iMessage", "icon": "💬", "type": "with_input", "placeholder": "What to message...", "category": "Communication", "description": "Send iMessages", "keywords": ["message", "imessage", "text", "sms"]},
+            {"id": "whatsapp", "title": "WhatsApp", "icon": "💬", "type": "with_input", "placeholder": "What to do with WhatsApp...", "category": "Communication", "description": "Read and analyze WhatsApp messages", "keywords": ["whatsapp", "wa"]},
+            {"id": "wa", "title": "WA", "icon": "💬", "type": "with_input", "placeholder": "What to do with WhatsApp...", "category": "Communication", "description": "WhatsApp (alias)", "keywords": ["whatsapp", "wa"]},
+            {"id": "discord", "title": "Discord", "icon": "💬", "type": "with_input", "placeholder": "What to do with Discord...", "category": "Communication", "description": "Send Discord messages", "keywords": ["discord", "message"]},
+            
+            # Social Media
+            {"id": "bluesky", "title": "Bluesky", "icon": "🦋", "type": "with_input", "placeholder": "What to post...", "category": "Social", "description": "Post to Bluesky", "keywords": ["bluesky", "post", "social"]},
+            {"id": "twitter", "title": "Twitter", "icon": "🐦", "type": "with_input", "placeholder": "What to tweet...", "category": "Social", "description": "Post to Twitter", "keywords": ["twitter", "tweet"]},
+            {"id": "reddit", "title": "Reddit", "icon": "🤖", "type": "with_input", "placeholder": "What to do on Reddit...", "category": "Social", "description": "Browse Reddit", "keywords": ["reddit", "browse"]},
+            
+            # Productivity
+            {"id": "present", "title": "Present", "icon": "📊", "type": "with_input", "placeholder": "What presentation to create...", "category": "Productivity", "description": "Create Keynote presentations", "keywords": ["present", "keynote", "presentation", "slides"]},
+            {"id": "write", "title": "Write", "icon": "✍️", "type": "with_input", "placeholder": "What to write...", "category": "Productivity", "description": "Generate documents and content", "keywords": ["write", "document", "content"]},
+            {"id": "calendar", "title": "Calendar", "icon": "📅", "type": "with_input", "placeholder": "What calendar action...", "category": "Productivity", "description": "List events & prepare meeting briefs", "keywords": ["calendar", "event", "schedule", "meeting"]},
+            {"id": "day", "title": "Day", "icon": "📅", "type": "with_input", "placeholder": "Generate daily briefing...", "category": "Productivity", "description": "Generate comprehensive daily briefings", "keywords": ["day", "daily", "briefing", "overview"]},
+            {"id": "report", "title": "Report", "icon": "📄", "type": "with_input", "placeholder": "What report to generate...", "category": "Productivity", "description": "Generate PDF reports from local files", "keywords": ["report", "pdf", "generate"]},
+            {"id": "recurring", "title": "Recurring", "icon": "🔄", "type": "with_input", "placeholder": "Schedule recurring task...", "category": "Productivity", "description": "Schedule recurring tasks", "keywords": ["recurring", "schedule", "repeat"]},
+            
+            # Media
+            {"id": "spotify", "title": "Spotify", "icon": "🎵", "type": "with_input", "placeholder": "Control Spotify...", "category": "Media", "description": "Control Spotify playback", "keywords": ["spotify", "music", "play"]},
+            {"id": "music", "title": "Music", "icon": "🎵", "type": "with_input", "placeholder": "Control music...", "category": "Media", "description": "Control Spotify playback (alias)", "keywords": ["music", "spotify", "play"]},
+            
+            # Navigation & Information
+            {"id": "maps", "title": "Maps", "icon": "🗺️", "type": "with_input", "placeholder": "Where to go...", "category": "Navigation", "description": "Plan routes and trips", "keywords": ["maps", "directions", "route", "travel"]},
+            {"id": "stock", "title": "Stock", "icon": "📈", "type": "with_input", "placeholder": "Stock ticker or query...", "category": "Finance", "description": "Stock/Finance Agent", "keywords": ["stock", "finance", "ticker", "market"]},
+            
+            # System & Utilities
+            {"id": "notify", "title": "Notify", "icon": "🔔", "type": "with_input", "placeholder": "Notification message...", "category": "System", "description": "Send system notifications", "keywords": ["notify", "notification", "alert"]},
+            {"id": "explain", "title": "Explain", "icon": "💡", "type": "with_input", "placeholder": "What to explain...", "category": "Information", "description": "Explain commands or concepts", "keywords": ["explain", "help", "how"]},
+            {"id": "help", "title": "Help", "icon": "❓", "type": "with_input", "placeholder": "Command or topic...", "category": "Information", "description": "Show help for commands", "keywords": ["help", "?", "assistance"]},
+            {"id": "agents", "title": "Agents", "icon": "🤖", "type": "immediate", "category": "Information", "description": "List all available agents", "keywords": ["agents", "list", "available"]},
+            {"id": "clear", "title": "Clear", "icon": "🗑️", "type": "immediate", "category": "System", "description": "Clear chat history", "keywords": ["clear", "reset"]},
+            {"id": "confetti", "title": "Confetti", "icon": "🎉", "type": "immediate", "category": "Fun", "description": "Trigger celebratory confetti effects", "keywords": ["confetti", "celebrate", "party"]},
+        ]
+
+        # Convert slash commands to command format
+        for slash_cmd in slash_commands:
+            commands.append({
+                "id": slash_cmd["id"],
+                "title": slash_cmd["title"],
+                "description": slash_cmd["description"],
+                "category": slash_cmd["category"],
+                "icon": slash_cmd["icon"],
+                "keywords": slash_cmd["keywords"],
+                "handler_type": "slash_command",
+                "command_type": slash_cmd["type"],  # "immediate" or "with_input"
+                "placeholder": slash_cmd.get("placeholder", ""),
+            })
+
+        # System commands (handled by Electron, not agents)
+        system_commands = [
+            {
+                "id": "open_app",
+                "title": "Open Application",
+                "description": "Launch any macOS app (e.g., 'open Safari')",
+                "category": "System",
+                "icon": "🚀",
+                "keywords": ["open", "launch", "start", "app", "application"],
+                "handler_type": "system_open_app"
+            },
+            {
+                "id": "settings",
+                "title": "Settings",
+                "description": "Open Cerebros preferences",
+                "category": "System",
+                "icon": "⚙️",
+                "keywords": ["settings", "preferences", "config", "options", "prefs"],
+                "handler_type": "system_settings"
+            },
+            {
+                "id": "quit_cerebros",
+                "title": "Quit Cerebros",
+                "description": "Close the Cerebros application",
+                "category": "System",
+                "icon": "🚪",
+                "keywords": ["quit", "exit", "close"],
+                "handler_type": "system_quit"
+            },
+        ]
+        commands.extend(system_commands)
+
+        return {"commands": commands}
+    except Exception as e:
+        logger.error(f"Error listing commands: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/help")
 async def get_help_data():
     """Get complete help data for all commands, agents, and tools"""
@@ -1538,14 +1867,35 @@ async def search_help(q: str, limit: int = 10):
 @app.get("/api/universal-search")
 async def universal_search(q: str, limit: int = 10, types: str = "document,image"):
     """Universal semantic search across indexed documents and images with highlighting"""
+    import time
+    from telemetry.config import get_tracer
+    
+    start_time = time.time()
+    tracer = get_tracer("api_server")
+    span = tracer.start_span("universal_search")
+    
     try:
+        span.set_attribute("query", sanitize_value(q[:100]))  # Limit query length in telemetry
+        span.set_attribute("limit", limit)
+        span.set_attribute("types", types)
+        
+        logger.info(f"[UNIVERSAL_SEARCH] Starting search", {
+            "query": q[:100],  # Log first 100 chars
+            "limit": limit,
+            "types": types
+        })
+        
         # Validate input
         if not q or not q.strip():
+            span.set_status({"code": 400, "message": "Empty query"})
+            span.end()
             raise HTTPException(status_code=400, detail="Query parameter 'q' is required and cannot be empty")
 
         # Sanitize and limit query length
         query = q.strip()[:200]  # Limit query length for security
         if not query:
+            span.set_status({"code": 400, "message": "Query empty after trimming"})
+            span.end()
             raise HTTPException(status_code=400, detail="Query cannot be empty after trimming")
 
         # Parse types filter
@@ -1555,12 +1905,25 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
 
         # Search results from different sources
         all_results = []
+        doc_search_time = 0
+        image_search_time = 0
 
         # Document search
         if "document" in requested_types:
             try:
+                doc_start = time.time()
                 grouped_results = get_orchestrator().search.search_and_group(query)
                 doc_limit = limit if len(requested_types) == 1 else limit // 2
+                doc_search_time = time.time() - doc_start
+                
+                logger.debug(f"[UNIVERSAL_SEARCH] Document search completed", {
+                    "query": query[:50],
+                    "results_found": len(grouped_results),
+                    "time_ms": round(doc_search_time * 1000, 2)
+                })
+                
+                span.set_attribute("document_results_count", len(grouped_results))
+                span.set_attribute("document_search_time_ms", round(doc_search_time * 1000, 2))
 
                 for result in grouped_results[:doc_limit]:
                     # Get the best chunk for snippet generation
@@ -1590,12 +1953,28 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                         }
                     })
             except Exception as e:
-                logger.error(f"Error searching documents: {e}")
+                logger.error(f"[UNIVERSAL_SEARCH] Error searching documents", exc_info=True, extra={
+                    "query": query[:50],
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                set_span_error(span, e, {"search_type": "document"})
 
         # Image search
         if "image" in requested_types and get_orchestrator().indexer.image_indexer:
             try:
+                image_start = time.time()
                 image_results = get_orchestrator().indexer.image_indexer.search_images(query, top_k=limit // 2)
+                image_search_time = time.time() - image_start
+                
+                logger.debug(f"[UNIVERSAL_SEARCH] Image search completed", {
+                    "query": query[:50],
+                    "results_found": len(image_results),
+                    "time_ms": round(image_search_time * 1000, 2)
+                })
+                
+                span.set_attribute("image_results_count", len(image_results))
+                span.set_attribute("image_search_time_ms", round(image_search_time * 1000, 2))
 
                 for result in image_results:
                     all_results.append({
@@ -1615,13 +1994,35 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                         }
                     })
             except Exception as e:
-                logger.error(f"Error searching images: {e}")
+                logger.error(f"[UNIVERSAL_SEARCH] Error searching images", exc_info=True, extra={
+                    "query": query[:50],
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                set_span_error(span, e, {"search_type": "image"})
 
         # Sort all results by similarity score (descending)
         all_results.sort(key=lambda x: x['similarity_score'], reverse=True)
 
         # Apply final limit
         final_results = all_results[:limit]
+        
+        total_time = time.time() - start_time
+        
+        logger.info(f"[UNIVERSAL_SEARCH] Search completed", {
+            "query": query[:50],
+            "total_results": len(final_results),
+            "document_results": len([r for r in final_results if r["result_type"] == "document"]),
+            "image_results": len([r for r in final_results if r["result_type"] == "image"]),
+            "total_time_ms": round(total_time * 1000, 2),
+            "doc_search_time_ms": round(doc_search_time * 1000, 2),
+            "image_search_time_ms": round(image_search_time * 1000, 2)
+        })
+        
+        span.set_attribute("total_results", len(final_results))
+        span.set_attribute("total_time_ms", round(total_time * 1000, 2))
+        span.set_status({"code": 1})  # OK status
+        span.end()
 
         return {
             "query": query,
@@ -1631,9 +2032,20 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
         }
 
     except HTTPException:
+        span.set_status({"code": 2})  # ERROR status
+        span.end()
         raise
     except Exception as e:
-        logger.error(f"Error in universal search: {e}")
+        total_time = time.time() - start_time
+        logger.error(f"[UNIVERSAL_SEARCH] Search failed", exc_info=True, extra={
+            "query": q[:50] if q else None,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "total_time_ms": round(total_time * 1000, 2)
+        })
+        set_span_error(span, e, {"query": sanitize_value(q[:100]) if q else None})
+        span.set_status({"code": 2})  # ERROR status
+        span.end()
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
@@ -2528,6 +2940,65 @@ async def preview_file(path: str, request: Request):
         span.record_exception(e)
         span.end()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/files/metadata")
+async def get_file_metadata(path: str):
+    """
+    Get file metadata (size, modified date, etc.) for a file.
+    """
+    import os
+    from pathlib import Path
+    
+    try:
+        file_path = Path(path)
+        
+        # Security check - ensure file is in allowed directories
+        allowed_dirs = [
+            Path("data/reports"),
+            Path("data/presentations"),
+            Path("data/documents"),
+            Path("data/images"),
+        ]
+        
+        # Resolve to absolute path
+        abs_path = file_path.resolve()
+        
+        # Check if file is in any allowed directory
+        is_allowed = False
+        for allowed_dir in allowed_dirs:
+            allowed_abs = allowed_dir.resolve()
+            try:
+                if abs_path.is_relative_to(allowed_abs):
+                    is_allowed = True
+                    break
+            except AttributeError:
+                # Python < 3.9 compatibility
+                try:
+                    abs_path.relative_to(allowed_abs)
+                    is_allowed = True
+                    break
+                except ValueError:
+                    pass
+        
+        if not is_allowed:
+            raise HTTPException(status_code=403, detail="File is outside allowed directories")
+        
+        if not abs_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        stat = abs_path.stat()
+        
+        return {
+            "size": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting file metadata: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
 
 
 @app.get("/api/files/thumbnail")
