@@ -1,0 +1,90 @@
+# PR/Commit fixtures for Neo4j graph testing
+# These simulate GitHub PRs with component and endpoint relationships
+
+pull_requests:
+  - id: "pr:101"
+    number: 101
+    title: "Fix charge timeout handling"
+    state: "merged"
+    author: "alice"
+    merged_at: "2024-01-15T10:30:00Z"
+    files_changed:
+      - "src/payments/charge.py"
+      - "src/payments/timeout.py"
+    component_ids:
+      - "comp:payments"
+    endpoint_ids:
+      - "api:payments:/v1/charge"
+
+  - id: "pr:102"
+    number: 102
+    title: "Add idempotency key to refund endpoint"
+    state: "merged"
+    author: "bob"
+    merged_at: "2024-01-18T14:20:00Z"
+    files_changed:
+      - "src/payments/refund.py"
+      - "docs/api/payments.md"
+    component_ids:
+      - "comp:payments"
+    endpoint_ids:
+      - "api:payments:/v1/refund"
+
+  - id: "pr:103"
+    number: 103
+    title: "Implement OAuth2 token refresh"
+    state: "merged"
+    author: "carol"
+    merged_at: "2024-01-20T09:15:00Z"
+    files_changed:
+      - "src/auth/oauth.py"
+      - "src/auth/tokens.py"
+    component_ids:
+      - "comp:auth"
+    endpoint_ids:
+      - "api:auth:/v1/login"
+      - "api:auth:/v1/refresh"
+
+  - id: "pr:104"
+    number: 104
+    title: "Add billing-auth integration for subscription validation"
+    state: "open"
+    author: "dave"
+    files_changed:
+      - "src/billing/subscription.py"
+      - "src/billing/auth_integration.py"
+    component_ids:
+      - "comp:billing"
+      - "comp:auth"
+    endpoint_ids:
+      - "api:billing:/v1/subscribe"
+      - "api:auth:/v1/validate-token"
+
+  - id: "pr:105"
+    number: 105
+    title: "Update charge endpoint with new amount parameter"
+    state: "merged"
+    author: "alice"
+    merged_at: "2024-01-25T16:45:00Z"
+    files_changed:
+      - "src/payments/charge.py"
+      - "openapi/payments.yaml"
+    component_ids:
+      - "comp:payments"
+    endpoint_ids:
+      - "api:payments:/v1/charge"
+
+  - id: "pr:106"
+    number: 106
+    title: "Add push notification support"
+    state: "merged"
+    author: "eve"
+    merged_at: "2024-01-28T11:00:00Z"
+    files_changed:
+      - "src/notifications/push.py"
+      - "src/notifications/channels.py"
+    component_ids:
+      - "comp:notifications"
+    endpoint_ids:
+      - "api:notifications:/v1/send"
+

@@ -1,0 +1,57 @@
+# Slack thread fixtures for Neo4j graph testing
+# These simulate Slack discussions linked to components and issues
+
+slack_threads:
+  - id: "slack:C0123PAYMENTS:1705312800.000001"
+    channel: "C0123PAYMENTS"
+    channel_name: "#payments-team"
+    topic: "Discussing charge timeout fix approach"
+    started_at: "2024-01-15T10:00:00Z"
+    participants:
+      - "alice"
+      - "bob"
+      - "carol"
+    component_ids:
+      - "comp:payments"
+    issue_ids:
+      - "issue:201"
+
+  - id: "slack:C0456AUTH:1705660800.000002"
+    channel: "C0456AUTH"
+    channel_name: "#security-team"
+    topic: "OAuth token refresh implementation review"
+    started_at: "2024-01-19T12:00:00Z"
+    participants:
+      - "carol"
+      - "dave"
+    component_ids:
+      - "comp:auth"
+    issue_ids:
+      - "issue:203"
+
+  - id: "slack:C0789BILLING:1706025600.000003"
+    channel: "C0789BILLING"
+    channel_name: "#billing-team"
+    topic: "Billing-auth integration planning"
+    started_at: "2024-01-24T08:00:00Z"
+    participants:
+      - "dave"
+      - "eve"
+    component_ids:
+      - "comp:billing"
+      - "comp:auth"
+    issue_ids: []
+
+  - id: "slack:C0999GENERAL:1706198400.000004"
+    channel: "C0999GENERAL"
+    channel_name: "#engineering"
+    topic: "Cross-team sync on notification delays"
+    started_at: "2024-01-26T08:00:00Z"
+    participants:
+      - "alice"
+      - "eve"
+    component_ids:
+      - "comp:notifications"
+    issue_ids:
+      - "issue:205"
+

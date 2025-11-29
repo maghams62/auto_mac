@@ -63,6 +63,13 @@ interface CommandPaletteProps {
   mode?: "overlay" | "launcher";
 }
 
+const MIN_MINI_CONVO_TURNS = 1;
+const MAX_MINI_CONVO_TURNS = 5;
+const DEFAULT_MINI_CONVO_TURNS = 2;
+
+const clampMiniConversationDepth = (value: number) =>
+  Math.min(Math.max(value, MIN_MINI_CONVO_TURNS), MAX_MINI_CONVO_TURNS);
+
 export default function CommandPalette({
   isOpen,
   onClose,
@@ -95,11 +102,10 @@ export default function CommandPalette({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
+  const [miniConversationTurns, setMiniConversationTurns] = useState(DEFAULT_MINI_CONVO_TURNS);
+
   // Settings modal state
   const [showSettings, setShowSettings] = useState(false);
-
-  // Spotify player collapsed state
-  const [spotifyCollapsed, setSpotifyCollapsed] = useState(false);
 
   // Transcribe audio to text
   const transcribeAudio = useCallback(async (audioBlob: Blob) => {
@@ -197,13 +203,13 @@ export default function CommandPalette({
 
   // WebSocket connection for chat responses (only in launcher mode)
   const wsUrl = mode === "launcher" ? `${baseUrl.replace('http', 'ws')}/ws/chat` : "";
-  const {
-    messages: chatMessages,
-    sendMessage: wsSendMessage,
+  const { 
+    messages: chatMessages, 
+    sendMessage: wsSendMessage, 
     sendCommand: wsSendCommand,
     planState,
     isConnected: wsConnected,
-    connectionState
+    connectionState 
   } = useWebSocket(wsUrl);
 
   // State to track if history has been loaded for this session
@@ -212,7 +218,14 @@ export default function CommandPalette({
 
   // Load conversation history on WebSocket connection
   const loadConversationHistory = useCallback(async () => {
-    if (!wsConnected || historyLoaded || mode !== "launcher") {
+    // CRITICAL: Don't block on historyLoaded - allow window to render
+    // History loading should never prevent the window from displaying
+    if (!wsConnected || mode !== "launcher") {
+      return;
+    }
+
+    // Skip if already loaded or currently loading
+    if (historyLoaded) {
       return;
     }
 
@@ -634,24 +647,51 @@ export default function CommandPalette({
     }
   }, [baseUrl]);
 
-  // Debounced search effect
+  // Debounced search effect - only trigger for file commands or overlay mode
   useEffect(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    const timer = setTimeout(() => {
-      performSearch(query);
-    }, 200);
+    // Only trigger file search for:
+    // 1. Overlay mode (file browser)
+    // 2. Explicit file commands (/file, /folder, /files)
+    const isFileCommand = query.startsWith('/file') || query.startsWith('/folder') || query.startsWith('/files');
+    
+    const slashCommandActive = query.startsWith('/');
 
-    debounceTimerRef.current = timer;
+    const shouldSearch = (() => {
+      if (mode === "overlay") {
+        if (slashCommandActive && !isFileCommand) {
+          logger.debug("[COMMAND PALETTE] Suppressing semantic search for slash command", { query });
+          return false;
+        }
+        return true;
+      }
+      return isFileCommand;
+    })();
+
+    if (shouldSearch) {
+      const timer = setTimeout(() => {
+        // Strip the command prefix for file searches
+        const searchQuery = isFileCommand 
+          ? query.replace(/^\/(file|folder|files)\s*/, '').trim()
+          : query;
+        performSearch(searchQuery || query); // Use original if stripped is empty
+      }, 200);
+
+      debounceTimerRef.current = timer;
+    } else {
+      // Clear file results for regular chat queries when search is suppressed
+      setResults([]);
+    }
 
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [query, performSearch]); // Remove debounceTimer from deps
+  }, [mode, performSearch, query]); // Added mode to deps
 
   // Fetch commands on mount
   useEffect(() => {
@@ -689,6 +729,41 @@ export default function CommandPalette({
     }
   }, [isOpen, initialQuery, onMount, source]);
 
+  // Load mini conversation depth from settings whenever the launcher opens
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!isElectron()) {
+      setMiniConversationTurns(DEFAULT_MINI_CONVO_TURNS);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadMiniConversationDepth = async () => {
+      try {
+        const loaded = await window.electronAPI?.getSettings();
+        if (!loaded || isCancelled) return;
+        setMiniConversationTurns(
+          clampMiniConversationDepth(
+            loaded.miniConversationDepth ?? DEFAULT_MINI_CONVO_TURNS
+          )
+        );
+      } catch (error) {
+        logger.error("[COMMAND PALETTE] Failed to load mini conversation depth", { error });
+        setMiniConversationTurns(DEFAULT_MINI_CONVO_TURNS);
+      }
+    };
+
+    loadMiniConversationDepth();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen]);
+
   // Detect if user is typing a slash command
   const isSlashMode = query.startsWith('/');
   const slashQuery = isSlashMode ? query.slice(1).toLowerCase() : '';
@@ -696,7 +771,8 @@ export default function CommandPalette({
   // Filter commands based on query - prioritize slash commands when typing /
   const filteredCommands = useMemo(() => {
     if (!query.trim()) {
-      return commands.slice(0, 5); // Show top 5 when no query
+      // Show top 5 when no query, but exclude spotify_control commands
+      return commands.filter(cmd => cmd.handler_type !== 'spotify_control').slice(0, 5);
     }
 
     // Slash command mode: show only slash commands that match
@@ -716,10 +792,12 @@ export default function CommandPalette({
 
     const lowerQuery = query.toLowerCase();
     return commands.filter(cmd =>
-      cmd.title.toLowerCase().includes(lowerQuery) ||
-      cmd.description.toLowerCase().includes(lowerQuery) ||
-      cmd.keywords.some(kw => kw.toLowerCase().includes(lowerQuery)) ||
-      cmd.category.toLowerCase().includes(lowerQuery)
+      cmd.handler_type !== 'spotify_control' && ( // Exclude Spotify control commands
+        cmd.title.toLowerCase().includes(lowerQuery) ||
+        cmd.description.toLowerCase().includes(lowerQuery) ||
+        cmd.keywords.some(kw => kw.toLowerCase().includes(lowerQuery)) ||
+        cmd.category.toLowerCase().includes(lowerQuery)
+      )
     );
   }, [query, commands, isSlashMode, slashQuery]);
 
@@ -841,6 +919,40 @@ export default function CommandPalette({
     />
   );
 
+  const slackTemplates = [
+    { label: "Summarize #backend (24h)", value: "summarize #backend last 24 hours" },
+    { label: "Decisions about onboarding", value: "decisions about onboarding flow this week" },
+    { label: "Tasks from #incidents (yesterday)", value: "tasks #incidents yesterday" },
+    { label: "Topic: billing_service", value: "topic billing_service last 14d" },
+    { label: "Summarize thread link", value: "summarize https://slack.com/archives/C123/p1234567890123456" },
+  ];
+
+  const renderSlackHintPanel = () => {
+    if (selectedCommand?.id !== "slack") return null;
+    return (
+      <div className="mt-4 space-y-2 rounded-xl border border-glass/40 bg-glass/20 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+          Slack templates
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {slackTemplates.map((template) => (
+            <button
+              key={template.label}
+              onClick={() => setCommandArg(template.value)}
+              className="rounded-full border border-glass/40 px-3 py-1 text-xs font-medium text-text-muted hover:border-accent-primary/40 hover:text-accent-primary"
+              type="button"
+            >
+              {template.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-text-muted/80">
+          Tip: Mention #channel names, add time windows like &ldquo;last week&rdquo;, include keywords (`decisions`, `tasks`), or paste a Slack thread link.
+        </p>
+      </div>
+    );
+  };
+
   if (!isOpen) return settingsModalElement;
 
   if (mode === "launcher") {
@@ -899,6 +1011,7 @@ export default function CommandPalette({
                       }
                     }}
                   />
+                  {renderSlackHintPanel()}
                   
                   {/* Keyboard hints */}
                   <div className="mt-4 pt-4 border-t border-glass/30">
@@ -1035,7 +1148,107 @@ export default function CommandPalette({
                   </div>
                 </div>
 
-              {/* Results List - scrollable */}
+                {/* Spotify Mini Player - portrait card widget (Raycast-style) */}
+                <div className="px-4 pt-3 pb-3">
+                  <SpotifyMiniPlayer variant="launcher-mini" />
+                </div>
+
+                {/* Response Area - shows immediately below Spotify when processing or has response */}
+                <AnimatePresence>
+                  {(isProcessing || currentResponse || planState) && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="border-b border-glass/30 bg-gradient-to-b from-glass/30 to-glass/10"
+                    >
+                      {/* Plan Progress Rail - shows orchestration steps (planning or executing) */}
+                      {planState && (planState.status === "executing" || planState.status === "planning") && (
+                        <div className="px-4 py-3 border-b border-glass/20">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-xs font-medium text-accent-primary uppercase tracking-wide">
+                              {planState.status === "planning" ? "🧠 Planning..." : "🎯 Executing Plan"}
+                            </span>
+                            {planState.steps.length > 0 && (
+                              <span className="text-xs text-text-muted">
+                                {planState.steps.filter(s => s.status === "completed").length}/{planState.steps.length} steps
+                              </span>
+                            )}
+                          </div>
+                          {/* Inline step indicators */}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {planState.steps.map((step, idx) => (
+                              <motion.div
+                                key={step.id}
+                                className={cn(
+                                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs",
+                                  step.status === "running" && "bg-accent-primary/20 text-accent-primary border border-accent-primary/40",
+                                  step.status === "completed" && "bg-green-500/20 text-green-400",
+                                  step.status === "failed" && "bg-red-500/20 text-red-400",
+                                  step.status === "pending" && "bg-glass/30 text-text-muted"
+                                )}
+                                animate={step.status === "running" ? {
+                                  boxShadow: ["0 0 0px rgba(59,130,246,0)", "0 0 10px rgba(59,130,246,0.5)", "0 0 0px rgba(59,130,246,0)"]
+                                } : {}}
+                                transition={{ duration: 1.5, repeat: Infinity }}
+                              >
+                                {step.status === "running" && (
+                                  <motion.span
+                                    animate={{ rotate: 360 }}
+                                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                  >
+                                    ⚙️
+                                  </motion.span>
+                                )}
+                                {step.status === "completed" && <span>✓</span>}
+                                {step.status === "failed" && <span>✗</span>}
+                                {step.status === "pending" && <span className="opacity-50">○</span>}
+                                <span className="truncate max-w-24">{step.action}</span>
+                              </motion.div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wide flex items-center gap-2">
+                        <span>🤖</span>
+                        <span>Response</span>
+                        {isProcessing && (
+                          <motion.span
+                            animate={{ opacity: [0.5, 1, 0.5] }}
+                            transition={{ duration: 1.5, repeat: Infinity }}
+                            className="text-accent-primary"
+                          >
+                            processing...
+                          </motion.span>
+                        )}
+                      </div>
+                      <div className="px-4 pb-3 max-h-48 overflow-y-auto">
+                        {/* Show what was submitted */}
+                        {submittedQuery && (
+                          <div className="mb-2 pb-2 border-b border-glass/20">
+                            <span className="text-xs text-text-muted">Query: </span>
+                            <span className="text-sm text-text-secondary">{submittedQuery}</span>
+                          </div>
+                        )}
+                        
+                        {isProcessing && !currentResponse ? (
+                          <div className="flex items-center gap-2 py-2">
+                            <TypingIndicator />
+                            <span className="text-sm text-text-muted animate-pulse">Thinking...</span>
+                          </div>
+                        ) : currentResponse ? (
+                          <div className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
+                            {currentResponse}
+                          </div>
+                        ) : null}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+              {/* Results List - scrollable (only shows when relevant) */}
               <div className="flex-1 overflow-y-auto min-h-0">
                 {/* Quick Calculator Result */}
                 {isCalculation(query) && evaluateCalculation(query) && (
@@ -1192,156 +1405,6 @@ export default function CommandPalette({
                     })}
                   </div>
                 )}
-
-                {/* Response Area - shows when processing or has response */}
-                <AnimatePresence>
-                  {(isProcessing || currentResponse || planState) && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="border-t border-glass/30 bg-gradient-to-b from-glass/30 to-glass/10"
-                    >
-                      {/* Plan Progress Rail - shows orchestration steps (planning or executing) */}
-                      {planState && (planState.status === "executing" || planState.status === "planning") && (
-                        <div className="px-4 py-3 border-b border-glass/20">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-medium text-accent-primary uppercase tracking-wide">
-                              {planState.status === "planning" ? "🧠 Planning..." : "🎯 Executing Plan"}
-                            </span>
-                            {planState.steps.length > 0 && (
-                              <span className="text-xs text-text-muted">
-                                {planState.steps.filter(s => s.status === "completed").length}/{planState.steps.length} steps
-                              </span>
-                            )}
-                          </div>
-                          {/* Inline step indicators */}
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {planState.steps.map((step, idx) => (
-                              <motion.div
-                                key={step.id}
-                                className={cn(
-                                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs",
-                                  step.status === "running" && "bg-accent-primary/20 text-accent-primary border border-accent-primary/40",
-                                  step.status === "completed" && "bg-green-500/20 text-green-400",
-                                  step.status === "failed" && "bg-red-500/20 text-red-400",
-                                  step.status === "pending" && "bg-glass/30 text-text-muted"
-                                )}
-                                animate={step.status === "running" ? {
-                                  boxShadow: ["0 0 0px rgba(59,130,246,0)", "0 0 10px rgba(59,130,246,0.5)", "0 0 0px rgba(59,130,246,0)"]
-                                } : {}}
-                                transition={{ duration: 1.5, repeat: Infinity }}
-                              >
-                                {step.status === "running" && (
-                                  <motion.span
-                                    animate={{ rotate: 360 }}
-                                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                                  >
-                                    ⚙️
-                                  </motion.span>
-                                )}
-                                {step.status === "completed" && <span>✓</span>}
-                                {step.status === "failed" && <span>✗</span>}
-                                {step.status === "pending" && <span className="opacity-50">○</span>}
-                                <span className="truncate max-w-24">{step.action}</span>
-                              </motion.div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wide flex items-center gap-2">
-                        <span>🤖</span>
-                        <span>Response</span>
-                        {isProcessing && (
-                          <motion.span
-                            animate={{ opacity: [0.5, 1, 0.5] }}
-                            transition={{ duration: 1.5, repeat: Infinity }}
-                            className="text-accent-primary"
-                          >
-                            processing...
-                          </motion.span>
-                        )}
-                      </div>
-                      <div className="px-4 pb-3 max-h-64 overflow-y-auto">
-                        {/* Show what was submitted */}
-                        {submittedQuery && (
-                          <div className="mb-2 pb-2 border-b border-glass/20">
-                            <span className="text-xs text-text-muted">Query: </span>
-                            <span className="text-sm text-text-secondary">{submittedQuery}</span>
-                          </div>
-                        )}
-                        
-                        {isProcessing && !currentResponse ? (
-                          <div className="flex items-center gap-2 py-2">
-                            <TypingIndicator />
-                            <span className="text-sm text-text-muted animate-pulse">Thinking...</span>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {/* Text Response */}
-                            {currentResponse && (
-                              <div className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
-                                {currentResponse}
-                              </div>
-                            )}
-                            
-                            {/* Bluesky Notifications */}
-                            {chatMessages
-                              .filter(msg => msg.type === "bluesky_notification" && msg.bluesky_notification)
-                              .slice(-3) // Show last 3 notifications
-                              .map((msg, idx) => (
-                                <BlueskyNotificationCard
-                                  key={`bluesky-${idx}`}
-                                  notification={msg.bluesky_notification!}
-                                  onAction={(action, uri, url) => {
-                                    logger.info("[LAUNCHER] Bluesky action", { action, uri, url });
-                                    if (action === "open" && url) {
-                                      window.open(url, "_blank");
-                                    }
-                                    // Reply/Like/Repost would be handled via API
-                                  }}
-                                />
-                              ))}
-                            
-                            {/* File Results from agents */}
-                            {chatMessages
-                              .filter(msg => msg.files && msg.files.length > 0)
-                              .slice(-1) // Show latest file results
-                              .map((msg, idx) => (
-                                <div key={`files-${idx}`} className="space-y-2">
-                                  <div className="text-xs text-text-muted font-medium">📁 Files Found:</div>
-                                  <div className="space-y-1">
-                                    {msg.files!.slice(0, 5).map((file, fIdx) => (
-                                      <div
-                                        key={`file-${fIdx}`}
-                                        className="flex items-center gap-2 p-2 bg-glass/30 rounded-lg hover:bg-glass/50 cursor-pointer transition-colors"
-                                        onClick={() => {
-                                          logger.info("[LAUNCHER] Opening file from results", { path: file.path });
-                                          if (isElectron()) {
-                                            revealInFinder(file.path);
-                                          }
-                                        }}
-                                      >
-                                        <span className="text-sm">📄</span>
-                                        <span className="text-sm text-text-primary truncate">{file.name}</span>
-                                        {file.score && (
-                                          <span className="text-xs text-text-muted ml-auto">
-                                            {Math.round(file.score * 100)}%
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
 
               {/* Conversation History Panel */}
@@ -1351,6 +1414,7 @@ export default function CommandPalette({
                   planState={planState}
                   isProcessing={isProcessing}
                   maxHeight={150}
+                  maxTurns={miniConversationTurns}
                   onExpand={() => {
                     logger.info("[LAUNCHER] Expand to desktop view requested");
                     openExpandedWindow();
@@ -1370,16 +1434,6 @@ export default function CommandPalette({
                     <span>⌘+Option+K</span>
                   </div>
                 </div>
-              </div>
-
-              {/* Spotify Player - Compact Raycast-style mini player */}
-              <div className="mt-auto border-t border-glass/30">
-                <SpotifyMiniPlayer
-                  variant="launcher-footer"
-                  onAction={() => {
-                    // Keep window open during Spotify control interaction
-                  }}
-                />
               </div>
             </div>
             )}
@@ -1501,6 +1555,7 @@ export default function CommandPalette({
                     }
                   }}
                 />
+                {renderSlackHintPanel()}
                 
                 {/* Keyboard hints */}
                 <div className="mt-4 pt-4 border-t border-glass/30">

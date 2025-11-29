@@ -15,7 +15,10 @@ import TimelineStep from "./TimelineStep";
 import SummaryCanvas from "./SummaryCanvas";
 import TaskCompletionCard from "./TaskCompletionCard";
 import BlueskyNotificationCard from "./BlueskyNotificationCard";
+import ApidocsDriftCard from "./ApidocsDriftCard";
 import { useToast } from "@/lib/useToast";
+import { getApiBaseUrl } from "@/lib/apiConfig";
+import SlashSlackSummaryCard from "./SlashSlackSummaryCard";
 
 interface MessageBubbleProps {
   message: Message;
@@ -113,7 +116,8 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
   const isStatus = message.type === "status";
   const isPlan = message.type === "plan";
   const isBlueskyNotification = message.type === "bluesky_notification";
-  const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan && !isBlueskyNotification;
+  const isApidocsDrift = message.type === "apidocs_drift";
+  const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan && !isBlueskyNotification && !isApidocsDrift;
   
   // Detect if message contains a summary (has separator pattern)
   const summaryData = useMemo(() => {
@@ -354,6 +358,11 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
         )}
 
         {/* Task Completion Card - Rich feedback for completed actions */}
+        {isAssistant && message.slash_slack && (
+          <SlashSlackSummaryCard summary={message.slash_slack} />
+        )}
+
+        {/* Task Completion Card - Rich feedback for completed actions */}
         {isAssistant && message.completion_event && (
           <TaskCompletionCard
             completionEvent={message.completion_event}
@@ -383,6 +392,36 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
                   detail: { action: 'send-command', command }
                 }));
               }
+            }}
+          />
+        )}
+
+        {/* API Docs Drift Card - Self-evolving documentation (Oqoqo pattern) */}
+        {isApidocsDrift && message.apidocs_drift && (
+          <ApidocsDriftCard
+            driftReport={message.apidocs_drift}
+            onApprove={async (proposedSpec) => {
+              // Call the apply endpoint
+              const apiBase = getApiBaseUrl();
+              const response = await fetch(`${apiBase}/api/apidocs/apply`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  proposed_spec: proposedSpec,
+                  create_backup: true,
+                }),
+              });
+              if (!response.ok) {
+                throw new Error("Failed to apply spec update");
+              }
+            }}
+            onDismiss={() => {
+              // Could dispatch event to remove from chat or mark as dismissed
+              console.log("API docs drift dismissed");
+            }}
+            onViewDocs={() => {
+              // Open Swagger UI
+              window.open("http://localhost:8000/docs", "_blank");
             }}
           />
         )}

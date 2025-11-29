@@ -1,0 +1,19 @@
+messages:
+  - channel_id: "C0123PAYMENTS"
+    channel_name: "#payments-team"
+    ts: "1732060000.000001"
+    user: "alice"
+    text: "Synthetic: seeing timeouts on /charge after latest retry change."
+    reactions:
+      - name: "thumbsdown"
+        count: 2
+    thread_ts: null
+  - channel_id: "C0456AUTH"
+    channel_name: "#security-team"
+    ts: "1732063600.000002"
+    user: "carol"
+    text: "Synthetic: oauth refresh tokens still failing in staging."
+    reactions:
+      - name: "rage"
+        count: 1
+

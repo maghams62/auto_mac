@@ -66,10 +66,14 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   const [duration, setDuration] = useState(0);
   const [showConnecting, setShowConnecting] = useState(false);
   const [scrollToBottomVisible, setScrollToBottomVisible] = useState(false);
+  const [activeDevice, setActiveDevice] = useState<string | null>(null);
+  const [lastPollTime, setLastPollTime] = useState(0);
 
   const apiBaseUrl = getApiBaseUrl();
   const scriptLoadedRef = useRef(false);
   const playerInitializedRef = useRef(false);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Detect ScrollToBottom button visibility for collision avoidance
   useEffect(() => {
@@ -265,34 +269,196 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
     };
   }, [isAuthenticated, getAccessToken, onDeviceReady, apiBaseUrl]);
 
+  // Background polling for playback status across all devices
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // Clear intervals when not authenticated
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const fetchPlaybackStatus = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/spotify/status`);
+        if (!response.ok) {
+          if (response.status === 401) {
+            setIsAuthenticated(false);
+            setAuthStatus("unauthenticated");
+          }
+          return;
+        }
+
+        const data = await response.json();
+        const status = data.status;
+
+        if (!status || !status.item) {
+          // No active playback
+          setCurrentTrack(null);
+          setIsPaused(true);
+          setPosition(0);
+          setDuration(0);
+          setActiveDevice(null);
+          return;
+        }
+
+        // Update track info from API response
+        const track = status.item;
+        setCurrentTrack({
+          name: track.name,
+          artists: track.artists,
+          album: {
+            name: track.album.name,
+            images: track.album.images,
+          },
+          uri: track.uri,
+        });
+
+        setIsPaused(!status.is_playing);
+        setPosition(status.progress_ms || 0);
+        setDuration(track.duration_ms || 0);
+        setLastPollTime(Date.now());
+
+        // Update active device info
+        if (status.device) {
+          setActiveDevice(status.device.name);
+          setIsActive(true);
+        } else {
+          setActiveDevice(null);
+        }
+      } catch (error) {
+        console.error("Failed to fetch playback status:", error);
+      }
+    };
+
+    // Initial fetch
+    fetchPlaybackStatus();
+
+    // Poll every 3 seconds
+    pollingIntervalRef.current = setInterval(fetchPlaybackStatus, 3000);
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [isAuthenticated, apiBaseUrl]);
+
+  // Local progress updates between polls for smooth progress bar
+  useEffect(() => {
+    if (isPaused || !duration || !isAuthenticated) {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Update progress every 100ms for smooth animation
+    progressIntervalRef.current = setInterval(() => {
+      setPosition(prev => {
+        const elapsed = Date.now() - lastPollTime;
+        const newPosition = prev + 100;
+        // Don't exceed duration
+        return Math.min(newPosition, duration);
+      });
+    }, 100);
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [isPaused, duration, lastPollTime, isAuthenticated]);
+
   const handleLogin = () => {
     window.location.href = `${apiBaseUrl}/api/spotify/login`;
   };
 
   const togglePlayPause = async () => {
-    if (!player) return;
     try {
-      await player.togglePlay();
+      // Use API endpoints for cross-device control
+      const endpoint = isPaused ? '/api/spotify/play' : '/api/spotify/pause';
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        // Optimistic update
+        setIsPaused(!isPaused);
+        setLastPollTime(Date.now());
+      } else {
+        // Fall back to player if API fails and player is available
+        if (player) {
+          await player.togglePlay();
+        }
+      }
     } catch (error) {
       console.error("Failed to toggle play/pause:", error);
+      // Fall back to player
+      if (player) {
+        try {
+          await player.togglePlay();
+        } catch (playerError) {
+          console.error("Player fallback also failed:", playerError);
+        }
+      }
     }
   };
 
   const skipToNext = async () => {
-    if (!player) return;
     try {
-      await player.nextTrack();
+      // Use API endpoints for cross-device control
+      const response = await fetch(`${apiBaseUrl}/api/spotify/next`, {
+        method: 'POST',
+      });
+
+      if (!response.ok && player) {
+        // Fall back to player
+        await player.nextTrack();
+      }
     } catch (error) {
       console.error("Failed to skip to next track:", error);
+      // Fall back to player
+      if (player) {
+        try {
+          await player.nextTrack();
+        } catch (playerError) {
+          console.error("Player fallback also failed:", playerError);
+        }
+      }
     }
   };
 
   const skipToPrevious = async () => {
-    if (!player) return;
     try {
-      await player.previousTrack();
+      // Use API endpoints for cross-device control
+      const response = await fetch(`${apiBaseUrl}/api/spotify/previous`, {
+        method: 'POST',
+      });
+
+      if (!response.ok && player) {
+        // Fall back to player
+        await player.previousTrack();
+      }
     } catch (error) {
       console.error("Failed to skip to previous track:", error);
+      // Fall back to player
+      if (player) {
+        try {
+          await player.previousTrack();
+        } catch (playerError) {
+          console.error("Player fallback also failed:", playerError);
+        }
+      }
     }
   };
 
@@ -395,11 +561,18 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
               <div className={`w-2.5 h-2.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-500'} transition-colors duration-300`} />
               {isActive && <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping" />}
             </div>
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5 text-green-500" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
-              </svg>
-              <span className="text-white text-sm font-semibold">Spotify</span>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-green-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                </svg>
+                <span className="text-white text-sm font-semibold">Spotify</span>
+              </div>
+              {activeDevice && (
+                <span className="text-gray-400 text-xs truncate max-w-[180px]" title={activeDevice}>
+                  Playing on {activeDevice}
+                </span>
+              )}
             </div>
           </div>
           <button

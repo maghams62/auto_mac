@@ -1,0 +1,68 @@
+{
+  "appId": "com.cerebros.launcher",
+  "productName": "Cerebros",
+  "directories": {
+    "output": "dist-app"
+  },
+  "mac": {
+    "category": "public.app-category.productivity",
+    "icon": "assets/icon.icns",
+    "target": ["dmg", "zip"],
+    "hardenedRuntime": false,
+    "gatekeeperAssess": false,
+    "artifactName": "${productName}-${version}.${ext}"
+  },
+  "dmg": {
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ]
+  },
+  "files": [
+    "dist/**/*",
+    "assets/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "../frontend/out",
+      "to": "app/frontend/out",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../src",
+      "to": "app/src",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../prompts",
+      "to": "app/prompts",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../data",
+      "to": "app/data",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../config.yaml",
+      "to": "app/config.yaml"
+    },
+    {
+      "from": "../api_server.py",
+      "to": "app/api_server.py"
+    },
+    {
+      "from": "../requirements.txt",
+      "to": "app/requirements.txt"
+    }
+  ]
+}

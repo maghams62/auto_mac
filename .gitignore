@@ -43,6 +43,9 @@ data/logs/*.log
 data/screenshots/*.png
 data/presentations/*.key
 data/reports/*.html
+qdrant_storage/
+data/branch_watcher_state.json
+data/trajectories/
 
 # Keep directory structure but ignore contents
 !data/embeddings/.gitkeep

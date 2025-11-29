@@ -1,0 +1,255 @@
+openapi: 3.0.3
+info:
+  title: Billing Service API
+  description: Subscription and invoice management endpoints
+  version: "1.3.0"
+  x-component: "comp:billing"
+  x-service: "svc:billing"
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+
+paths:
+  /billing/invoice:
+    post:
+      operationId: createInvoice
+      summary: Create an invoice
+      description: |
+        Creates a new invoice for a customer. Can be associated with
+        a subscription or created as a one-time invoice.
+      x-component: "comp:billing"
+      tags:
+        - Billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - customer_id
+                - line_items
+              properties:
+                customer_id:
+                  type: string
+                  description: Customer identifier
+                  example: "cus_1234567890"
+                subscription_id:
+                  type: string
+                  description: Optional subscription to associate
+                line_items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/LineItem"
+                  minItems: 1
+                due_date:
+                  type: string
+                  format: date
+                  description: Invoice due date
+                memo:
+                  type: string
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Invoice created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "400":
+          description: Invalid request
+        "404":
+          description: Customer not found
+
+    get:
+      operationId: listInvoices
+      summary: List invoices
+      description: Retrieve a paginated list of invoices
+      x-component: "comp:billing"
+      tags:
+        - Billing
+      parameters:
+        - name: customer_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - draft
+              - open
+              - paid
+              - void
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Invoice"
+                  total:
+                    type: integer
+                  has_more:
+                    type: boolean
+
+  /billing/subscribe:
+    post:
+      operationId: createSubscription
+      summary: Create a subscription
+      description: |
+        Creates a new subscription for a customer. Requires a valid
+        payment method and plan selection.
+      x-component: "comp:billing"
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - customer_id
+                - plan_id
+                - payment_method_id
+              properties:
+                customer_id:
+                  type: string
+                  example: "cus_1234567890"
+                plan_id:
+                  type: string
+                  description: Subscription plan identifier
+                  example: "plan_pro_monthly"
+                payment_method_id:
+                  type: string
+                  description: Payment method for recurring charges
+                trial_days:
+                  type: integer
+                  description: Number of trial days (0 for no trial)
+                  default: 0
+                  minimum: 0
+                  maximum: 365
+                promo_code:
+                  type: string
+                  description: Optional promotional code
+      responses:
+        "200":
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "400":
+          description: Invalid request
+        "402":
+          description: Payment method validation failed
+        "404":
+          description: Customer or plan not found
+
+components:
+  schemas:
+    LineItem:
+      type: object
+      required:
+        - description
+        - amount
+      properties:
+        description:
+          type: string
+          maxLength: 500
+        amount:
+          type: integer
+          description: Amount in cents
+        quantity:
+          type: integer
+          default: 1
+          minimum: 1
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "inv_1234567890"
+        customer_id:
+          type: string
+        subscription_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - draft
+            - open
+            - paid
+            - void
+        total:
+          type: integer
+          description: Total amount in cents
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineItem"
+        due_date:
+          type: string
+          format: date
+        paid_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "sub_1234567890"
+        customer_id:
+          type: string
+        plan_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - trialing
+            - active
+            - past_due
+            - canceled
+            - unpaid
+        current_period_start:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        trial_end:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+

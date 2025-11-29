@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 import logger from "@/lib/logger";
 import { useGlobalEventBus } from "@/lib/telemetry";
+import { useIsElectronRuntime } from "@/hooks/useIsElectron";
 
 interface SpotifyMiniPlayerProps {
-  variant?: "launcher" | "palette-row" | "launcher-footer" | "launcher-full" | "launcher-expanded";
+  variant?: "launcher" | "palette-row" | "launcher-footer" | "launcher-full" | "launcher-expanded" | "launcher-mini";
   onAction?: () => void; // Called when user interacts (for hiding launcher)
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -31,6 +32,8 @@ interface SpotifyStatus {
       images: Array<{ url: string }>;
     };
     duration_ms: number;
+    uri?: string;
+    id?: string;
   };
   progress_ms: number;
   device?: {
@@ -39,43 +42,286 @@ interface SpotifyStatus {
   };
 }
 
-export default function SpotifyMiniPlayer({ 
-  variant = "launcher", 
+type SpotifyVariant = SpotifyMiniPlayerProps["variant"];
+const DEFAULT_ALBUM_ART = "/spotify-placeholder.svg";
+const SKELETON_VARIANTS = new Set<SpotifyVariant>([
+  "launcher",
+  "launcher-full",
+  "launcher-footer",
+  "launcher-expanded",
+  "launcher-mini",
+]);
+const SPOTIFY_EMBED_BASE_URL = "https://open.spotify.com/embed";
+
+function buildSpotifyEmbedUrl(uri?: string): string | null {
+  if (!uri) {
+    return null;
+  }
+
+  const segments = uri.split(':');
+  if (segments.length < 3) {
+    return null;
+  }
+
+  const [, resourceType, ...rest] = segments;
+  const resourceId = rest.join(':');
+
+  if (!resourceType || !resourceId) {
+    return null;
+  }
+
+  const encodedType = encodeURIComponent(resourceType);
+  const encodedId = encodeURIComponent(resourceId);
+
+  return `${SPOTIFY_EMBED_BASE_URL}/${encodedType}/${encodedId}?utm_source=cerebro&theme=0`;
+}
+
+function SpotifySkeleton({ variant, collapsed }: { variant: SpotifyVariant; collapsed?: boolean }) {
+  if (variant === "launcher-expanded") {
+    return (
+      <motion.div
+        className="w-full bg-gradient-to-b from-[#1a1a1a] to-[#121212] rounded-xl overflow-hidden"
+        initial={{ opacity: 0.4, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-[#1DB954] animate-pulse" />
+            <div className="h-4 w-16 rounded-full bg-white/10" />
+          </div>
+          <div className="h-4 w-20 rounded-full bg-white/10" />
+        </div>
+        {!collapsed ? (
+          <div className="px-6 pb-6 space-y-5">
+            <div className="flex justify-center">
+              <div className="w-56 h-56 rounded-xl bg-white/5 animate-pulse" />
+            </div>
+            <div className="space-y-2 text-center">
+              <div className="h-5 w-40 bg-white/10 rounded-full mx-auto" />
+              <div className="h-4 w-32 bg-white/5 rounded-full mx-auto" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-1.5 rounded-full bg-white/10" />
+              <div className="flex justify-between text-xs text-white/50">
+                <div className="h-3 w-10 rounded-full bg-white/10" />
+                <div className="h-3 w-10 rounded-full bg-white/10" />
+              </div>
+            </div>
+            <div className="flex items-center justify-center gap-6">
+              <div className="w-10 h-10 rounded-full bg-white/10" />
+              <div className="w-16 h-16 rounded-full bg-white/10" />
+              <div className="w-10 h-10 rounded-full bg-white/10" />
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 pb-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded bg-white/10 animate-pulse" />
+              <div className="flex-1 space-y-1">
+                <div className="h-4 w-32 bg-white/10 rounded-full" />
+                <div className="h-3 w-20 bg-white/5 rounded-full" />
+              </div>
+              <div className="w-8 h-8 rounded-full bg-white/10" />
+            </div>
+            <div className="h-1 bg-white/10 rounded-full" />
+          </div>
+        )}
+      </motion.div>
+    );
+  }
+
+  if (variant === "launcher-full") {
+    return (
+      <div
+        className="w-full px-4 py-4 bg-gradient-to-r from-[#1DB954]/10 via-glass/20 to-glass/10 border-t border-[#1DB954]/20 rounded-xl animate-pulse"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-lg bg-white/10" />
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-40 bg-white/10 rounded-full" />
+            <div className="h-3 w-32 bg-white/5 rounded-full" />
+            <div className="h-3 w-24 bg-[#1DB954]/20 rounded-full" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-full bg-white/10" />
+            <div className="w-12 h-12 rounded-full bg-[#1DB954]/30" />
+            <div className="w-9 h-9 rounded-full bg-white/10" />
+          </div>
+        </div>
+        <div className="mt-3 h-1.5 bg-white/10 rounded-full" />
+      </div>
+    );
+  }
+
+  if (variant === "launcher" || variant === "launcher-footer") {
+    return (
+      <div
+        className="w-full px-4 py-3 border-t border-glass/30 bg-glass/20 backdrop-blur-xl rounded-xl animate-pulse"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-lg bg-white/10" />
+          <div className="flex-1 space-y-1">
+            <div className="h-4 w-40 bg-white/10 rounded-full" />
+            <div className="h-3 w-28 bg-white/5 rounded-full" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-white/10" />
+            <div className="w-8 h-8 rounded-full bg-white/10" />
+            <div className="w-8 h-8 rounded-full bg-white/10" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Launcher mini variant skeleton - horizontal compact
+  if (variant === "launcher-mini") {
+    return (
+      <motion.div
+        className="w-[320px] bg-black/95 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden"
+        initial={{ opacity: 0.4, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="flex items-center gap-3 p-3">
+          {/* Album art skeleton */}
+          <div className="w-12 h-12 rounded-md bg-white/10 animate-pulse flex-shrink-0" />
+
+          {/* Track info skeleton */}
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="h-3.5 w-32 bg-white/10 rounded-full animate-pulse" />
+            <div className="h-3 w-24 bg-white/5 rounded-full animate-pulse" />
+          </div>
+
+          {/* Controls skeleton */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-4 h-4 rounded bg-white/10 animate-pulse" />
+            <div className="w-8 h-8 rounded-full bg-white/10 animate-pulse" />
+            <div className="w-4 h-4 rounded bg-white/10 animate-pulse" />
+          </div>
+        </div>
+        <div className="px-4 pb-4">
+          <div className="mt-1.5 h-1 bg-white/20 rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-[#1DB954] rounded-full"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  return null;
+}
+
+export default function SpotifyMiniPlayer({
+  variant = "launcher",
   onAction,
   collapsed = false,
-  onToggleCollapse 
+  onToggleCollapse
 }: SpotifyMiniPlayerProps) {
+  const isElectronRuntime = useIsElectronRuntime();
   const [status, setStatus] = useState<SpotifyStatus | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [lastKnownTrack, setLastKnownTrack] = useState<SpotifyStatus["item"] | null>(null);
+  const [lastKnownStatus, setLastKnownStatus] = useState<SpotifyStatus | null>(null);
+  const [missingItemCount, setMissingItemCount] = useState(0);
   const apiBaseUrl = getApiBaseUrl();
   const eventBus = useGlobalEventBus();
 
+  // Log when component mounts
+  useEffect(() => {
+    logger.info(`[SPOTIFY-MINI-PLAYER] Component mounted with variant: ${variant}`);
+  }, [variant]);
+
   // Fetch Spotify status
   const fetchStatus = useCallback(async () => {
+    logger.debug(`[SPOTIFY-MINI-PLAYER] Fetching status from ${apiBaseUrl}/api/spotify/status`);
     try {
       const response = await fetch(`${apiBaseUrl}/api/spotify/status`);
+      logger.debug(`[SPOTIFY-MINI-PLAYER] Status response: ${response.status}`);
+
       if (response.ok) {
         const data = await response.json();
-        setStatus(data);
+        // API returns {"status": {...}}, unwrap it
+        const statusData = data.status || data;
+        logger.info(`[SPOTIFY-MINI-PLAYER] Status received:`, {
+          hasItem: !!statusData.item,
+          isPlaying: statusData.is_playing,
+          track: statusData.item?.name,
+          artist: statusData.item?.artists?.[0]?.name
+        });
+        setStatus(statusData);
+        if (statusData.item) {
+          setLastKnownTrack(statusData.item);
+          setLastKnownStatus(statusData);
+          setMissingItemCount(0);
+        } else {
+          setMissingItemCount(prev => Math.min(prev + 1, 5));
+        }
         setIsAuthenticated(true);
       } else if (response.status === 401) {
+        logger.warn(`[SPOTIFY-MINI-PLAYER] Not authenticated (401)`);
         setIsAuthenticated(false);
         setStatus(null);
+        setLastKnownTrack(null);
+        setLastKnownStatus(null);
+        setMissingItemCount(0);
       }
     } catch (error) {
-      console.error("Failed to fetch Spotify status:", error);
+      logger.error("[SPOTIFY-MINI-PLAYER] Failed to fetch Spotify status:", error);
     } finally {
       setIsLoading(false);
     }
   }, [apiBaseUrl]);
 
-  // Poll status every 5 seconds
+  // Dynamic polling - faster when playing, slower when idle
+  // 1 second when playing for real-time progress, 3 seconds when idle
+  const pollInterval = status?.is_playing ? 1000 : 3000;
+  
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
+    const interval = setInterval(fetchStatus, pollInterval);
     return () => clearInterval(interval);
-  }, [fetchStatus]);
+  }, [fetchStatus, pollInterval]);
+
+  // Listen for spotify events from chat commands to refresh immediately
+  useEffect(() => {
+    const handleSpotifyUpdate = () => {
+      // Refresh after short delay to allow Spotify API to update
+      setTimeout(fetchStatus, 300);
+      setTimeout(fetchStatus, 1000); // Double-check after 1s
+      setTimeout(fetchStatus, 2000); // Triple-check after 2s for slow API responses
+    };
+    
+    // Listen for any spotify control events from eventBus
+    const unsubControl = eventBus.subscribe('spotify:control', handleSpotifyUpdate);
+    const unsubPlayback = eventBus.subscribe('spotify:playback_started', handleSpotifyUpdate);
+    
+    // Listen for WebSocket playback updates (from backend broadcasts)
+    const handleWebSocketUpdate = (event: CustomEvent) => {
+      console.log('[SPOTIFY] WebSocket playback update received:', event.detail);
+      handleSpotifyUpdate();
+    };
+    window.addEventListener('spotify:playback_update', handleWebSocketUpdate as EventListener);
+    
+    return () => {
+      unsubControl();
+      unsubPlayback();
+      window.removeEventListener('spotify:playback_update', handleWebSocketUpdate as EventListener);
+    };
+  }, [fetchStatus, eventBus]);
 
   // Spotify controls - Note: We intentionally DON'T call onAction() here
   // to keep the launcher window open during Spotify interaction
@@ -148,11 +394,35 @@ export default function SpotifyMiniPlayer({
     window.open(`${apiBaseUrl}/api/spotify/login`, '_blank');
   }, [apiBaseUrl]);
 
-  if (isLoading) return null;
+  if (isLoading && SKELETON_VARIANTS.has(variant)) {
+    logger.info(`[SPOTIFY-MINI-PLAYER] Rendering skeleton for variant: ${variant}`);
+    return <SpotifySkeleton variant={variant} collapsed={collapsed} />;
+  }
+
+  if (isLoading) {
+    logger.info(`[SPOTIFY-MINI-PLAYER] Still loading, returning null for variant: ${variant}`);
+    return null;
+  }
 
   // Not authenticated
   if (!isAuthenticated) {
+    logger.warn(`[SPOTIFY-MINI-PLAYER] Not authenticated, variant: ${variant}`);
     if (variant === "palette-row") return null; // Don't show in palette if not authenticated
+    if (variant === "launcher-mini") {
+      return (
+        <div className="w-full bg-gradient-to-r from-[#1a1a1a] to-[#121212] rounded-xl overflow-hidden px-4 py-3">
+          <button
+            onClick={handleLogin}
+            className="w-full px-3 py-2 text-sm rounded-lg bg-[#1DB954] hover:bg-[#1ed760] text-white transition-colors flex items-center justify-center gap-2"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+            </svg>
+            <span>Connect Spotify</span>
+          </button>
+        </div>
+      );
+    }
     if (variant === "launcher-footer") {
       return (
         <div className="w-full px-4 py-2 bg-glass/10">
@@ -180,56 +450,43 @@ export default function SpotifyMiniPlayer({
     );
   }
 
-  // No active playback - show controls with placeholder
-  if (!status?.item) {
+  const shouldUseFallbackTrack = !status?.item && !!lastKnownTrack && missingItemCount < 3;
+  const trackCandidate = status?.item ?? (shouldUseFallbackTrack ? lastKnownTrack : null);
+  const playbackStatus = (status?.item ? status : (shouldUseFallbackTrack ? lastKnownStatus : status)) ?? lastKnownStatus ?? status;
+
+  // No active playback
+  if (!trackCandidate || !playbackStatus) {
+    logger.info(`[SPOTIFY-MINI-PLAYER] No active playback (status.item is null), variant: ${variant}`);
     if (variant === "palette-row") return null;
-    if (variant === "launcher-footer") {
+    if (variant === "launcher-mini") {
+      logger.info(`[SPOTIFY-MINI-PLAYER] Rendering "Nothing playing" state for launcher-mini`);
       return (
-        <div className="w-full px-4 py-3 bg-glass/10">
-          <div className="flex items-center gap-3">
-            {/* Placeholder album art */}
-            <div className="w-10 h-10 rounded bg-glass/30 flex items-center justify-center shadow-md">
-              <span className="text-lg">🎵</span>
+        <motion.div
+          className="w-[320px] bg-black/95 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <div className="flex items-center gap-3 p-3">
+            <div className="w-12 h-12 rounded-md bg-white/10 flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-[#1DB954]" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+              </svg>
             </div>
-
-            {/* Track info */}
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-muted">No track playing</div>
-              <div className="text-xs text-muted/70">Start playback on any device</div>
-            </div>
-
-            {/* Controls (disabled state) */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handlePrevious}
-                disabled
-                className="p-1.5 rounded opacity-40 cursor-not-allowed"
-                title="Previous (no playback)"
-              >
-                <span className="text-sm">⏮</span>
-              </button>
-              <button
-                onClick={handlePlayPause}
-                disabled
-                className="p-1.5 rounded opacity-40 cursor-not-allowed"
-                title="Play (no playback)"
-              >
-                <span className="text-sm">▶️</span>
-              </button>
-              <button
-                onClick={handleNext}
-                disabled
-                className="p-1.5 rounded opacity-40 cursor-not-allowed"
-                title="Next (no playback)"
-              >
-                <span className="text-sm">⏭</span>
-              </button>
+              <div className="text-white font-medium text-sm">Spotify</div>
+              <div className="text-white/50 text-xs">Nothing playing</div>
             </div>
           </div>
-
-          {/* Progress bar (empty) */}
-          <div className="mt-2 h-0.5 bg-glass/30 rounded-full overflow-hidden">
-            <div className="h-full bg-glass/50 w-0" />
+        </motion.div>
+      );
+    }
+    if (variant === "launcher-footer") {
+      return (
+        <div className="w-full px-4 py-2 bg-glass/10">
+          <div className="flex items-center gap-3 text-sm text-muted">
+            <span className="text-lg">🎵</span>
+            <span>Spotify idle</span>
           </div>
         </div>
       );
@@ -245,8 +502,21 @@ export default function SpotifyMiniPlayer({
     );
   }
 
-  const track = status.item;
-  const progress = (status.progress_ms / track.duration_ms) * 100;
+  const track = trackCandidate;
+  const progressMs = playbackStatus.progress_ms ?? 0;
+  const progress = Math.min((progressMs / Math.max(track.duration_ms, 1)) * 100, 100);
+  const albumImages = track.album?.images ?? [];
+  const albumLargeImage = albumImages[0]?.url || albumImages[1]?.url || albumImages[2]?.url || DEFAULT_ALBUM_ART;
+  const albumMediumImage = albumImages[1]?.url || albumImages[0]?.url || albumImages[2]?.url || DEFAULT_ALBUM_ART;
+  const albumSmallImage = albumImages[2]?.url || albumImages[1]?.url || albumImages[0]?.url || DEFAULT_ALBUM_ART;
+  const albumArtKey = `${track.name}-${track.album?.name ?? ""}-${track.artists.map(a => a.name).join(",")}`;
+
+  logger.info(`[SPOTIFY-MINI-PLAYER] Rendering player with track data for variant: ${variant}`, {
+    trackName: track.name,
+    artist: track.artists?.[0]?.name,
+  isPlaying: playbackStatus.is_playing,
+    progress: progress.toFixed(1) + '%'
+  });
 
   // Expanded launcher variant - matches Raycast/iOS style with large centered artwork
   if (variant === "launcher-expanded") {
@@ -272,9 +542,9 @@ export default function SpotifyMiniPlayer({
             <span className="text-sm font-medium text-white">Spotify</span>
           </div>
           <div className="flex items-center gap-2">
-            {status.device && (
+            {playbackStatus.device && (
               <span className="text-xs text-white/50 truncate max-w-[150px]">
-                Playing on {status.device.name}
+                Playing on {playbackStatus.device.name}
               </span>
             )}
             <motion.svg 
@@ -304,13 +574,19 @@ export default function SpotifyMiniPlayer({
                 <div className="flex justify-center mb-5">
                   <motion.div
                     className="relative"
-                    whileHover={{ scale: 1.02 }}
-                    transition={{ duration: 0.2 }}
+                    whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
+                    animate={playbackStatus.is_playing ? { rotate: [-0.25, 0.25, -0.25] } : { rotate: 0 }}
+                    transition={playbackStatus.is_playing ? { duration: 8, repeat: Infinity, ease: "easeInOut" } : { duration: 0.4 }}
                   >
-                    <img
-                      src={track.album.images[0]?.url || track.album.images[1]?.url}
+                    <motion.img
+                      key={albumArtKey}
+                      src={albumLargeImage}
                       alt={track.album.name}
+                      loading="lazy"
                       className="w-56 h-56 rounded-xl shadow-2xl object-cover"
+                      initial={{ opacity: 0.7, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.25 }}
                     />
                     {/* Album name overlay at bottom */}
                     <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent rounded-b-xl">
@@ -345,7 +621,7 @@ export default function SpotifyMiniPlayer({
                     />
                   </div>
                   <div className="flex justify-between text-xs text-white/50 font-mono">
-                    <span>{formatTime(status.progress_ms)}</span>
+                    <span>{formatTime(playbackStatus.progress_ms)}</span>
                     <span>{formatTime(track.duration_ms)}</span>
                   </div>
                 </div>
@@ -369,11 +645,11 @@ export default function SpotifyMiniPlayer({
                   <motion.button
                     onClick={handlePlayPause}
                     className="w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-xl"
-                    title={status.is_playing ? "Pause" : "Play"}
+                    title={playbackStatus.is_playing ? "Pause" : "Play"}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                   >
-                    {status.is_playing ? (
+                    {playbackStatus.is_playing ? (
                       <svg className="w-7 h-7 text-black" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                       </svg>
@@ -410,10 +686,15 @@ export default function SpotifyMiniPlayer({
             animate={{ opacity: 1 }}
           >
             <div className="flex items-center gap-3">
-              <img
-                src={track.album.images[2]?.url || track.album.images[0]?.url}
+              <motion.img
+                key={`${albumArtKey}-collapsed`}
+                src={albumSmallImage}
                 alt={track.album.name}
-                className="w-10 h-10 rounded shadow"
+                loading="lazy"
+                className="w-10 h-10 rounded shadow object-cover"
+                initial={{ opacity: 0.7 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
               />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-white truncate">{track.name}</div>
@@ -421,24 +702,24 @@ export default function SpotifyMiniPlayer({
                   {track.artists.map(a => a.name).join(", ")}
                 </div>
               </div>
-              <motion.button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePlayPause();
-                }}
-                className="w-8 h-8 rounded-full bg-white flex items-center justify-center"
-                whileTap={{ scale: 0.95 }}
-              >
-                {status.is_playing ? (
-                  <svg className="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4 text-black ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                )}
-              </motion.button>
+                  <motion.button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePlayPause();
+                    }}
+                    className="w-8 h-8 rounded-full bg-white flex items-center justify-center"
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    {playbackStatus.is_playing ? (
+                      <svg className="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-black ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z"/>
+                      </svg>
+                    )}
+                  </motion.button>
             </div>
             {/* Mini progress bar */}
             <div className="mt-2 h-1 bg-white/20 rounded-full overflow-hidden">
@@ -453,6 +734,114 @@ export default function SpotifyMiniPlayer({
     );
   }
 
+  // Launcher mini variant - use embedded Spotify player when available
+  if (variant === "launcher-mini") {
+    const embedSrc = isElectronRuntime && isAuthenticated ? buildSpotifyEmbedUrl(track.uri) : null;
+
+    if (embedSrc) {
+      return (
+        <motion.div
+          className="relative w-full rounded-2xl overflow-hidden border border-white/15 bg-black/60 backdrop-blur-2xl shadow-2xl"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <webview
+            key={embedSrc}
+            src={embedSrc}
+            allowpopups="true"
+            partition="persist:spotifyEmbed"
+            className="h-[152px] w-full border-0"
+            style={{ backgroundColor: "transparent" }}
+          />
+          <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-white/5" />
+        </motion.div>
+      );
+    }
+
+    return (
+      <motion.div
+        className="relative w-full min-h-[84px] bg-black/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        {/* Main content - horizontal layout */}
+        <div className="flex items-center gap-3 p-4">
+          {/* Album Art - Small square */}
+          <motion.img
+            key={`${albumArtKey}-mini`}
+            src={albumSmallImage}
+            alt={track.album.name}
+            loading="lazy"
+            className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
+            initial={{ opacity: 0.7, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+          />
+
+          {/* Track Info - flexible width */}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-white font-medium text-sm leading-tight truncate">
+              {track.name}
+            </h3>
+            <p className="text-white/50 text-xs truncate">
+              {track.artists.map(a => a.name).join(", ")}
+            </p>
+          </div>
+
+          {/* Playback Controls - compact row */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Previous */}
+            <motion.button
+              onClick={handlePrevious}
+              className="text-white/60 hover:text-white transition-colors"
+              title="Previous"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+              </svg>
+            </motion.button>
+
+            {/* Play/Pause */}
+            <motion.button
+              onClick={handlePlayPause}
+              className="bg-white text-black rounded-full w-9 h-9 flex items-center justify-center shadow-md hover:scale-105 transition-transform"
+              title={playbackStatus.is_playing ? "Pause" : "Play"}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              {playbackStatus.is_playing ? (
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              )}
+            </motion.button>
+
+            {/* Next */}
+            <motion.button
+              onClick={handleNext}
+              className="text-white/60 hover:text-white transition-colors"
+              title="Next"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+              </svg>
+            </motion.button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   // Full launcher variant - larger with time display (like Web SDK)
   if (variant === "launcher-full") {
     return (
@@ -460,12 +849,17 @@ export default function SpotifyMiniPlayer({
         <div className="flex items-center gap-4">
           {/* Large Album art with shadow */}
           <div className="relative">
-            <img
-              src={track.album.images[1]?.url || track.album.images[0]?.url}
+            <motion.img
+              key={`${albumArtKey}-full`}
+              src={albumMediumImage}
               alt={track.album.name}
-              className="w-16 h-16 rounded-lg shadow-lg"
+              loading="lazy"
+              className="w-16 h-16 rounded-lg shadow-lg object-cover"
+              initial={{ opacity: 0.7, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2 }}
             />
-            {status.is_playing && (
+            {playbackStatus.is_playing && (
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-[#1DB954] rounded-full flex items-center justify-center">
                 <motion.div
                   animate={{ scale: [1, 1.2, 1] }}
@@ -503,11 +897,11 @@ export default function SpotifyMiniPlayer({
             <motion.button
               onClick={handlePlayPause}
               className="p-3 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-white shadow-lg transition-all"
-              title={status.is_playing ? "Pause" : "Play"}
+              title={playbackStatus.is_playing ? "Pause" : "Play"}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              {status.is_playing ? (
+              {playbackStatus.is_playing ? (
                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                 </svg>
@@ -534,7 +928,7 @@ export default function SpotifyMiniPlayer({
         {/* Progress bar with time */}
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs text-text-muted w-10 text-right font-mono">
-            {formatTime(status.progress_ms)}
+            {formatTime(playbackStatus.progress_ms)}
           </span>
           <div className="flex-1 h-1.5 bg-glass/30 rounded-full overflow-hidden">
             <motion.div
@@ -550,12 +944,12 @@ export default function SpotifyMiniPlayer({
         </div>
 
         {/* Device indicator */}
-        {status.device && (
+        {playbackStatus.device && (
           <div className="mt-2 flex items-center gap-1.5 text-xs text-[#1DB954]">
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
             </svg>
-            <span>{status.device.name}</span>
+            <span>{playbackStatus.device.name}</span>
           </div>
         )}
       </div>
@@ -569,9 +963,10 @@ export default function SpotifyMiniPlayer({
         <div className="flex items-center gap-3">
           {/* Album art */}
           <img
-            src={track.album.images[2]?.url || track.album.images[0]?.url}
+            src={albumSmallImage}
             alt={track.album.name}
-            className="w-10 h-10 rounded shadow-md"
+            loading="lazy"
+            className="w-10 h-10 rounded shadow-md object-cover"
           />
 
           {/* Track info */}
@@ -594,9 +989,9 @@ export default function SpotifyMiniPlayer({
             <button
               onClick={handlePlayPause}
               className="p-1.5 rounded hover:bg-glass-hover transition-colors"
-              title={status.is_playing ? "Pause" : "Play"}
+              title={playbackStatus.is_playing ? "Pause" : "Play"}
             >
-              <span className="text-sm">{status.is_playing ? "⏸" : "▶️"}</span>
+              <span className="text-sm">{playbackStatus.is_playing ? "⏸" : "▶️"}</span>
             </button>
             <button
               onClick={handleNext}
@@ -628,9 +1023,10 @@ export default function SpotifyMiniPlayer({
         <div className="flex items-center gap-3">
           {/* Album art */}
           <img
-            src={track.album.images[2]?.url || track.album.images[0]?.url}
+            src={albumSmallImage}
             alt={track.album.name}
-            className="w-10 h-10 rounded"
+            loading="lazy"
+            className="w-10 h-10 rounded object-cover"
           />
 
           {/* Track info */}
@@ -653,9 +1049,9 @@ export default function SpotifyMiniPlayer({
             <button
               onClick={handlePlayPause}
               className="p-1.5 rounded hover:bg-glass-hover transition-colors"
-              title={status.is_playing ? "Pause" : "Play"}
+              title={playbackStatus.is_playing ? "Pause" : "Play"}
             >
-              <span className="text-sm">{status.is_playing ? "⏸" : "▶️"}</span>
+              <span className="text-sm">{playbackStatus.is_playing ? "⏸" : "▶️"}</span>
             </button>
             <button
               onClick={handleNext}
@@ -667,9 +1063,9 @@ export default function SpotifyMiniPlayer({
           </div>
 
           {/* Device indicator */}
-          {status.device && (
+          {playbackStatus.device && (
             <div className="text-xs text-[#1DB954]">
-              {status.device.name}
+              {playbackStatus.device.name}
             </div>
           )}
         </div>
@@ -699,9 +1095,10 @@ export default function SpotifyMiniPlayer({
         <div className="flex items-center gap-3">
           {/* Album art */}
           <img
-            src={track.album.images[2]?.url || track.album.images[0]?.url}
+            src={albumSmallImage}
             alt={track.album.name}
-            className="w-12 h-12 rounded shadow-lg"
+            loading="lazy"
+            className="w-12 h-12 rounded shadow-lg object-cover"
           />
 
           {/* Track info */}
@@ -710,9 +1107,9 @@ export default function SpotifyMiniPlayer({
             <div className="text-xs text-muted truncate">
               {track.artists.map(a => a.name).join(", ")}
             </div>
-            {status.device && (
+            {playbackStatus.device && (
               <div className="text-xs text-[#1DB954] mt-0.5">
-                ▸ {status.device.name}
+                ▸ {playbackStatus.device.name}
               </div>
             )}
           </div>
@@ -729,9 +1126,9 @@ export default function SpotifyMiniPlayer({
             <button
               onClick={handlePlayPause}
               className="p-2 rounded-lg hover:bg-glass-hover active:scale-95 transition-all bg-[#1DB954]/10"
-              title={status.is_playing ? "Pause (Space)" : "Play (Space)"}
+              title={playbackStatus.is_playing ? "Pause (Space)" : "Play (Space)"}
             >
-              <span className="text-lg">{status.is_playing ? "⏸" : "▶️"}</span>
+              <span className="text-lg">{playbackStatus.is_playing ? "⏸" : "▶️"}</span>
             </button>
             <button
               onClick={handleNext}

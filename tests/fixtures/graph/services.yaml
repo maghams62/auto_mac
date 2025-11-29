@@ -1,0 +1,30 @@
+# Service fixtures for Neo4j graph testing
+# These represent deployable microservices that call APIs
+
+services:
+  - id: "svc:api-gateway"
+    name: "api-gateway"
+    description: "Public-facing API gateway"
+    calls_endpoints:
+      - "api:payments:/v1/charge"
+      - "api:payments:/v1/refund"
+      - "api:auth:/v1/login"
+      - "api:auth:/v1/logout"
+      - "api:billing:/v1/invoice"
+
+  - id: "svc:billing-worker"
+    name: "billing-worker"
+    description: "Background billing job processor"
+    calls_endpoints:
+      - "api:payments:/v1/charge"
+      - "api:billing:/v1/invoice"
+      - "api:billing:/v1/subscribe"
+      - "api:notifications:/v1/send"
+
+  - id: "svc:notification-service"
+    name: "notification-service"
+    description: "Notification delivery service"
+    calls_endpoints:
+      - "api:notifications:/v1/send"
+      - "api:auth:/v1/validate-token"
+
