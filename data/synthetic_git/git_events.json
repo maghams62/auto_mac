@@ -289,5 +289,55 @@
       "/v1/payments/create"
     ],
     "is_doc_change": true
+  },
+  {
+    "id": "git_commit:notifications-service:f7c3c2d96f2c4f8090034b876b78dfb6f61c1e90",
+    "source_type": "git_commit",
+    "repo": "notifications-service",
+    "repo_url": "https://github.com/acme/notifications-service",
+    "branch": "main",
+    "commit_sha": "f7c3c2d96f2c4f8090034b876b78dfb6f61c1e90",
+    "author": "dave",
+    "timestamp": "2025-11-26T11:20:00Z",
+    "message": "feat!: require template_version for receipts",
+    "files_changed": [
+      "src/notifications.py"
+    ],
+    "text_for_embedding": "feat!: require template_version for receipts\n\nReceipts now supply template_version to /v1/notifications/send so compliance can audit templates.",
+    "service_ids": [
+      "notifications-service"
+    ],
+    "component_ids": [
+      "notifications.dispatch"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "is_doc_change": false
+  },
+  {
+    "id": "git_commit:docs-portal:5ab13b677d8a43c7bf043be8a81a79931a4ed929",
+    "source_type": "git_commit",
+    "repo": "docs-portal",
+    "repo_url": "https://github.com/acme/docs-portal",
+    "branch": "main",
+    "commit_sha": "5ab13b677d8a43c7bf043be8a81a79931a4ed929",
+    "author": "eve",
+    "timestamp": "2025-11-26T12:05:00Z",
+    "message": "docs: backlog notification template updates",
+    "files_changed": [
+      "docs/changelog.md"
+    ],
+    "text_for_embedding": "docs: backlog notification template updates\n\nAdded TODO noting docs/notification_playbook.md still lacks template_version guidance for /v1/notifications/send.",
+    "service_ids": [
+      "docs-portal"
+    ],
+    "component_ids": [
+      "docs.notifications"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "is_doc_change": true
   }
 ]

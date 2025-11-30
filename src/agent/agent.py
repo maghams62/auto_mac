@@ -108,6 +108,61 @@ class ResultCapture:
             return self._captured
 
 
+class SlashPlanProgressEmitter:
+    """
+    Helper to emit plan update events for slash commands without invoking the full planner.
+    """
+
+    def __init__(
+        self,
+        steps: List[Dict[str, Any]],
+        on_step_started: Optional[callable],
+        on_step_succeeded: Optional[callable],
+        on_step_failed: Optional[callable],
+    ):
+        self.slug_to_id = {
+            step.get("slug"): step.get("id")
+            for step in steps
+            if step.get("slug") and step.get("id") is not None
+        }
+        self.on_step_started = on_step_started
+        self.on_step_succeeded = on_step_succeeded
+        self.on_step_failed = on_step_failed
+        self.sequence_number = 0
+
+    def _emit(self, callback: Optional[callable], step_id: Optional[int], extra: Optional[Dict[str, Any]] = None):
+        if not callback or not step_id:
+            return
+        self.sequence_number += 1
+        payload = {
+            "step_id": step_id,
+            "sequence_number": self.sequence_number,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if extra:
+            payload.update(extra)
+        callback(payload)
+
+    def has_step(self, slug: str) -> bool:
+        return slug in self.slug_to_id
+
+    def start(self, slug: str) -> None:
+        self._emit(self.on_step_started, self.slug_to_id.get(slug))
+
+    def succeed(self, slug: str, preview: Optional[str] = None) -> None:
+        extra = {}
+        if preview:
+            extra["output_preview"] = preview[:200]
+        self._emit(self.on_step_succeeded, self.slug_to_id.get(slug), extra)
+
+    def fail(self, slug: str, error_message: str, can_retry: bool = False) -> None:
+        extra = {
+            "error": (error_message or "Command failed")[:500],
+            "can_retry": can_retry,
+        }
+        self._emit(self.on_step_failed, self.slug_to_id.get(slug), extra)
+
+
 class AgentState(TypedDict):
     """State for the automation agent."""
     # Input
@@ -162,6 +217,49 @@ class AutomationAgent:
     LangGraph agent for task decomposition and execution.
     """
 
+    SLASH_PLAN_DEFINITIONS = {
+        "slack": [
+            {
+                "slug": "interpret",
+                "action": "Interpret Slack request",
+                "reasoning": "Parse channel, timeframe, keywords, and determine whether to run a channel recap, thread recap, or decision/task scan.",
+                "expected_output": "Normalized Slack query parameters (channel, timeframe, mode).",
+            },
+            {
+                "slug": "execute",
+                "action": "Gather Slack context",
+                "reasoning": "Use slash-slack tooling to fetch channel history, threads, reactions, and cluster topics/decisions/tasks.",
+                "expected_output": "Structured Slack payload with topics, tasks, decisions, open questions, and references.",
+            },
+            {
+                "slug": "respond",
+                "action": "Compose graph-aware summary",
+                "reasoning": "Format summary + sections (Topics, Decisions, Tasks, References) with graph metadata for Neo4j ingestion.",
+                "expected_output": "Final slash-slack response rendered for the UI and graph pipelines.",
+            },
+        ],
+        "git": [
+            {
+                "slug": "interpret",
+                "action": "Interpret Git request",
+                "reasoning": "Normalize branch context, filters, and identify whether the user needs repo info, commits, files, or PRs.",
+                "expected_output": "Resolved command intent plus parameters (branch, time window, author, PR number).",
+            },
+            {
+                "slug": "execute",
+                "action": "Query GitHub data",
+                "reasoning": "Call Git agent tools to fetch repo metadata, commit history, file diffs, or PRs.",
+                "expected_output": "Git response payload with raw data (commits, files, PRs, tags).",
+            },
+            {
+                "slug": "respond",
+                "action": "Format graph-aware Git summary",
+                "reasoning": "Summarize results with explicit repo/branch/commit references for graph ingestion.",
+                "expected_output": "Final slash-git response highlighting SHAs, branches, PRs, and files.",
+            },
+        ],
+    }
+
     def __init__(
         self,
         config: Dict[str, Any],
@@ -169,7 +267,8 @@ class AutomationAgent:
         on_plan_created: Optional[callable] = None,
         on_step_started: Optional[callable] = None,
         on_step_succeeded: Optional[callable] = None,
-        on_step_failed: Optional[callable] = None
+        on_step_failed: Optional[callable] = None,
+        preloaded_prompts: Optional[Dict[str, str]] = None,
     ):
         self.config = config
         # Note: on_plan_created is deprecated - pass through run() method instead to avoid cross-talk
@@ -219,8 +318,15 @@ class AutomationAgent:
         # Initialize verifier
         self.verifier = OutputVerifier(config)
 
-        # Load prompts
-        self.prompts = self._load_prompts()
+        # Load prompts (prefer cached bundle when provided)
+        if preloaded_prompts:
+            self.prompts = dict(preloaded_prompts)
+            logger.info(
+                "[PROMPT LOADING] Using preloaded prompt bundle",
+                extra={"prompt_keys": sorted(self.prompts.keys())},
+            )
+        else:
+            self.prompts = self._load_prompts()
 
         # Build graph
         self.graph = self._build_graph()
@@ -1495,7 +1601,43 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         except Exception as e:
             logger.debug(f"[RETRY LOGGING] Failed to get reasoning trace: {e}")
         return []
-    
+
+    def _normalize_slash_command(self, command_name: Optional[str]) -> Optional[str]:
+        if not command_name:
+            return None
+        command_name = command_name.lower()
+        if command_name in {"git", "pr"}:
+            return "git"
+        if command_name == "slack":
+            return "slack"
+        return None
+
+    def _build_slash_plan_payload(self, normalized_command: str, user_request: str) -> Optional[Dict[str, Any]]:
+        steps_definition = self.SLASH_PLAN_DEFINITIONS.get(normalized_command)
+        if not steps_definition:
+            return None
+
+        goal = user_request.strip() or f"/{normalized_command} command"
+        steps: List[Dict[str, Any]] = []
+        for idx, step_def in enumerate(steps_definition, start=1):
+            step_payload = {
+                "id": idx,
+                "action": step_def["action"],
+                "reasoning": step_def.get("reasoning", ""),
+                "expected_output": step_def.get("expected_output", ""),
+                "dependencies": [],
+                "slug": step_def["slug"],
+            }
+            steps.append(step_payload)
+
+        return {"goal": goal, "steps": steps}
+
+    def _truncate_preview(self, text: Optional[str], fallback: str) -> str:
+        preview = (text or fallback or "").strip()
+        if not preview:
+            preview = fallback
+        return preview[:200]
+
     def _verify_commitments_fulfilled(self, state: AgentState, memory) -> None:
         """
         Verify that all commitments (like send_email, attach_documents) were fulfilled.
@@ -2939,12 +3081,39 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
 
             registry = AgentRegistry(self.config, session_manager=self.session_manager)
             handler = SlashCommandHandler(registry, session_manager=self.session_manager, config=self.config)
+
+            command_token = user_request.strip().split(None, 1)[0] if user_request.strip() else ""
+            normalized_command = self._normalize_slash_command(command_token.lstrip('/')) if command_token else None
+
+            plan_emitter: Optional[SlashPlanProgressEmitter] = None
+            if normalized_command:
+                plan_payload = self._build_slash_plan_payload(normalized_command, user_request)
+                if plan_payload and on_plan_created:
+                    try:
+                        on_plan_created(plan_payload)
+                        plan_emitter = SlashPlanProgressEmitter(
+                            plan_payload["steps"],
+                            on_step_started,
+                            on_step_succeeded,
+                            on_step_failed,
+                        )
+                        if plan_emitter.has_step("interpret"):
+                            plan_emitter.start("interpret")
+                            plan_emitter.succeed("interpret", preview=f"Recognized /{normalized_command} command.")
+                    except Exception as exc:
+                        logger.debug(f"[SLASH PLAN] Failed to emit plan for /{normalized_command}: {exc}")
+
+            if plan_emitter and plan_emitter.has_step("execute"):
+                plan_emitter.start("execute")
+
             is_command, result = handler.handle(user_request, session_id=session_id)
             
             if not is_command:
                 # Unsupported slash command - strip leading slash and fall through to orchestrator
                 # This allows commands like /maps to be treated as natural language
                 logger.debug(f"[SLASH COMMANDS] Ignoring unsupported command: {user_request[:50]}")
+                if plan_emitter and plan_emitter.has_step("execute"):
+                    plan_emitter.fail("execute", "Command delegated to orchestrator")
                 # Remove leading slash and command word, keep the rest as natural language
                 parts = user_request.strip().split(None, 1)
                 if len(parts) > 1:
@@ -2956,6 +3125,8 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             if is_command:
                 # Check if this is a retry_with_orchestrator result
                 if isinstance(result, dict) and result.get("type") == "retry_with_orchestrator":
+                    if plan_emitter and plan_emitter.has_step("execute"):
+                        plan_emitter.fail("execute", "Command delegated to orchestrator", can_retry=True)
                     # Return the retry result as-is so api_server can handle it
                     return {
                         "type": "retry_with_orchestrator",
@@ -2965,6 +3136,9 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     }
                 
                 # Format result to match agent.run() return format
+                slash_error_message: Optional[str] = None
+                response_preview: Optional[str] = None
+
                 if isinstance(result, dict):
                     if result.get("type") == "result":
                         tool_result = result.get("result", {})
@@ -2988,31 +3162,60 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                             (tool_result.get("message") or tool_result.get("summary") or tool_result.get("content") or tool_result.get("response"))
                         )
                         status = "error" if is_error else ("success" if has_content else "completed")
+                        if is_error:
+                            slash_error_message = tool_result.get("message") or "Command failed"
+                        response_preview = message
 
-                        return {
+                        final_payload = {
                             "status": status,
                             "message": message,
                             "final_result": tool_result,
                             "results": {1: tool_result}
                         }
                     elif result.get("type") == "error":
-                        return {
+                        slash_error_message = result.get("content", "Command failed")
+                        response_preview = slash_error_message
+                        final_payload = {
                             "status": "error",
-                            "message": result.get("content", "Command failed"),
+                            "message": slash_error_message,
                             "final_result": {"error": True, "error_message": result.get("content")}
                         }
                     else:
+                        response_preview = result.get("content", str(result))
                         # Help or other types - return as is
-                        return {
+                        final_payload = {
                             "status": "success",
-                            "message": result.get("content", str(result)),
+                            "message": response_preview,
                             "final_result": result
                         }
-                return {
-                    "status": "success",
-                    "message": str(result),
-                    "final_result": result
-                }
+                else:
+                    response_preview = str(result)
+                    final_payload = {
+                        "status": "success",
+                        "message": response_preview,
+                        "final_result": result
+                    }
+
+                if plan_emitter:
+                    if slash_error_message:
+                        plan_emitter.fail("execute", slash_error_message)
+                    else:
+                        exec_preview = self._truncate_preview(
+                            response_preview,
+                            fallback=f"/{normalized_command or 'slash'} command executed",
+                        )
+                        plan_emitter.succeed("execute", preview=exec_preview)
+                        if plan_emitter.has_step("respond"):
+                            plan_emitter.start("respond")
+                            plan_emitter.succeed(
+                                "respond",
+                                preview=self._truncate_preview(
+                                    response_preview,
+                                    fallback="Response ready",
+                                ),
+                            )
+
+                return final_payload
 
         # Check for natural language explain commands
         user_request_lower = user_request.lower().strip()

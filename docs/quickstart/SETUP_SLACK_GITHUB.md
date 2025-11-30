@@ -120,6 +120,20 @@ GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234567890
 GITHUB_WEBHOOK_SECRET=your_generated_secret_here
 ```
 
+> **Heads up:** Older internal notes referenced a GitHub App (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`). Cerebros’ slash-git tooling no longer consumes those values—only a classic PAT (`GITHUB_TOKEN`) plus the optional webhook secret are required. Remove any unused GitHub App secrets from `.env` to avoid leaking credentials that the stack will never read.
+
+If you work with the synthetic Git dataset helper, keep the following alongside your PAT:
+
+```bash
+SYNTHETIC_GIT_BRANCH=synthetic-git-dataset         # optional override
+SYNTHETIC_GIT_BASE_BRANCH=main
+SYNTHETIC_GIT_REMOTE=https://<token>@github.com/<owner>/<repo>.git
+SYNTHETIC_GIT_REPO_OWNER=<owner>
+SYNTHETIC_GIT_REPO_NAME=<repo>
+```
+
+These flags are **only** used by `scripts/synthetic_git_dataset.py`; they have no effect on slash-git commands. If you do not push synthetic fixtures, you can delete them.
+
 ### Step 4: Configure GitHub Webhook (Local Testing with ngrok)
 
 For local development, you'll need ngrok to expose your local server:
@@ -345,6 +359,47 @@ github:
     - synchronize
     - reopened
 ```
+
+#### Vector + Graph Backends
+```yaml
+vectordb:
+  backend: "${VECTOR_BACKEND:-local}"   # local JSON or "qdrant"
+  url: "${QDRANT_URL:-http://localhost:6333}"
+  api_key: "${QDRANT_API_KEY:-}"
+  collection: "oqoqo_context"
+
+graph:
+  enabled: ${NEO4J_ENABLED:-false}
+  uri: "${NEO4J_URI:-bolt://localhost:7687}"
+  username: "${NEO4J_USERNAME:-neo4j}"
+  password: "${NEO4J_PASSWORD:-pass}"
+```
+
+Set `VECTOR_BACKEND=qdrant` when you want slash commands to hit a live Qdrant cluster instead of the local JSON snapshots. Likewise, export `NEO4J_ENABLED=true` (plus the URI/user/pass trio) before running `scripts/ingest_synthetic_graph.py` so the doc-drift reasoner can pull neighborhoods from Neo4j. If either backend is disabled or missing credentials, Cerebros automatically falls back to the local fixtures—just make sure you’ve run:
+
+```bash
+python scripts/build_vector_index.py --domain all
+python scripts/ingest_synthetic_graph.py
+```
+
+whenever you refresh the synthetic datasets.
+
+### Verify live backends
+
+Once `.env` contains your Qdrant + Neo4j credentials, you can sanity-check the full stack before launching Cerebros:
+
+```bash
+# 1) Ping Qdrant + Neo4j using the same config the app uses.
+python scripts/check_backends.py
+
+# 2) Rebuild the vector indexes (writes to Qdrant when VECTOR_BACKEND=qdrant).
+python scripts/build_vector_index.py --domain all
+
+# 3) Re-ingest the synthetic graph (writes to Neo4j when NEO4J_ENABLED=true).
+python scripts/ingest_synthetic_graph.py
+```
+
+The `check_backends.py` script exits with a non-zero status if an enabled backend is unreachable. The indexer/ingester commands now log which backend/collection they touch, so you can confirm the data really landed in Qdrant/Neo4j. After all three commands succeed, start the Cerebros API and run `/slack` or `/git` in the UI to exercise the live pipelines.
 
 #### Oqoqo / Activity Configuration
 ```yaml

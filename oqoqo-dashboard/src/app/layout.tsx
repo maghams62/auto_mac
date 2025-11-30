@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -21,7 +22,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground`}>
+      <body suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground`}>
+        <Script
+          id="strip-extension-attrs"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `(function(){function scrub(){try{var nodes=document.querySelectorAll('[bis_skin_checked],[bis_register]');nodes.forEach(function(node){node.removeAttribute('bis_skin_checked');node.removeAttribute('bis_register');});var body=document.body;if(body){Array.from(body.attributes).forEach(function(attr){if(attr.name.indexOf('__processed')===0){body.removeAttribute(attr.name);}});}}catch(e){}}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',scrub,{once:true});}else{scrub();}})();`,
+          }}
+        />
         <div className="noise-overlay" aria-hidden="true" />
         {children}
       </body>

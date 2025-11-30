@@ -113,6 +113,10 @@ class ConfigManager:
         self._verify_api_key()
         logger.info("[CONFIG MANAGER] Config reloaded from file")
         return self.config
+
+    def get_config_path(self) -> Path:
+        """Return the path to the active config file."""
+        return self.config_path
     
     def update_components(self, agent_registry_ref=None, agent_ref=None, orchestrator_ref=None):
         """

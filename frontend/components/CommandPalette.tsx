@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef, KeyboardEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, KeyboardEvent, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { getApiBaseUrl } from "@/lib/apiConfig";
@@ -11,14 +11,34 @@ import { isElectron, hideWindow, revealInFinder, lockWindow, unlockWindow, openE
 import SpotifyMiniPlayer from "@/components/SpotifyMiniPlayer";
 import RecordingIndicator from "@/components/RecordingIndicator";
 import TypingIndicator from "@/components/TypingIndicator";
-import PlanProgressRail from "@/components/PlanProgressRail";
 import BlueskyNotificationCard from "@/components/BlueskyNotificationCard";
 import LauncherHistoryPanel from "@/components/LauncherHistoryPanel";
 import SettingsModal from "@/components/SettingsModal";
+const HelpOverlay = lazy(() => import("@/components/HelpOverlay"));
+const KeyboardShortcutsOverlay = lazy(() => import("@/components/KeyboardShortcutsOverlay"));
 import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
 import { useWebSocket, Message, PlanState } from "@/lib/useWebSocket";
 import { useCommandRouter, CommandRouterContext } from "@/lib/useCommandRouter";
 import { isCalculation, evaluateCalculation, getRawResult } from "@/lib/useCalculator";
+import { spotlightUi, clampMiniConversationDepth } from "@/config/ui";
+import { getPaletteCommands, filterSlashCommands } from "@/lib/slashCommands";
+import { useGlobalEventBus } from "@/lib/telemetry";
+
+type HintPill = {
+  id: string;
+  icon: string;
+  label: string;
+  detail?: string;
+  tone?: "neutral" | "warning" | "success";
+};
+
+const hintPillToneClass: Record<NonNullable<HintPill["tone"]>, string> = {
+  neutral: "border-white/10 bg-white/5 text-white/70",
+  warning: "border-amber-400/40 bg-amber-400/10 text-amber-100",
+  success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-100",
+};
+const getHintPillClasses = (tone?: HintPill["tone"]) =>
+  tone ? hintPillToneClass[tone] : "border-white/10 bg-white/5 text-white/70";
 
 interface SearchResult {
   result_type: "document" | "image";
@@ -50,7 +70,41 @@ interface Command {
   endpoint?: string; // For spotify_control commands
   command_type?: "immediate" | "with_input"; // For slash commands
   placeholder?: string; // For slash commands with input
+  telemetryKey?: string;
 }
+
+const slashCommandFallback: Command[] = getPaletteCommands().map((cmd) => {
+  const normalizedId = cmd.command.replace(/^\//, "");
+  const fallbackKeywords = cmd.keywords && cmd.keywords.length > 0
+    ? cmd.keywords
+    : [normalizedId, cmd.label, cmd.description];
+
+  return {
+    id: normalizedId,
+    title: cmd.label,
+    description: cmd.description,
+    category: cmd.category || "Commands",
+    icon: cmd.emoji || cmd.icon || "⌘",
+    keywords: fallbackKeywords,
+    handler_type: "slash_command",
+    command_type: cmd.commandType || (cmd.kind === "chat" ? "with_input" : "immediate"),
+    placeholder: cmd.placeholder || "",
+    telemetryKey: cmd.telemetryKey,
+  };
+});
+
+const mergeWithSlashFallback = (apiCommands: Command[] = []): Command[] => {
+  const commandMap = new Map<string, Command>();
+  apiCommands.forEach((command) => {
+    commandMap.set(command.id, command);
+  });
+  slashCommandFallback.forEach((fallbackCommand) => {
+    if (!commandMap.has(fallbackCommand.id)) {
+      commandMap.set(fallbackCommand.id, fallbackCommand);
+    }
+  });
+  return Array.from(commandMap.values());
+};
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -62,13 +116,6 @@ interface CommandPaletteProps {
   source?: "files" | "folder";
   mode?: "overlay" | "launcher";
 }
-
-const MIN_MINI_CONVO_TURNS = 1;
-const MAX_MINI_CONVO_TURNS = 5;
-const DEFAULT_MINI_CONVO_TURNS = 2;
-
-const clampMiniConversationDepth = (value: number) =>
-  Math.min(Math.max(value, MIN_MINI_CONVO_TURNS), MAX_MINI_CONVO_TURNS);
 
 export default function CommandPalette({
   isOpen,
@@ -86,26 +133,123 @@ export default function CommandPalette({
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [commands, setCommands] = useState<Command[]>([]);
+  const [commands, setCommands] = useState<Command[]>(() => [...slashCommandFallback]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState<'closed' | 'loading' | 'previewing'>('closed');
   const [previewData, setPreviewData] = useState<SearchResult | null>(null);
-  const [showingResults, setShowingResults] = useState<"commands" | "files" | "both">("both");
+  const [showingResults, setShowingResults] = useState<"commands" | "files" | "both">("commands");
+  const [fileSearchActive, setFileSearchActive] = useState(false);
   
   // View state: "search" (default) or "command_input" (for command arguments)
   const [viewState, setViewState] = useState<"search" | "command_input">("search");
   const [selectedCommand, setSelectedCommand] = useState<Command | null>(null);
   const [commandArg, setCommandArg] = useState("");
+  const trimmedQuery = query.trim();
+  const slashModeActive = trimmedQuery.startsWith('/');
+  const slashQuery = slashModeActive ? trimmedQuery.slice(1).toLowerCase() : '';
+
+  useEffect(() => {
+    if (trimmedQuery === "/help") {
+      setShowHelpOverlay(true);
+      setQuery("");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [trimmedQuery]);
+
+  const slashCommandMap = useMemo(() => {
+    const map = new Map<string, Command>();
+    commands.forEach((cmd) => {
+      if (cmd.handler_type === "slash_command") {
+        map.set(cmd.id.toLowerCase(), cmd);
+      }
+    });
+    return map;
+  }, [commands]);
+
+  const canonicalSlashMatches = useMemo(() => {
+    if (!slashModeActive) {
+      return [];
+    }
+    return filterSlashCommands(slashQuery, "all");
+  }, [slashModeActive, slashQuery]);
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashModeActive) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const ordered: Command[] = [];
+
+    canonicalSlashMatches.forEach((definition) => {
+      const key = definition.command.replace(/^\//, "").toLowerCase();
+      const match = slashCommandMap.get(key);
+      if (match) {
+        ordered.push(match);
+        seen.add(key);
+      }
+    });
+
+    const extras = Array.from(slashCommandMap.entries())
+      .filter(([id]) => !seen.has(id))
+      .map(([, cmd]) => cmd)
+      .filter((cmd) => {
+        if (!slashQuery) return true;
+        const haystack = [
+          cmd.id,
+          cmd.title,
+          cmd.description,
+          ...(cmd.keywords || []),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(slashQuery);
+      });
+
+    return [...ordered, ...extras];
+  }, [slashModeActive, canonicalSlashMatches, slashCommandMap, slashQuery]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleHelpShortcuts = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "/" || e.key === "?")) {
+        e.preventDefault();
+        setShowHelpOverlay(true);
+        return;
+      }
+
+      if (
+        !e.metaKey &&
+        !e.ctrlKey &&
+        e.key === "?" &&
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA"
+      ) {
+        e.preventDefault();
+        setShowShortcutsOverlay(true);
+      }
+    };
+
+    document.addEventListener("keydown", handleHelpShortcuts);
+    return () => document.removeEventListener("keydown", handleHelpShortcuts);
+  }, [isOpen]);
 
   // Voice recording state (only in launcher mode)
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
-  const [miniConversationTurns, setMiniConversationTurns] = useState(DEFAULT_MINI_CONVO_TURNS);
+  const [miniConversationTurns, setMiniConversationTurns] = useState(
+    spotlightUi.miniConversation.defaultTurns
+  );
 
   // Settings modal state
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelpOverlay, setShowHelpOverlay] = useState(false);
+  const [showShortcutsOverlay, setShowShortcutsOverlay] = useState(false);
+  const eventBus = useGlobalEventBus();
 
   // Transcribe audio to text
   const transcribeAudio = useCallback(async (audioBlob: Blob) => {
@@ -209,12 +353,14 @@ export default function CommandPalette({
     sendCommand: wsSendCommand,
     planState,
     isConnected: wsConnected,
-    connectionState 
+    connectionState,
+    lastError
   } = useWebSocket(wsUrl);
 
   // State to track if history has been loaded for this session
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
+  const pendingSubmissionRef = useRef<string | null>(null);
 
   // Load conversation history on WebSocket connection
   const loadConversationHistory = useCallback(async () => {
@@ -288,6 +434,73 @@ export default function CommandPalette({
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentResponse, setCurrentResponse] = useState<string>("");
   const [submittedQuery, setSubmittedQuery] = useState<string>(""); // Track what was submitted
+  const [queuedSubmission, setQueuedSubmission] = useState<string | null>(null);
+  const [isWaitingForReconnect, setIsWaitingForReconnect] = useState(false);
+  const [connectionBanner, setConnectionBanner] = useState<{
+    level: "info" | "warning" | "error";
+    message: string;
+  } | null>(null);
+  const hintPills = useMemo<HintPill[]>(() => {
+    const basePills: HintPill[] = [];
+
+    if (slashModeActive) {
+      basePills.push({
+        id: "slash-mode",
+        icon: "/",
+        label: "Slash command",
+        detail: "Tab to autocomplete",
+      });
+    } else if (fileSearchActive) {
+      basePills.push({
+        id: "file-search",
+        icon: "⌘F",
+        label: "File search",
+        detail: "Press Enter to run",
+      });
+    } else {
+      basePills.push({
+        id: "ask",
+        icon: "↵",
+        label: "Ask Cerebros",
+        detail: trimmedQuery ? "Press Enter" : "Describe what you need",
+      });
+    }
+
+    basePills.push({
+      id: "help",
+      icon: "?",
+      label: "/help",
+      detail: "List commands",
+    });
+
+    if (isCalculation(trimmedQuery)) {
+      basePills.push({
+        id: "calc",
+        icon: "∑",
+        label: "Calculator",
+        detail: "Enter copies result",
+      });
+    }
+
+    const queuePill: HintPill | null =
+      isWaitingForReconnect || queuedSubmission
+        ? {
+            id: "queue",
+            icon: "🛰️",
+            label: isWaitingForReconnect ? "Waiting to reconnect" : "Queued for send",
+            detail: queuedSubmission || undefined,
+            tone: "warning",
+          }
+        : null;
+
+    const trimmedBase = basePills.slice(0, 3);
+    return queuePill ? [...trimmedBase, queuePill] : trimmedBase;
+  }, [slashModeActive, fileSearchActive, trimmedQuery, isWaitingForReconnect, queuedSubmission]);
+  const showResponseSurface = isProcessing || currentResponse || planState || isWaitingForReconnect;
+  const helpHint = hintPills.find((pill) => pill.id === "help");
+  const nonHelpHints = hintPills.filter((pill) => pill.id !== "help");
+  const primaryHint = nonHelpHints[0];
+  const secondaryHints = nonHelpHints.slice(1);
 
   // Watch for new assistant messages
   useEffect(() => {
@@ -349,6 +562,56 @@ export default function CommandPalette({
     }
   }, [wsConnected, connectionState, mode, wsUrl]);
 
+  // Surface connection state in UI so commands never fail silently
+  useEffect(() => {
+    if (!wsUrl) {
+      setConnectionBanner(null);
+      return;
+    }
+
+    if (wsConnected) {
+      setConnectionBanner(null);
+      return;
+    }
+
+    if (connectionState === "reconnecting") {
+      setConnectionBanner({
+        level: "warning",
+        message: "Reconnecting to Cerebros backend..."
+      });
+    } else if (connectionState === "error") {
+      setConnectionBanner({
+        level: "error",
+        message: lastError || "Lost connection to Cerebros. Ensure python api_server.py is running."
+      });
+    } else {
+      setConnectionBanner({
+        level: "info",
+        message: "Connecting to Cerebros backend..."
+      });
+    }
+  }, [wsConnected, connectionState, lastError, wsUrl]);
+
+  // Automatically flush queued submissions once the socket reconnects
+  useEffect(() => {
+    if (!wsConnected || !pendingSubmissionRef.current) {
+      return;
+    }
+
+    const pending = pendingSubmissionRef.current;
+    pendingSubmissionRef.current = null;
+    setQueuedSubmission(null);
+    setIsWaitingForReconnect(false);
+
+    logger.info("[LAUNCHER] Flushing queued submission after reconnect", { query: pending });
+
+    lockWindow();
+    setIsProcessing(true);
+    setCurrentResponse("");
+    setSubmittedQuery(pending);
+    wsSendMessage(pending);
+  }, [wsConnected, wsSendMessage]);
+
   // Log plan state changes (orchestration visibility)
   useEffect(() => {
     if (mode === "launcher" && planState) {
@@ -371,8 +634,8 @@ export default function CommandPalette({
       return;
     }
     
-    const trimmedQuery = query.trim();
-    logger.info("[LAUNCHER] Submitting query", { query: trimmedQuery, timestamp: Date.now() });
+    const submission = trimmedQuery;
+    logger.info("[LAUNCHER] Submitting query", { query: submission, timestamp: Date.now() });
     
     // Lock window visibility to prevent blur from hiding during processing
     lockWindow();
@@ -386,7 +649,7 @@ export default function CommandPalette({
     };
     
     // Try deterministic routing first
-    const routeResult = await routeCommand(trimmedQuery, routerContext);
+    const routeResult = await routeCommand(submission, routerContext);
     
     if (routeResult.handled) {
       logger.info("[LAUNCHER] Command handled by deterministic router", { 
@@ -414,10 +677,11 @@ export default function CommandPalette({
         return;
       }
       
-      if (routeResult.action === "help" && routeResult.response) {
-        // Show help locally
-        setCurrentResponse(routeResult.response);
-        setSubmittedQuery(trimmedQuery);
+      if (routeResult.action === "help") {
+        setShowHelpOverlay(true);
+        setQuery("");
+        setCurrentResponse("");
+        setSubmittedQuery("");
         unlockWindow();
         return;
       }
@@ -433,7 +697,7 @@ export default function CommandPalette({
       // For "open app" actions, show feedback
       if (routeResult.action === "open_app" && routeResult.response) {
         setCurrentResponse(routeResult.response);
-        setSubmittedQuery(trimmedQuery);
+        setSubmittedQuery(submission);
         setQuery("");
         unlockWindow();
         return;
@@ -442,7 +706,7 @@ export default function CommandPalette({
       // For Spotify actions, show feedback
       if (routeResult.action?.startsWith("spotify_") && routeResult.response) {
         setCurrentResponse(routeResult.response);
-        setSubmittedQuery(trimmedQuery);
+        setSubmittedQuery(submission);
         unlockWindow();
         return;
       }
@@ -453,17 +717,22 @@ export default function CommandPalette({
     
     // Not deterministically routed - send to LLM via WebSocket
     if (!wsConnected) {
-      logger.warn("[LAUNCHER] Cannot submit - WebSocket not connected", { state: connectionState });
+      logger.warn("[LAUNCHER] Cannot submit - WebSocket not connected, queuing request", { state: connectionState });
+      pendingSubmissionRef.current = submission;
+      setQueuedSubmission(submission);
+      setIsWaitingForReconnect(true);
+      setSubmittedQuery(submission);
+      setCurrentResponse("");
       unlockWindow();
       return;
     }
     
     setIsProcessing(true);
     setCurrentResponse("");
-    setSubmittedQuery(trimmedQuery); // Track what was submitted
-    wsSendMessage(trimmedQuery);
+    setSubmittedQuery(submission); // Track what was submitted
+    wsSendMessage(submission);
     // Don't clear query - let user see what they typed
-  }, [query, wsConnected, connectionState, wsSendMessage, wsSendCommand, routeCommand, planState, isRecording, handleStopRecording]);
+  }, [query, trimmedQuery, wsConnected, connectionState, wsSendMessage, wsSendCommand, routeCommand, planState, isRecording, handleStopRecording]);
 
   // Notify parent about the input ref for focus management
   useEffect(() => {
@@ -565,6 +834,11 @@ export default function CommandPalette({
           : `/${command.id}`;
         
       logger.info("[LAUNCHER] Executing slash command via WebSocket", { command: command.id, message: slashMessage });
+      eventBus?.emit("slash-command-used", {
+        command: command.telemetryKey || command.id,
+        invocation_source: "launcher_palette",
+        query: argument || ""
+      });
       setIsProcessing(true);
       setCurrentResponse("");
       wsSendMessage(slashMessage);
@@ -583,7 +857,7 @@ export default function CommandPalette({
     setCurrentResponse("");
     wsSendMessage(message);
     
-  }, [query, baseUrl, viewState, wsSendMessage]);
+  }, [query, baseUrl, wsSendMessage]);
 
   // Handle command argument submission
   const handleCommandArgSubmit = useCallback(() => {
@@ -647,22 +921,17 @@ export default function CommandPalette({
     }
   }, [baseUrl]);
 
+  const isFileCommand = /^\/(file|folder|files)\b/i.test(trimmedQuery);
+
   // Debounced search effect - only trigger for file commands or overlay mode
   useEffect(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    // Only trigger file search for:
-    // 1. Overlay mode (file browser)
-    // 2. Explicit file commands (/file, /folder, /files)
-    const isFileCommand = query.startsWith('/file') || query.startsWith('/folder') || query.startsWith('/files');
-    
-    const slashCommandActive = query.startsWith('/');
-
     const shouldSearch = (() => {
       if (mode === "overlay") {
-        if (slashCommandActive && !isFileCommand) {
+        if (slashModeActive && !isFileCommand) {
           logger.debug("[COMMAND PALETTE] Suppressing semantic search for slash command", { query });
           return false;
         }
@@ -672,17 +941,20 @@ export default function CommandPalette({
     })();
 
     if (shouldSearch) {
+      setFileSearchActive(true);
+      setShowingResults(mode === "overlay" ? "both" : "files");
+
       const timer = setTimeout(() => {
-        // Strip the command prefix for file searches
-        const searchQuery = isFileCommand 
+        const searchQuery = isFileCommand
           ? query.replace(/^\/(file|folder|files)\s*/, '').trim()
           : query;
-        performSearch(searchQuery || query); // Use original if stripped is empty
+        performSearch(searchQuery || query);
       }, 200);
 
       debounceTimerRef.current = timer;
     } else {
-      // Clear file results for regular chat queries when search is suppressed
+      setFileSearchActive(false);
+      setShowingResults("commands");
       setResults([]);
     }
 
@@ -691,7 +963,7 @@ export default function CommandPalette({
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [mode, performSearch, query]); // Added mode to deps
+  }, [mode, performSearch, query, isFileCommand, slashModeActive]);
 
   // Fetch commands on mount
   useEffect(() => {
@@ -700,8 +972,9 @@ export default function CommandPalette({
         const response = await fetch(`${baseUrl}/api/commands`);
         if (response.ok) {
           const data = await response.json();
-          setCommands(data.commands || []);
-          logger.info("[COMMAND PALETTE] Commands loaded", { count: data.commands?.length });
+          const mergedCommands = mergeWithSlashFallback(data.commands || []);
+          setCommands(mergedCommands);
+          logger.info("[COMMAND PALETTE] Commands loaded", { count: mergedCommands.length });
         }
       } catch (error) {
         console.error('Error fetching commands:', error);
@@ -736,7 +1009,7 @@ export default function CommandPalette({
     }
 
     if (!isElectron()) {
-      setMiniConversationTurns(DEFAULT_MINI_CONVO_TURNS);
+      setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
       return;
     }
 
@@ -748,12 +1021,12 @@ export default function CommandPalette({
         if (!loaded || isCancelled) return;
         setMiniConversationTurns(
           clampMiniConversationDepth(
-            loaded.miniConversationDepth ?? DEFAULT_MINI_CONVO_TURNS
+            loaded.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
           )
         );
       } catch (error) {
         logger.error("[COMMAND PALETTE] Failed to load mini conversation depth", { error });
-        setMiniConversationTurns(DEFAULT_MINI_CONVO_TURNS);
+        setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
       }
     };
 
@@ -764,42 +1037,27 @@ export default function CommandPalette({
     };
   }, [isOpen]);
 
-  // Detect if user is typing a slash command
-  const isSlashMode = query.startsWith('/');
-  const slashQuery = isSlashMode ? query.slice(1).toLowerCase() : '';
-
   // Filter commands based on query - prioritize slash commands when typing /
   const filteredCommands = useMemo(() => {
-    if (!query.trim()) {
-      // Show top 5 when no query, but exclude spotify_control commands
-      return commands.filter(cmd => cmd.handler_type !== 'spotify_control').slice(0, 5);
+    if (slashModeActive) {
+      return filteredSlashCommands;
     }
 
-    // Slash command mode: show only slash commands that match
-    if (isSlashMode) {
-      const slashCommands = commands.filter(cmd => cmd.handler_type === "slash_command");
-      if (!slashQuery) {
-        // Just "/" typed - show all slash commands
-        return slashCommands;
-      }
-      // Filter by the text after "/"
-      return slashCommands.filter(cmd =>
-        cmd.id.toLowerCase().includes(slashQuery) ||
-        cmd.title.toLowerCase().includes(slashQuery) ||
-        cmd.keywords.some(kw => kw.toLowerCase().includes(slashQuery))
-      );
+    if (!query.trim()) {
+      // Show all non-Spotify commands when idle (sorted later by render order)
+      return commands.filter(cmd => cmd.handler_type !== 'spotify_control');
     }
 
     const lowerQuery = query.toLowerCase();
     return commands.filter(cmd =>
-      cmd.handler_type !== 'spotify_control' && ( // Exclude Spotify control commands
+      cmd.handler_type !== 'spotify_control' && (
         cmd.title.toLowerCase().includes(lowerQuery) ||
         cmd.description.toLowerCase().includes(lowerQuery) ||
         cmd.keywords.some(kw => kw.toLowerCase().includes(lowerQuery)) ||
         cmd.category.toLowerCase().includes(lowerQuery)
       )
     );
-  }, [query, commands, isSlashMode, slashQuery]);
+  }, [commands, filteredSlashCommands, query, slashModeActive]);
 
   // Combined results for keyboard navigation
   const allItems = useMemo(() => {
@@ -919,6 +1177,25 @@ export default function CommandPalette({
     />
   );
 
+  const overlayElements = (
+    <>
+      {settingsModalElement}
+      {showHelpOverlay && (
+        <Suspense fallback={null}>
+          <HelpOverlay isOpen={showHelpOverlay} onClose={() => setShowHelpOverlay(false)} />
+        </Suspense>
+      )}
+      {showShortcutsOverlay && (
+        <Suspense fallback={null}>
+          <KeyboardShortcutsOverlay
+            isOpen={showShortcutsOverlay}
+            onClose={() => setShowShortcutsOverlay(false)}
+          />
+        </Suspense>
+      )}
+    </>
+  );
+
   const slackTemplates = [
     { label: "Summarize #backend (24h)", value: "summarize #backend last 24 hours" },
     { label: "Decisions about onboarding", value: "decisions about onboarding flow this week" },
@@ -953,13 +1230,13 @@ export default function CommandPalette({
     );
   };
 
-  if (!isOpen) return settingsModalElement;
+  if (!isOpen) return overlayElements;
 
   if (mode === "launcher") {
     // Launcher mode: full window, embedded Spotify
     return (
       <>
-      {settingsModalElement}
+      {overlayElements}
       <div className="h-screen w-full flex flex-col bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900">
         <div className="flex-1 flex items-center justify-center px-8 py-12">
           <motion.div
@@ -1043,7 +1320,7 @@ export default function CommandPalette({
                       onChange={(e) => setQuery(e.target.value)}
                       onKeyDown={(e) => {
                         // Handle Tab to autocomplete slash command
-                        if (e.key === "Tab" && isSlashMode && filteredCommands.length > 0) {
+                        if (e.key === "Tab" && slashModeActive && filteredCommands.length > 0) {
                           e.preventDefault();
                           const firstCmd = filteredCommands[0];
                           setQuery(`/${firstCmd.id} `);
@@ -1148,14 +1425,92 @@ export default function CommandPalette({
                   </div>
                 </div>
 
+              {(primaryHint || secondaryHints.length > 0 || helpHint) && (
+                <div className="px-4 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {primaryHint && (
+                        <div
+                          key={primaryHint.id}
+                          className={cn(
+                            "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium tracking-tight",
+                            getHintPillClasses(primaryHint.tone || "neutral")
+                          )}
+                        >
+                          <span className="text-sm">{primaryHint.icon}</span>
+                          <span className="text-white">{primaryHint.label}</span>
+                          {primaryHint.detail && (
+                            <span className="text-white/70 text-xs font-normal">
+                              {primaryHint.detail}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {secondaryHints.map((pill) => (
+                        <div
+                          key={pill.id}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide",
+                            getHintPillClasses(pill.tone || "neutral")
+                          )}
+                        >
+                          <span className="text-xs">{pill.icon}</span>
+                          <span className="text-white/80">{pill.label}</span>
+                          {pill.detail && (
+                            <span className="text-white/60 lowercase normal-case">
+                              {pill.detail}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {helpHint && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowHelpOverlay(true);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-white/15 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/80 hover:border-white/40 hover:text-white transition-colors"
+                      >
+                        <span className="text-sm">{helpHint.icon}</span>
+                        <span>{helpHint.label}</span>
+                        {helpHint.detail && (
+                          <span className="text-white/60 normal-case font-normal">
+                            {helpHint.detail}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
                 {/* Spotify Mini Player - portrait card widget (Raycast-style) */}
                 <div className="px-4 pt-3 pb-3">
                   <SpotifyMiniPlayer variant="launcher-mini" />
                 </div>
 
+                {connectionBanner && (
+                  <div
+                    className={cn(
+                      "px-4 py-2 border-y border-glass/20 text-xs font-medium flex items-center gap-2",
+                      connectionBanner.level === "error"
+                        ? "bg-red-500/10 text-red-200 border-red-500/30"
+                        : connectionBanner.level === "warning"
+                        ? "bg-amber-500/10 text-amber-100 border-amber-500/30"
+                        : "bg-blue-500/10 text-blue-100 border-blue-500/30"
+                    )}
+                  >
+                    <span>🛰️</span>
+                    <span>{connectionBanner.message}</span>
+                  </div>
+                )}
+
                 {/* Response Area - shows immediately below Spotify when processing or has response */}
                 <AnimatePresence>
-                  {(isProcessing || currentResponse || planState) && (
+                  {showResponseSurface && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -1233,7 +1588,26 @@ export default function CommandPalette({
                           </div>
                         )}
                         
-                        {isProcessing && !currentResponse ? (
+                        {isWaitingForReconnect && (
+                          <div className="flex flex-col gap-1 py-2 text-sm text-amber-200">
+                            <div className="flex items-center gap-2">
+                              <motion.span
+                                animate={{ opacity: [0.4, 1, 0.4] }}
+                                transition={{ duration: 1.5, repeat: Infinity }}
+                              >
+                                🛰️
+                              </motion.span>
+                              <span>Waiting for Cerebros to reconnect...</span>
+                            </div>
+                            {queuedSubmission && (
+                              <span className="text-xs text-amber-200/80">
+                                Queued: {queuedSubmission}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {isProcessing && !currentResponse && !isWaitingForReconnect ? (
                           <div className="flex items-center gap-2 py-2">
                             <TypingIndicator />
                             <span className="text-sm text-text-muted animate-pulse">Thinking...</span>
@@ -1289,16 +1663,24 @@ export default function CommandPalette({
                   </motion.div>
                 )}
 
-                {allItems.length === 0 && !isLoading && query && !isSlashMode && !isCalculation(query) && (
+                {fileSearchActive && results.length === 0 && !isLoading && (
                   <div className="p-8 text-center text-text-muted">
                     <div className="text-4xl mb-2">📭</div>
-                    <p>No results match &quot;{query}&quot;</p>
+                    <p>No files match &quot;{trimmedQuery.replace(/^\/(file|folder|files)\s*/, '')}&quot;</p>
                     <p className="text-sm mt-1">Try different keywords</p>
                   </div>
                 )}
 
+                {!fileSearchActive && filteredCommands.length === 0 && !isLoading && trimmedQuery && !slashModeActive && !isCalculation(trimmedQuery) && (
+                  <div className="p-8 text-center text-text-muted">
+                    <div className="text-4xl mb-2">⌨️</div>
+                    <p>Press Enter to ask Cerebros</p>
+                    <p className="text-sm mt-1">Use /files for semantic file search</p>
+                  </div>
+                )}
+
                 {/* Slash Command Autocomplete Dropdown */}
-                {isSlashMode && filteredCommands.length > 0 && (
+                {slashModeActive && filteredCommands.length > 0 && (
                   <div className="border-b border-glass/30">
                     <div className="px-4 py-2 text-xs font-medium text-accent-primary uppercase tracking-wide flex items-center gap-2">
                       <span>/</span>
@@ -1345,7 +1727,7 @@ export default function CommandPalette({
                 )}
 
                 {/* Slash mode - no commands found */}
-                {isSlashMode && filteredCommands.length === 0 && slashQuery && (
+                {slashModeActive && filteredCommands.length === 0 && slashQuery && (
                   <div className="p-6 text-center text-text-muted">
                     <div className="text-2xl mb-2">🔍</div>
                     <p>No command matches &quot;/{slashQuery}&quot;</p>
@@ -1354,7 +1736,7 @@ export default function CommandPalette({
                 )}
 
                 {/* Show commands section (non-slash mode) - Raycast-style Actions */}
-                {!isSlashMode && filteredCommands.length > 0 && (
+                {!slashModeActive && filteredCommands.length > 0 && (
                   <div className="border-b border-glass/30">
                     <div className="px-4 py-2 text-xs font-semibold text-accent-primary/80 uppercase tracking-wider flex items-center gap-2">
                       <span>⚡</span>
@@ -1409,30 +1791,25 @@ export default function CommandPalette({
 
               {/* Conversation History Panel */}
               {chatMessages.length > 0 && (
-                <LauncherHistoryPanel
-                  messages={chatMessages}
-                  planState={planState}
-                  isProcessing={isProcessing}
-                  maxHeight={150}
-                  maxTurns={miniConversationTurns}
-                  onExpand={() => {
-                    logger.info("[LAUNCHER] Expand to desktop view requested");
-                    openExpandedWindow();
-                  }}
-                />
+                <div className="mt-4">
+                  <LauncherHistoryPanel
+                    messages={chatMessages}
+                    planState={planState}
+                    isProcessing={isProcessing}
+                    maxHeight={spotlightUi.historyPanel.maxHeight}
+                    maxTurns={miniConversationTurns}
+                  />
+                </div>
               )}
 
               {/* Footer with keyboard hints */}
-              <div className="p-3 border-t border-glass bg-glass-elevated/50">
-                <div className="flex items-center justify-between text-xs text-text-muted">
+              <div className="px-4 py-3 border-t border-glass/20 bg-glass/15">
+                <div className="flex items-center justify-between text-xs text-white/60">
                   <div className="flex items-center gap-4">
-                    <span>↑↓ Navigate</span>
                     <span>↵ Submit</span>
                     <span>Esc Close</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span>⌘+Option+K</span>
-                  </div>
+                  <span className="text-white/40">Spotlight</span>
                 </div>
               </div>
             </div>
@@ -1487,7 +1864,7 @@ export default function CommandPalette({
   // Overlay mode (original behavior)
   return (
     <>
-    {settingsModalElement}
+    {overlayElements}
     <AnimatePresence>
       <motion.div
         initial="hidden"

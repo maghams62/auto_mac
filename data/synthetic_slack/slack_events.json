@@ -674,6 +674,85 @@
     ]
   },
   {
+    "id": "slack_message:#notifications:1764157200.00000",
+    "source_type": "slack_message",
+    "workspace": "acme",
+    "channel": "#notifications",
+    "channel_id": "C123NOTIFY",
+    "thread_ts": "1764156600.00000",
+    "message_ts": "1764157200.00000",
+    "user": "eve",
+    "timestamp": "2025-11-26T11:40:00+00:00",
+    "text_raw": "[Docs alert] `docs/notification_playbook.md` still describes `/v1/notifications/send` without `template_version`. Need updated contract so graph ingest has the right metadata.",
+    "service_ids": [
+      "docs-portal",
+      "notifications-service"
+    ],
+    "component_ids": [
+      "docs.notifications",
+      "notifications.dispatch"
+    ],
+    "related_apis": [
+      "/v1/notifications/send"
+    ],
+    "labels": [
+      "doc_drift",
+      "doc_alert"
+    ]
+  },
+  {
+    "id": "slack_message:#notifications:1764157380.00000",
+    "source_type": "slack_message",
+    "workspace": "acme",
+    "channel": "#notifications",
+    "channel_id": "C123NOTIFY",
+    "thread_ts": "1764156600.00000",
+    "message_ts": "1764157380.00000",
+    "user": "dave",
+    "timestamp": "2025-11-26T11:43:00+00:00",
+    "text_raw": "Shipped PR 142 this morning\u2014`send_notification` now requires `template_version` and we log it for compliance. Docs still untouched.",
+    "service_ids": [
+      "notifications-service"
+    ],
+    "component_ids": [
+      "notifications.dispatch"
+    ],
+    "related_apis": [
+      "/v1/notifications/send"
+    ],
+    "labels": [
+      "doc_drift",
+      "api_change"
+    ]
+  },
+  {
+    "id": "slack_message:#notifications:1764157500.00000",
+    "source_type": "slack_message",
+    "workspace": "acme",
+    "channel": "#notifications",
+    "channel_id": "C123NOTIFY",
+    "thread_ts": "1764156600.00000",
+    "message_ts": "1764157500.00000",
+    "user": "alice",
+    "timestamp": "2025-11-26T11:45:00+00:00",
+    "text_raw": "I'll sync with docs after lunch\u2014need to update both the portal and `docs/notification_playbook.md` so slash summaries keep the topology straight.",
+    "service_ids": [
+      "core-api-service",
+      "docs-portal"
+    ],
+    "component_ids": [
+      "core.payments",
+      "docs.notifications"
+    ],
+    "related_apis": [
+      "/v1/notifications/send"
+    ],
+    "labels": [
+      "doc_drift",
+      "coordination"
+    ]
+  },
+  {
     "id": "slack_thread:#notifications:1764156600.00000",
     "source_type": "slack_thread_summary",
     "workspace": "acme",
@@ -683,21 +762,24 @@
     "message_ts": "1764156960.00000",
     "timestamp": "2025-11-26T11:36:00+00:00",
     "start_timestamp": "2025-11-26T11:30:00+00:00",
-    "end_timestamp": "2025-11-26T11:36:00+00:00",
-    "text_raw": "Lightweight notifications thread confirming /v1/notifications/send is unaffected by the vat_code rollout but monitoring remains in place.",
+    "end_timestamp": "2025-11-26T11:45:00+00:00",
+    "text_raw": "Notifications thread starts as a status check, then Eve raises a docs alert that `/v1/notifications/send` now needs `template_version`. Dave links PR 142, Alice volunteers to coordinate doc fixes so graph ingest sees the right metadata.",
     "service_ids": [
       "notifications-service",
-      "core-api-service"
+      "core-api-service",
+      "docs-portal"
     ],
     "component_ids": [
       "notifications.dispatch",
-      "core.payments"
+      "core.payments",
+      "docs.notifications"
     ],
     "related_apis": [
       "/v1/notifications/send"
     ],
     "labels": [
-      "status_update"
+      "status_update",
+      "doc_drift_summary"
     ]
   },
   {

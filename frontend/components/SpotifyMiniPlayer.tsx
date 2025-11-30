@@ -51,31 +51,7 @@ const SKELETON_VARIANTS = new Set<SpotifyVariant>([
   "launcher-expanded",
   "launcher-mini",
 ]);
-const SPOTIFY_EMBED_BASE_URL = "https://open.spotify.com/embed";
-
-function buildSpotifyEmbedUrl(uri?: string): string | null {
-  if (!uri) {
-    return null;
-  }
-
-  const segments = uri.split(':');
-  if (segments.length < 3) {
-    return null;
-  }
-
-  const [, resourceType, ...rest] = segments;
-  const resourceId = rest.join(':');
-
-  if (!resourceType || !resourceId) {
-    return null;
-  }
-
-  const encodedType = encodeURIComponent(resourceType);
-  const encodedId = encodeURIComponent(resourceId);
-
-  return `${SPOTIFY_EMBED_BASE_URL}/${encodedType}/${encodedId}?utm_source=cerebro&theme=0`;
-}
-
+const LAST_TRACK_FALLBACK_WINDOW_MS = 90_000; // 90 seconds of cached playback
 function SpotifySkeleton({ variant, collapsed }: { variant: SpotifyVariant; collapsed?: boolean }) {
   if (variant === "launcher-expanded") {
     return (
@@ -213,7 +189,7 @@ function SpotifySkeleton({ variant, collapsed }: { variant: SpotifyVariant; coll
           <div className="mt-1.5 h-1 bg-white/20 rounded-full overflow-hidden">
             <motion.div
               className="h-full bg-[#1DB954] rounded-full"
-              style={{ width: `${progress}%` }}
+              style={{ width: "60%" }}
             />
           </div>
         </div>
@@ -236,7 +212,7 @@ export default function SpotifyMiniPlayer({
   const [isLoading, setIsLoading] = useState(true);
   const [lastKnownTrack, setLastKnownTrack] = useState<SpotifyStatus["item"] | null>(null);
   const [lastKnownStatus, setLastKnownStatus] = useState<SpotifyStatus | null>(null);
-  const [missingItemCount, setMissingItemCount] = useState(0);
+  const [lastPlaybackSeenAt, setLastPlaybackSeenAt] = useState<number | null>(null);
   const apiBaseUrl = getApiBaseUrl();
   const eventBus = useGlobalEventBus();
 
@@ -266,9 +242,17 @@ export default function SpotifyMiniPlayer({
         if (statusData.item) {
           setLastKnownTrack(statusData.item);
           setLastKnownStatus(statusData);
-          setMissingItemCount(0);
+          setLastPlaybackSeenAt(Date.now());
         } else {
-          setMissingItemCount(prev => Math.min(prev + 1, 5));
+          setLastKnownStatus(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              is_playing: typeof statusData.is_playing === "boolean" ? statusData.is_playing : prev.is_playing,
+              device: statusData.device ?? prev.device,
+              progress_ms: typeof statusData.progress_ms === "number" ? statusData.progress_ms : prev.progress_ms,
+            };
+          });
         }
         setIsAuthenticated(true);
       } else if (response.status === 401) {
@@ -277,7 +261,7 @@ export default function SpotifyMiniPlayer({
         setStatus(null);
         setLastKnownTrack(null);
         setLastKnownStatus(null);
-        setMissingItemCount(0);
+        setLastPlaybackSeenAt(null);
       }
     } catch (error) {
       logger.error("[SPOTIFY-MINI-PLAYER] Failed to fetch Spotify status:", error);
@@ -322,6 +306,20 @@ export default function SpotifyMiniPlayer({
       window.removeEventListener('spotify:playback_update', handleWebSocketUpdate as EventListener);
     };
   }, [fetchStatus, eventBus]);
+
+  // Drop fallback data if it stays stale for too long
+  useEffect(() => {
+    if (!lastPlaybackSeenAt || status?.item) {
+      return;
+    }
+    if (Date.now() - lastPlaybackSeenAt < LAST_TRACK_FALLBACK_WINDOW_MS) {
+      return;
+    }
+    logger.info("[SPOTIFY-MINI-PLAYER] Fallback window expired; clearing cached track");
+    setLastKnownTrack(null);
+    setLastKnownStatus(null);
+    setLastPlaybackSeenAt(null);
+  }, [status, lastPlaybackSeenAt]);
 
   // Spotify controls - Note: We intentionally DON'T call onAction() here
   // to keep the launcher window open during Spotify interaction
@@ -450,9 +448,27 @@ export default function SpotifyMiniPlayer({
     );
   }
 
-  const shouldUseFallbackTrack = !status?.item && !!lastKnownTrack && missingItemCount < 3;
+  const fallbackAgeMs = lastPlaybackSeenAt ? Date.now() - lastPlaybackSeenAt : Number.POSITIVE_INFINITY;
+  const shouldUseFallbackTrack =
+    !status?.item && !!lastKnownTrack && fallbackAgeMs < LAST_TRACK_FALLBACK_WINDOW_MS;
   const trackCandidate = status?.item ?? (shouldUseFallbackTrack ? lastKnownTrack : null);
-  const playbackStatus = (status?.item ? status : (shouldUseFallbackTrack ? lastKnownStatus : status)) ?? lastKnownStatus ?? status;
+  const playbackStatus = status?.item
+    ? status
+    : shouldUseFallbackTrack && lastKnownStatus
+    ? {
+        ...lastKnownStatus,
+        is_playing:
+          typeof status?.is_playing === "boolean"
+            ? status.is_playing
+            : lastKnownStatus.is_playing,
+        device: status?.device ?? lastKnownStatus.device,
+        progress_ms:
+          typeof status?.progress_ms === "number"
+            ? status.progress_ms
+            : lastKnownStatus.progress_ms,
+      }
+    : lastKnownStatus ?? status;
+  const isUsingFallbackData = shouldUseFallbackTrack && !status?.item;
 
   // No active playback
   if (!trackCandidate || !playbackStatus) {
@@ -734,40 +750,45 @@ export default function SpotifyMiniPlayer({
     );
   }
 
-  // Launcher mini variant - use embedded Spotify player when available
+  // Launcher mini variant - Raycast-style horizontal widget
   if (variant === "launcher-mini") {
-    const embedSrc = isElectronRuntime && isAuthenticated ? buildSpotifyEmbedUrl(track.uri) : null;
-
-    if (embedSrc) {
-      return (
-        <motion.div
-          className="relative w-full rounded-2xl overflow-hidden border border-white/15 bg-black/60 backdrop-blur-2xl shadow-2xl"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <webview
-            key={embedSrc}
-            src={embedSrc}
-            allowpopups="true"
-            partition="persist:spotifyEmbed"
-            className="h-[152px] w-full border-0"
-            style={{ backgroundColor: "transparent" }}
-          />
-          <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-white/5" />
-        </motion.div>
-      );
-    }
+    const playbackStateLabel = playbackStatus.is_playing ? "Playing" : "Paused";
+    const playbackStatePillClass = playbackStatus.is_playing
+      ? "text-emerald-200 border-emerald-400/40 bg-emerald-400/10"
+      : "text-amber-200 border-amber-300/40 bg-amber-400/5";
 
     return (
       <motion.div
-        className="relative w-full min-h-[84px] bg-black/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden"
+        className="relative w-full min-h-[96px] bg-black/90 backdrop-blur-2xl rounded-2xl shadow-2xl overflow-hidden border border-white/10"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
+        {/* Header */}
+        <div className="px-4 pt-3 pb-1 flex items-center justify-between text-[11px] text-white/60 uppercase tracking-wide">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-[#1DB954]" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+            </svg>
+            <span className="text-white font-semibold tracking-[0.2em] text-[10px]">Spotify</span>
+            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${playbackStatePillClass}`}>
+              {playbackStateLabel}
+            </span>
+          </div>
+          {isUsingFallbackData && (
+            <motion.span
+              className="text-[10px] text-amber-200 flex items-center gap-1"
+              animate={{ opacity: [0.4, 1, 0.4] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+              Syncing
+            </motion.span>
+          )}
+        </div>
+
         {/* Main content - horizontal layout */}
-        <div className="flex items-center gap-3 p-4">
+        <div className="flex items-center gap-3 px-4 py-3">
           {/* Album Art - Small square */}
           <motion.img
             key={`${albumArtKey}-mini`}
@@ -837,6 +858,41 @@ export default function SpotifyMiniPlayer({
               </svg>
             </motion.button>
           </div>
+        </div>
+
+        <div className="px-4 pb-3">
+          <div className="flex items-center gap-2 text-[10px] text-white/50 font-mono mb-1">
+            <span className="w-8 text-left">{formatTime(playbackStatus.progress_ms)}</span>
+            <span className="flex-1 text-center uppercase tracking-[0.2em] text-white/30">
+              {playbackStatus.is_playing ? "Playing" : "Paused"}
+            </span>
+            <span className="w-8 text-right">{formatTime(track.duration_ms)}</span>
+          </div>
+          <div className="h-1 bg-white/15 rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-[#1DB954] rounded-full"
+              initial={{ width: `${progress}%` }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 1, ease: "linear" }}
+            />
+          </div>
+          {isUsingFallbackData ? (
+            <div className="mt-1.5 text-[10px] text-amber-200 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+              Waiting for Spotify to resync…
+            </div>
+          ) : (
+            playbackStatus.device && (
+              <div className="mt-1.5 text-[10px] text-white/40 flex items-center gap-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                </svg>
+                <span className="truncate">
+                  {playbackStatus.device.name}
+                </span>
+              </div>
+            )
+          )}
         </div>
       </motion.div>
     );

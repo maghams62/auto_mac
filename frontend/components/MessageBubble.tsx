@@ -244,6 +244,19 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     }
   }, [isAssistant, message.timestamp, message.message, message.completion_event, deliveryStatus, addToast]);
 
+  const normalizedStatus = (message.status || "").toLowerCase();
+  const hasStatusMessage = Boolean(message.message && message.message.trim().length > 0);
+  const isSkippableStatus =
+    isStatus &&
+    !hasStatusMessage &&
+    (normalizedStatus === "complete" || normalizedStatus === "idle");
+  const shouldShowStatusChip =
+    isStatus && Boolean(message.status) && ["processing", "thinking", "cancelling"].includes(normalizedStatus);
+
+  if (isSkippableStatus) {
+    return null;
+  }
+
   return (
     <motion.div
       className={cn("flex w-full mb-2 group", isUser ? "justify-end" : "justify-start")}
@@ -427,7 +440,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
         )}
 
         {/* Status indicator */}
-        {isStatus && message.status && (
+        {shouldShowStatusChip && message.status && (
           <StatusRow status={message.status} className="mt-2" />
         )}
 

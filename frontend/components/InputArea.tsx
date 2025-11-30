@@ -3,7 +3,7 @@
 import { useState, KeyboardEvent, useRef, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { getChatCommands, getSortedCommands, SlashCommandDefinition } from "@/lib/slashCommands";
+import { filterSlashCommands, getCommandsByScope, SlashCommandDefinition } from "@/lib/slashCommands";
 import { duration, easing } from "@/lib/motion";
 import logger from "@/lib/logger";
 import { useGlobalEventBus } from "@/lib/telemetry";
@@ -43,32 +43,7 @@ export default function InputArea({
     if (!showSlashPalette) {
       return [];
     }
-
-    // Only show chat commands in the dropdown (not special-ui commands like /files)
-    const chatCommands = getChatCommands();
-    
-    const query = slashQuery.toLowerCase();
-    const filtered = chatCommands.filter((cmd) =>
-      [cmd.command, cmd.label, cmd.description]
-        .join(" ")
-        .toLowerCase()
-        .includes(query)
-    );
-
-    if (!slashQuery.trim()) {
-      // Return sorted by priority
-      return getSortedCommands().filter(cmd => 
-        chatCommands.some(cc => cc.command === cmd.command)
-      );
-    }
-
-    // For filtered results, maintain priority order
-    const sorted = getSortedCommands();
-    return filtered.sort((a, b) => {
-      const aIdx = sorted.findIndex(c => c.command === a.command);
-      const bIdx = sorted.findIndex(c => c.command === b.command);
-      return aIdx - bIdx;
-    });
+    return filterSlashCommands(slashQuery, "chat");
   }, [showSlashPalette, slashQuery]);
 
   useEffect(() => {
@@ -188,7 +163,7 @@ export default function InputArea({
       if (commandMatch) {
         const commandName = commandMatch[1].toLowerCase();
         // Only emit telemetry for supported commands
-        const supportedCommand = getChatCommands().find(cmd => 
+        const supportedCommand = getCommandsByScope("chat").find(cmd => 
           cmd.command.slice(1).toLowerCase() === commandName
         );
         if (supportedCommand) {

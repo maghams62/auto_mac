@@ -1,8 +1,11 @@
+import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..reasoners import DocDriftAnswer, DocDriftReasoner
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +22,56 @@ class SlashGitAssistant:
 
     CONTEXT_KEY = "slash_git_active_branch"
 
-    def __init__(self, agent_registry, session_manager=None, config: Optional[Dict[str, Any]] = None):
+    DOC_DRIFT_KEYWORDS = {
+        "drift",
+        "doc",
+        "docs",
+        "documentation",
+        "payment",
+        "payments",
+        "vat",
+        "notification",
+        "notifications",
+        "template",
+        "template_version",
+        "receipt",
+    }
+
+    def __init__(
+        self,
+        agent_registry,
+        session_manager=None,
+        config: Optional[Dict[str, Any]] = None,
+        reasoner: Optional[DocDriftReasoner] = None,
+    ):
         self.registry = agent_registry
         self.session_manager = session_manager
         self.config = config or {}
         self._default_branch_cache: Optional[str] = None
         self._git_agent = None
+        slash_git_cfg = self.config.get("slash_git") or {}
+        self.debug_block_enabled = slash_git_cfg.get("debug_block_enabled", True)
+        self.debug_source_label = slash_git_cfg.get("debug_source_label") or "synthetic_git"
+        reasoner_enabled = slash_git_cfg.get("doc_drift_reasoner", True)
+        env_token = os.getenv("GITHUB_TOKEN")
+        github_cfg = (self.config.get("github") or {})
+        self.debug_repo_label = slash_git_cfg.get("debug_repo_label") or github_cfg.get("repo_name") or "repository"
+        self.github_token_configured = bool(env_token or github_cfg.get("token"))
+        if not self.github_token_configured:
+            logger.warning("[SLASH GIT] GITHUB_TOKEN missing; API calls will use anonymous rate limits.")
+        self._last_tool_source: Optional[str] = None
+
+        if reasoner_enabled:
+            if reasoner is not None:
+                self.doc_drift_reasoner = reasoner
+            else:
+                try:
+                    self.doc_drift_reasoner = DocDriftReasoner(self.config)
+                except Exception as exc:
+                    logger.warning("[SLASH GIT] Doc drift reasoner unavailable: %s", exc)
+                    self.doc_drift_reasoner = None
+        else:
+            self.doc_drift_reasoner = None
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -36,6 +83,10 @@ class SlashGitAssistant:
             return self._error_response("Please provide a Git question.")
 
         lower = task.lower()
+
+        reasoned = self._maybe_handle_doc_drift(task)
+        if reasoned is not None:
+            return reasoned
 
         if self._looks_like_branch_switch(task):
             return self._handle_branch_switch(task, session_id)
@@ -99,6 +150,53 @@ class SlashGitAssistant:
 
         # Fallback to repo info if intent is unclear
         return self._handle_repo_info(session_id)
+
+    def _maybe_handle_doc_drift(self, task: str) -> Optional[Dict[str, Any]]:
+        if not self.doc_drift_reasoner:
+            return None
+        if not self._should_use_doc_drift_reasoner(task):
+            return None
+        try:
+            answer = self.doc_drift_reasoner.answer_question(task, source="git")
+        except Exception as exc:
+            logger.warning("[SLASH GIT] Doc drift reasoner failed: %s", exc)
+            return None
+        return self._format_reasoner_response(answer)
+
+    def _should_use_doc_drift_reasoner(self, task: str) -> bool:
+        lower = (task or "").lower()
+        if not lower:
+            return False
+        return any(keyword in lower for keyword in self.DOC_DRIFT_KEYWORDS)
+
+    def _format_reasoner_response(self, answer: DocDriftAnswer) -> Dict[str, Any]:
+        summary = answer.summary or "Doc drift summary unavailable."
+        sections = answer.sections or {}
+        lines: List[str] = []
+        for topic in sections.get("topics") or []:
+            title = topic.get("title") or "Topic"
+            insight = topic.get("insight") or ""
+            lines.append(f"- {title}: {insight}")
+        if answer.next_steps:
+            lines.append("Next steps:")
+            lines.extend(f"  • {step}" for step in answer.next_steps)
+        details = "\n".join(lines)
+        data = {
+            "scenario": answer.scenario.name,
+            "api": answer.scenario.api,
+            "impacted": answer.impacted,
+            "doc_drift": answer.doc_drift,
+            "evidence": answer.evidence,
+        }
+        status = "success" if not answer.error else "completed"
+        if answer.error:
+            data["reasoner_error"] = answer.error
+        return {
+            "status": status,
+            "message": summary,
+            "details": details,
+            "data": data,
+        }
 
     # ------------------------------------------------------------------
     # Intent handlers
@@ -398,23 +496,33 @@ class SlashGitAssistant:
     # Helpers
     # ------------------------------------------------------------------
     def _format_response(self, summary: str, details: str, data: Dict[str, Any], status: str = "success") -> Dict[str, Any]:
-        return {
+        payload = dict(data or {})
+        if self._last_tool_source and "source" not in payload:
+            payload["source"] = self._last_tool_source
+        payload.setdefault("token_configured", self.github_token_configured)
+        self._last_tool_source = None
+        response = {
             "type": "git_response",
             "status": status,
             "message": summary,
             "details": details,
-            "data": data,
+            "data": payload,
         }
+        self._maybe_attach_debug_block(response)
+        return response
 
     def _error_response(self, message: str) -> Dict[str, Any]:
-        return {
+        payload = {"token_configured": self.github_token_configured}
+        response = {
             "type": "git_response",
             "status": "error",
             "message": message,
             "details": "",
-            "data": {},
+            "data": payload,
             "error": True,
         }
+        self._maybe_attach_debug_block(response)
+        return response
 
     def _get_git_agent(self):
         if self._git_agent is None:
@@ -425,6 +533,7 @@ class SlashGitAssistant:
 
     def _execute_git_tool(self, tool_name: str, params: Dict[str, Any], session_id: Optional[str]) -> Dict[str, Any]:
         try:
+            logger.info("[SLASH GIT] Executing %s with params=%s", tool_name, params)
             result = self.registry.execute_tool(tool_name, params, session_id=session_id)
             if not isinstance(result, Dict):
                 raise ValueError(f"{tool_name} returned non-dict response")
@@ -434,15 +543,35 @@ class SlashGitAssistant:
                     tool_name,
                 )
                 fallback_agent = self._get_git_agent()
-                return fallback_agent.execute(tool_name, params)
+                result = fallback_agent.execute(tool_name, params)
+            self._last_tool_source = result.get("source")
+            self._log_tool_result(tool_name, result)
             return result
         except Exception as exc:
             logger.exception(f"[SLASH GIT] Tool {tool_name} failed: {exc}")
+            self._last_tool_source = None
             return {
                 "error": True,
                 "error_type": "ExecutionError",
                 "error_message": str(exc),
             }
+
+    def _log_tool_result(self, tool_name: str, result: Dict[str, Any]) -> None:
+        source = result.get("source") or "unknown"
+        count = result.get("count")
+        if count is None:
+            for key in ("commits", "prs", "branches", "tags"):
+                payload = result.get(key)
+                if isinstance(payload, list):
+                    count = len(payload)
+                    break
+        logger.info(
+            "[SLASH GIT] Tool %s completed (count=%s, source=%s, error=%s)",
+            tool_name,
+            count if count is not None else "n/a",
+            source,
+            bool(result.get("error")),
+        )
 
     def _get_active_branch(self, session_id: Optional[str]) -> Tuple[str, bool]:
         branch = None
@@ -618,5 +747,84 @@ class SlashGitAssistant:
 
     def _clean_ref(self, ref: str) -> str:
         return ref.strip().strip('`"\'').rstrip(",.")
+
+    # ------------------------------------------------------------------
+    # Debug block helpers
+    # ------------------------------------------------------------------
+    def _maybe_attach_debug_block(self, response: Dict[str, Any]) -> None:
+        if not self.debug_block_enabled:
+            return
+        if response.get("error"):
+            # Surface debug info only for successful flows to avoid leaking errors
+            return
+        debug_block = self._build_debug_block(response)
+        if not debug_block:
+            return
+        response["debug"] = debug_block
+        response["message"] = self._append_json_block(response.get("message"), debug_block)
+
+    def _build_debug_block(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = response.get("data") or {}
+        source = data.get("source") or self._last_tool_source or self.debug_source_label
+        collection_keys = ("commits", "prs", "branches", "tags", "files")
+        evidence_items = None
+        for key in collection_keys:
+            candidate = data.get(key)
+            if isinstance(candidate, list) and candidate:
+                evidence_items = candidate
+                break
+        if not evidence_items:
+            singleton = data.get("repo") or data.get("commit") or data.get("tag")
+            if singleton:
+                evidence_items = [singleton]
+
+        retrieved_count = len(evidence_items) if evidence_items else 0
+        sample_evidence: List[Dict[str, Any]] = []
+        if evidence_items:
+            first_item = evidence_items[0]
+            snippet_text = first_item.get("message") or first_item.get("title") or first_item.get("summary") or ""
+            snippet = self._clean_snippet(snippet_text)
+            if snippet:
+                sample_evidence.append(
+                    {
+                        "repo": first_item.get("repo")
+                        or first_item.get("repository")
+                        or data.get("repo_name")
+                        or self.debug_repo_label,
+                        "message": snippet,
+                    }
+                )
+
+        status = response.get("status") or ("PASS" if retrieved_count > 0 else "WARN")
+        if status.lower() == "success" and retrieved_count == 0:
+            status = "WARN"
+        elif status.lower() != "success":
+            status = status.upper()
+
+        return {
+            "source": source,
+            "retrieved_count": retrieved_count,
+            "sample_evidence": sample_evidence,
+            "status": status if isinstance(status, str) else "PASS",
+        }
+
+    @staticmethod
+    def _append_json_block(message: Optional[str], payload: Dict[str, Any]) -> str:
+        block_text = json.dumps(payload, ensure_ascii=False)
+        formatted = f"```json\n{block_text}\n```"
+        if message:
+            if block_text in message:
+                return message
+            return f"{message.rstrip()}\n\n{formatted}"
+        return formatted
+
+    @staticmethod
+    def _clean_snippet(text: str, *, max_length: int = 160) -> str:
+        if not text:
+            return ""
+        snippet = " ".join(text.strip().split())
+        if len(snippet) <= max_length:
+            return snippet
+        return snippet[: max_length - 3].rstrip() + "..."
 
 

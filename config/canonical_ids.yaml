@@ -1,0 +1,26 @@
+services:
+  - core-api-service
+  - billing-service
+  - notifications-service
+  - docs-portal
+
+components:
+  - core.payments
+  - core.webhooks
+  - billing.checkout
+  - notifications.dispatch
+  - docs.payments
+  - docs.notifications
+
+apis:
+  - /v1/payments/create
+  - /v1/notifications/send
+
+docs:
+  - docs/payments_api.md
+  - docs/billing_flows.md
+  - docs/notification_playbook.md
+  - docs/api_usage.md
+  - docs/billing_onboarding.md
+  - docs/changelog.md
+

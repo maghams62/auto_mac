@@ -11,10 +11,12 @@ from .schema import (
 from .service import GraphService
 from .ingestor import GraphIngestor
 from .analytics_service import GraphAnalyticsService
+from .activity_service import ActivityService
 
 __all__ = [
     "GraphService",
     "GraphAnalyticsService",
+    "ActivityService",
     "GraphIngestor",
     "NodeLabels",
     "RelationshipTypes",

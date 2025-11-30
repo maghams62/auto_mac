@@ -40,8 +40,63 @@ from collections import defaultdict
 from ..utils.screenshot import get_screenshot_dir
 from ..services.explain_pipeline import ExplainPipeline
 from ..utils.performance_monitor import get_performance_monitor
+from ..agent.slash_git_assistant import SlashGitAssistant
+from ..orchestrator.slash_slack import SlashSlackOrchestrator
 
 logger = logging.getLogger(__name__)
+
+
+class SlashPromptContextLoader:
+    """
+    Lazy loader for subsystem context files used by slash agents.
+
+    Contexts live under agents/<agent>/context.md and are injected as tiered
+    prompt overlays only when the corresponding slash command executes.
+    """
+
+    def __init__(self, base_dir: Optional[Path] = None):
+        self.base_dir = base_dir or Path(__file__).resolve().parents[2] / "agents"
+        self._cache: Dict[str, str] = {}
+        self._registry: Dict[str, Dict[str, Any]] = {
+            "slack": {
+                "path": self.base_dir / "slash_slack" / "context.md",
+                "tier": "tier2",
+            },
+            "git": {
+                "path": self.base_dir / "slash_git" / "context.md",
+                "tier": "tier2",
+            },
+            "pr": {
+                "path": self.base_dir / "slash_git" / "context.md",
+                "tier": "tier2",
+            },
+        }
+
+    def get_layers(self, command_name: Optional[str]) -> List[Dict[str, str]]:
+        if not command_name:
+            return []
+        command_key = command_name.lower()
+        entry = self._registry.get(command_key)
+        if not entry:
+            return []
+
+        path = entry["path"]
+        try:
+            cache_key = str(path)
+            if cache_key not in self._cache and path.exists():
+                self._cache[cache_key] = path.read_text()
+            content = self._cache.get(cache_key)
+            if not content:
+                logger.warning("[SLASH CONTEXT] Context file missing for /%s at %s", command_key, path)
+                return []
+            return [{
+                "tier": entry.get("tier", "tier2"),
+                "source": cache_key,
+                "content": content,
+            }]
+        except Exception as exc:
+            logger.warning("[SLASH CONTEXT] Failed loading context for /%s: %s", command_key, exc)
+            return []
 
 
 def get_demo_documents_root(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -192,6 +247,10 @@ class SlashCommandParser:
         "x": "twitter",  # Quick alias for Twitter summaries
         "bluesky": "bluesky",
         "sky": "bluesky",
+        "slack": "slack",
+        "git": "git",
+        "github": "git",
+        "pr": "git",
         "report": "report",
         "notify": "notifications",
         "notification": "notifications",
@@ -243,6 +302,8 @@ class SlashCommandParser:
         {"command": "/twitter", "label": "Twitter", "description": "Summarize lists"},
         {"command": "/x", "label": "X/Twitter", "description": "Quick Twitter summaries"},
         {"command": "/bluesky", "label": "Bluesky", "description": "Search, summarize, and post updates"},
+        {"command": "/slack", "label": "Slack", "description": "Fetch and analyze Slack messages"},
+        {"command": "/git", "label": "🐙 Git/PR", "description": "Graph-aware Git summaries & PR insights"},
         {"command": "/notify", "label": "Notifications", "description": "Send system notifications"},
         {"command": "/spotify", "label": "Spotify", "description": "Play and pause music"},
         {"command": "/whatsapp", "label": "WhatsApp", "description": "Read and analyze WhatsApp messages"},
@@ -273,6 +334,8 @@ class SlashCommandParser:
         "reddit": "Scan Reddit for mentions and posts",
         "twitter": "Track Twitter lists and activity",
         "bluesky": "Search Bluesky posts, summarize activity, and publish updates",
+        "slack": "Search Slack messages, list channels, fetch discussions with LLM-powered Q&A",
+        "git": "🐙 Graph-aware Git assistant: repo info, commits, diffs, tags, PRs",
         "report": "Create PDF reports strictly from local files (or stock data when requested)",
         "spotify": "Control Spotify playback: play, pause, skip, go back, get status",
         "whatsapp": "Read WhatsApp messages, summarize conversations, extract action items",
@@ -393,6 +456,18 @@ class SlashCommandParser:
             '/bluesky like https://bsky.app/profile/user.bsky.social/post/abc123',
             '/bluesky repost https://bsky.app/profile/user.bsky.social/post/abc123',
         ],
+        "slack": [
+             '/slack List channels',
+             '/slack Fetch recent messages from #payments-demo',
+             '/slack Search for discussions about the auth bug',
+             '/slack Did we talk about the 500 errors?',
+         ],
+        "git": [
+             '/git List recent PRs',
+             '/git Show open PRs on main branch',
+             '/git What changed in PR #123?',
+             '/pr Show diff for PR #456',
+         ],
         "weather": [
             '/weather today',
             '/weather NYC tomorrow',
@@ -912,6 +987,9 @@ class SlashCommandHandler:
         self.config = config or {}
         self.parser = SlashCommandParser()
         self.explain_pipeline = ExplainPipeline(agent_registry)
+        self.git_assistant = SlashGitAssistant(agent_registry, session_manager, self.config)
+        self.slash_slack = SlashSlackOrchestrator(config=self.config)
+        self.prompt_context_loader = SlashPromptContextLoader()
         self._usage_metrics = defaultdict(int)
         logger.info("[SLASH COMMANDS] Handler initialized")
 
@@ -989,6 +1067,49 @@ class SlashCommandHandler:
         agent_name = parsed["agent"]
         task = parsed["task"]
         task_lower = (task or "").lower().strip()
+
+        if parsed["agent"] == "git":
+            git_payload = self.git_assistant.handle(parsed.get("task") or "", session_id=session_id)
+            formatted = self._format_generic_reply(
+                "git",
+                parsed["command"],
+                parsed.get("task") or "",
+                git_payload,
+                session_id=session_id,
+            )
+            git_result = {
+                "type": "result",
+                "agent": "git",
+                "original_agent": "git",
+                "command": parsed["command"],
+                "result": formatted or git_payload,
+                "raw": git_payload,
+            }
+            return True, self._attach_prompt_context(parsed, git_result)
+
+        if parsed["agent"] == "slack":
+            task_text = parsed.get("task") or ""
+            slack_payload = self.slash_slack.handle(task_text, session_id=session_id)
+            if slack_payload.get("error"):
+                slack_error = {
+                     "type": "error",
+                     "agent": "slack",
+                     "original_agent": "slack",
+                     "command": parsed["command"],
+                     "content": slack_payload.get("message") or "Slack command failed.",
+                     "raw": slack_payload,
+                }
+                return True, self._attach_prompt_context(parsed, slack_error)
+
+            slack_result = {
+                "type": "result",
+                "agent": "slack",
+                "original_agent": "slack",
+                "command": parsed["command"],
+                "result": slack_payload,
+                "raw": slack_payload,
+            }
+            return True, self._attach_prompt_context(parsed, slack_result)
 
         if original_agent == "folder" and any(
             keyword in task_lower for keyword in ["summarize", "summarise", "summary"]
@@ -1833,6 +1954,28 @@ class SlashCommandHandler:
         except Exception as exc:
             logger.warning(f"[SLASH COMMAND] Failed to call reply_to_user: {exc}")
             return None
+
+    def _attach_prompt_context(self, parsed_command: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attach tiered context overlays for commands that ship with subsystem guidance.
+        """
+        if not isinstance(payload, dict):
+            return payload
+
+        command_name = (parsed_command.get("command") or "").lower()
+        layers = self.prompt_context_loader.get_layers(command_name)
+        if not layers:
+            return payload
+
+        prompt_context = payload.setdefault("prompt_context", {})
+        for layer in layers:
+            tier_key = layer.get("tier", "tier2")
+            tier_bucket = prompt_context.setdefault(tier_key, [])
+            tier_bucket.append({
+                "source": layer.get("source"),
+                "content": layer.get("content"),
+            })
+        return payload
 
     def _format_generic_reply(
         self,

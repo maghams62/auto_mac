@@ -5,10 +5,11 @@ GraphService - thin Neo4j client used for structural reasoning.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Optional
 
 try:
-    from neo4j import GraphDatabase, Driver
+    from neo4j import GraphDatabase, Driver  # type: ignore
 except Exception:  # pragma: no cover - optional dependency until installed
     GraphDatabase = None  # type: ignore
     Driver = None  # type: ignore
@@ -25,7 +26,25 @@ class GraphService:
     """Wrapper around the Neo4j Python driver with high-level queries."""
 
     def __init__(self, config: Dict[str, Any]):
-        graph_cfg = config.get("graph", {}) or {}
+        graph_cfg = dict(config.get("graph", {}) or {})
+        env_enabled = os.getenv("NEO4J_ENABLED")
+        if env_enabled is not None:
+            graph_cfg["enabled"] = env_enabled.lower() == "true"
+
+        env_uri = os.getenv("NEO4J_URI")
+        env_username = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME")
+        env_password = os.getenv("NEO4J_PASSWORD")
+        env_database = os.getenv("NEO4J_DATABASE")
+
+        if env_uri:
+            graph_cfg["uri"] = env_uri
+        if env_username:
+            graph_cfg["username"] = env_username
+        if env_password:
+            graph_cfg["password"] = env_password
+        if env_database:
+            graph_cfg["database"] = env_database
+
         self.enabled: bool = bool(graph_cfg.get("enabled"))
         self.uri: Optional[str] = graph_cfg.get("uri")
         self.username: Optional[str] = graph_cfg.get("username")
@@ -61,7 +80,7 @@ class GraphService:
                 self._driver = None
 
     def is_available(self) -> bool:
-        return (
+        return bool(
             self.enabled
             and self.uri
             and self.username is not None

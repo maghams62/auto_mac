@@ -40,12 +40,15 @@ env/
 data/embeddings/*.index
 data/embeddings/*.pkl
 data/logs/*.log
+data/logs/slash/
 data/screenshots/*.png
 data/presentations/*.key
 data/reports/*.html
 qdrant_storage/
 data/branch_watcher_state.json
 data/trajectories/
+data/vector_index/
+slack_events.json
 
 # Keep directory structure but ignore contents
 !data/embeddings/.gitkeep

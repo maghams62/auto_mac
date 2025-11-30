@@ -582,6 +582,53 @@ const rootDir = isDev
 console.log('[Cerebros] Root directory:', rootDir);
 console.log('[Cerebros] Development mode:', isDev);
 
+const DEFAULT_FRONTEND_PORT = 3000;
+let frontendPort = DEFAULT_FRONTEND_PORT;
+
+function getFrontendOrigin(): string {
+  return `http://localhost:${frontendPort}`;
+}
+
+function getFrontendUrl(pathname: string = ''): string {
+  if (!pathname) {
+    return getFrontendOrigin();
+  }
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${getFrontendOrigin()}${normalizedPath}`;
+}
+
+function updateFrontendPort(port: number) {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    return;
+  }
+
+  if (port === frontendPort) {
+    return;
+  }
+
+  const previousPort = frontendPort;
+  frontendPort = port;
+
+  const log = logger ?? undefined;
+  log?.info('[FRONTEND] Updated dev server port', { previousPort, newPort: port });
+
+  if (!isDev) {
+    return;
+  }
+
+  const launcherUrl = getFrontendUrl('/launcher');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    log?.info('[FRONTEND] Reloading launcher with new port', { launcherUrl });
+    mainWindow.loadURL(launcherUrl);
+  }
+
+  if (expandedWindow && !expandedWindow.isDestroyed()) {
+    const desktopUrl = getFrontendUrl('/desktop');
+    log?.info('[FRONTEND] Reloading expanded window with new port', { desktopUrl });
+    expandedWindow.loadURL(desktopUrl);
+  }
+}
+
 /**
  * Check if a port is in use (fallback detection method)
  */
@@ -684,27 +731,38 @@ function getBackendProcessState(): Record<string, any> {
   };
 }
 
+type UrlSource = string | (() => string);
+
 /**
  * Wait for a server to be ready by polling the health endpoint
  * Uses Node's http module for reliability in Electron main process
  */
-async function waitForServer(url: string, timeout: number = 30000, retries: number = 3): Promise<boolean> {
+async function waitForServer(urlSource: UrlSource, timeout: number = 30000, retries: number = 3): Promise<boolean> {
+  const resolveUrl = typeof urlSource === 'function' ? urlSource : () => urlSource;
   const startTime = Date.now();
   let attempt = 0;
   let lastError: Error | null = null;
   const log = logger ? logger : { info: () => {}, error: () => {}, debug: () => {}, warn: () => {} };
+  let currentUrl = resolveUrl();
+  const isBackendTarget = currentUrl.includes('8000');
 
-  log.info('=== WAITING FOR SERVER ===', { url, timeout, retries });
+  log.info('=== WAITING FOR SERVER ===', { url: currentUrl, timeout, retries });
 
   while (Date.now() - startTime < timeout) {
+    const latestUrl = resolveUrl();
+    if (latestUrl !== currentUrl) {
+      log.info('Health check URL updated', { previousUrl: currentUrl, newUrl: latestUrl });
+      currentUrl = latestUrl;
+    }
+
     try {
-      const response = await httpGet(url, 2000);
+      const response = await httpGet(currentUrl, 2000);
       if (response.ok) {
         const elapsed = Date.now() - startTime;
-        log.info('Server ready', { url, elapsedMs: elapsed, attempt, status: response.status });
+        log.info('Server ready', { url: currentUrl, elapsedMs: elapsed, attempt, status: response.status });
         return true;
       } else {
-        log.warn('Server returned non-OK status', { url, status: response.status, attempt });
+        log.warn('Server returned non-OK status', { url: currentUrl, status: response.status, attempt });
       }
     } catch (error: any) {
       attempt++;
@@ -713,9 +771,9 @@ async function waitForServer(url: string, timeout: number = 30000, retries: numb
       
       // Log progress every 10 attempts (5 seconds)
       if (attempt % 10 === 0) {
-        const processState = url.includes('8000') ? getBackendProcessState() : null;
+        const processState = isBackendTarget ? getBackendProcessState() : null;
         log.info('Health check in progress', { 
-          url, 
+          url: currentUrl, 
           elapsedMs: elapsed, 
           attempt,
           errorType: error.name || 'Error',
@@ -726,9 +784,9 @@ async function waitForServer(url: string, timeout: number = 30000, retries: numb
       
       // Log errors at key milestones
       if (attempt === 20 || attempt === 40) { // At 10s and 20s
-        const processState = url.includes('8000') ? getBackendProcessState() : null;
+        const processState = isBackendTarget ? getBackendProcessState() : null;
         log.warn('Server still not ready', { 
-          url, 
+          url: currentUrl, 
           elapsedMs: elapsed, 
           attempt,
           errorType: error.name || 'Error',
@@ -743,10 +801,10 @@ async function waitForServer(url: string, timeout: number = 30000, retries: numb
   }
 
   const elapsed = Date.now() - startTime;
-  const processState = url.includes('8000') ? getBackendProcessState() : null;
+  const processState = isBackendTarget ? getBackendProcessState() : null;
   
   log.error('=== SERVER FAILED TO START ===', new Error('Timeout'), { 
-    url, 
+    url: currentUrl, 
     timeout, 
     elapsedMs: elapsed,
     totalAttempts: attempt,
@@ -756,7 +814,7 @@ async function waitForServer(url: string, timeout: number = 30000, retries: numb
   });
 
   // If this is the backend, log the captured output buffer
-  if (url.includes('8000')) {
+  if (isBackendTarget) {
     const bufferSummary = getBackendBufferSummary();
     log.error('Backend output buffer at time of failure', new Error('Captured output'), {
       bufferLineCount: backendOutputBuffer.length,
@@ -990,23 +1048,21 @@ async function startFrontend() {
   const log = logger ? logger : { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} };
 
   // Check if frontend is already running
-  const frontendUrl = 'http://localhost:3000';
-  let isRunning = await isServerRunning(frontendUrl);
-  
-  // Fallback: Check if port is in use
-  if (!isRunning) {
-    const portInUse = await isPortInUse(3000);
-    if (portInUse) {
-      log.info('Frontend port 3000 is in use, assuming server is running', { url: frontendUrl });
-      await logPortDiagnostics(3000, 'frontend');
-      isRunning = true;
-    }
-  }
+  const frontendOrigin = getFrontendUrl();
+  const isRunning = await isServerRunning(frontendOrigin);
   
   if (isRunning) {
-    log.info('Frontend already running, skipping startup', { url: frontendUrl });
-    markStartup('frontend_already_running', { url: frontendUrl });
+    log.info('Frontend already running, skipping startup', { url: frontendOrigin });
+    markStartup('frontend_already_running', { url: frontendOrigin });
     return;
+  }
+
+  const portInUse = await isPortInUse(frontendPort);
+  if (portInUse) {
+    log.warn('Frontend port currently in use, Next.js will attempt fallback port', {
+      requestedPort: frontendPort
+    });
+    void logPortDiagnostics(frontendPort, 'frontend-prestart');
   }
 
   if (!fs.existsSync(frontendDir)) {
@@ -1032,16 +1088,17 @@ async function startFrontend() {
     }
 
     if (output.includes('Port 3000 is in use')) {
-      log.warn('Frontend dev server detected port collision', { output });
-      void logPortDiagnostics(3000, 'frontend-runtime');
+      log.warn('Frontend dev server detected port collision', { output, expectedPort: DEFAULT_FRONTEND_PORT });
+      void logPortDiagnostics(DEFAULT_FRONTEND_PORT, 'frontend-runtime');
     }
 
     const portMatch = output.match(/http:\/\/localhost:(\d+)/i);
     if (portMatch) {
       const detectedPort = Number(portMatch[1]);
-      if (detectedPort !== 3000) {
+      updateFrontendPort(detectedPort);
+      if (detectedPort !== DEFAULT_FRONTEND_PORT) {
         log.warn('Frontend dev server bound unexpected port', {
-          expectedPort: 3000,
+          expectedPort: DEFAULT_FRONTEND_PORT,
           detectedPort,
           message: output,
         });
@@ -1101,7 +1158,7 @@ function createWindow() {
   });
 
   const url = isDev
-    ? 'http://localhost:3000/launcher'
+    ? getFrontendUrl('/launcher')
     : `file://${path.join(process.resourcesPath, 'app', 'frontend', 'out', 'launcher.html')}`;
 
   if (logger) {
@@ -1590,7 +1647,7 @@ function openExpandedWindow() {
 
   // Load the desktop route
   const frontendUrl = isDev
-    ? 'http://localhost:3000/desktop'
+    ? getFrontendUrl('/desktop')
     : `file://${path.join(process.resourcesPath, 'app', 'frontend', 'out', 'desktop.html')}`;
 
   log?.info('[EXPANDED] Loading desktop URL', { url: frontendUrl });
@@ -1831,6 +1888,10 @@ function setupIPC() {
       settingsStore.set('hideOnBlur', newSettings.hideOnBlur);
     }
 
+    if (newSettings.miniConversationDepth !== undefined) {
+      settingsStore.set('miniConversationDepth', newSettings.miniConversationDepth);
+    }
+
     if (newSettings.theme !== undefined) {
       settingsStore.set('theme', newSettings.theme);
     }
@@ -1987,10 +2048,10 @@ app.on('ready', async () => {
 
   // Check if servers are already running before starting
   const backendUrl = 'http://127.0.0.1:8000/health';
-  const frontendUrl = 'http://localhost:3000';
+  const initialFrontendUrl = getFrontendUrl();
   
   let backendAlreadyRunning = await isServerRunning(backendUrl);
-  let frontendAlreadyRunning = isDev ? await isServerRunning(frontendUrl) : true; // Frontend is built in production
+  let frontendAlreadyRunning = isDev ? await isServerRunning(initialFrontendUrl) : true; // Frontend is built in production
 
   // Fallback: Check if ports are in use (server might be starting up)
   if (!backendAlreadyRunning) {
@@ -1998,14 +2059,6 @@ app.on('ready', async () => {
     if (portInUse) {
       logger.info('Backend port 8000 is in use, assuming server is running', { backendUrl });
       backendAlreadyRunning = true; // Assume running, will verify with health check
-    }
-  }
-
-  if (isDev && !frontendAlreadyRunning) {
-    const portInUse = await isPortInUse(3000);
-    if (portInUse) {
-      logger.info('Frontend port 3000 is in use, assuming server is running', { frontendUrl });
-      frontendAlreadyRunning = true; // Assume running, will verify with health check
     }
   }
 
@@ -2059,9 +2112,10 @@ app.on('ready', async () => {
 
   // Load servers in background (non-blocking)
   (async () => {
+    const currentFrontendUrl = getFrontendUrl();
     logger.info('Background: Waiting for servers to be ready', {
       backendUrl,
-      frontendUrl,
+      frontendUrl: currentFrontendUrl,
       backendAlreadyRunning,
       frontendAlreadyRunning: isDev ? frontendAlreadyRunning : 'N/A (production)'
     });
@@ -2087,7 +2141,7 @@ app.on('ready', async () => {
       return;
     }
 
-    const frontendReady = isDev ? await waitForServer(frontendUrl, timeout, 3) : true;
+    const frontendReady = isDev ? await waitForServer(() => getFrontendUrl(), timeout, 3) : true;
     markStartup('backend_health_check_complete', { backendReady });
     if (isDev) {
       markStartup('frontend_health_check_complete', { frontendReady });
@@ -2123,7 +2177,7 @@ app.on('ready', async () => {
 
     if (!frontendReady) {
       logger.error('Frontend failed to start', new Error('Health check failed'), {
-        url: 'http://localhost:3000',
+        url: getFrontendUrl(),
       });
     }
 
@@ -2198,10 +2252,10 @@ app.on('ready', async () => {
           logger.getLogFile();
       }
       if (!frontendReady) {
-        errors.frontend = 'Frontend health check failed at http://localhost:3000\n\n' +
+        errors.frontend = `Frontend health check failed at ${getFrontendUrl()}\n\n` +
           'Possible causes:\n' +
           '• Next.js dev server not starting\n' +
-          '• Port 3000 already in use\n' +
+          '• Default dev port 3000 already in use\n' +
           '• Frontend build errors\n\n' +
           'Check the logs for detailed error messages.';
       }

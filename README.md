@@ -105,6 +105,72 @@ python main.py
 # Then type: /index
 ```
 
+## Development Quickstart (Backend + Frontend + Desktop)
+
+The current stack is split across a Python FastAPI backend (`api_server.py`), a Next.js frontend (`frontend/`), and an optional Electron shell (`desktop/`). Define your repo root once (`export REPO_ROOT=/path/to/auto_mac`) and reuse it in the commands below for a clean local run.
+
+### 1. Prep the shared environment (one-time per machine)
+
+```bash
+cd "$REPO_ROOT"
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env    # fill in OpenAI/Slack/GitHub/Spotify keys
+
+cd frontend && npm install && cd ..
+cd desktop && npm install && cd ..
+```
+
+- Keep secrets in `.env`; `config.yaml` pulls them via `${VAR_NAME}`.
+- The frontend honors `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_API_PORT` if you need to point at a remote backend.
+
+### 2. Start the FastAPI backend
+
+```bash
+cd "$REPO_ROOT"
+source venv/bin/activate
+python api_server.py
+```
+
+- Default port: `8000`. Verify health with `curl http://localhost:8000/health` or open `http://localhost:8000/docs`.
+- Logs stream to stdout; the launcher also mirrors them into `api_server.log`.
+
+### 3. Start the Next.js frontend
+
+```bash
+cd "$REPO_ROOT/frontend"
+npm run dev   # serves http://localhost:3000
+```
+
+- The dev server proxies API calls to `http://localhost:8000` automatically via `frontend/lib/apiConfig.ts`.
+- If you prefer a production-style build: `npm run build && npm run start`.
+
+### 4. (Optional) Launch the Electron desktop shell
+
+```bash
+cd "$REPO_ROOT/desktop"
+npm run dev
+```
+
+- Electron expects both the backend (8000) and Next.js dev server (3000) to be alive before it starts.
+- The packaged build serves the static export written by `frontend/out`.
+
+### 5. One-command clean start (optional helper)
+
+```bash
+cd "$REPO_ROOT"
+./start_ui.sh
+```
+
+The script kills stray servers, clears caches (`__pycache__`, `.next`), verifies the venv + Node modules, then launches `python api_server.py` and `npm run dev`, tailing logs to `api_server.log` and `frontend.log`. Press `Ctrl+C` to stop both.
+
+### 6. Stopping & restarting
+
+- Use `Ctrl+C` in each terminal to stop the backend, frontend, or Electron shell.
+- If ports 3000/8000 get wedged, run `./start_ui.sh` or manually `lsof -ti :3000 :8000 | xargs kill -9`.
+
 ## Usage
 
 Cerebro OS provides **two interfaces**: a modern web UI and a classic terminal UI. Choose whichever fits your workflow!

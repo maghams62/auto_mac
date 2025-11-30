@@ -53,6 +53,7 @@ Retired directories (e.g., `docs/agents/`, `tests/e2e/`) exist only in git histo
 ### Spotlight (Raycast-style) Launcher
 - Entry: `frontend/app/launcher/page.tsx` renders `<CommandPalette />`.
 - Input handling lives in `frontend/components/CommandPalette.tsx`. Slash commands bypass file search unless `/files` is explicitly typed.
+- Shared spotlight tokens (mini conversation depth, motion curves, hint pills) live in `frontend/config/ui.ts`—update this file instead of scattering magic numbers.
 - Spotify mini player parity is provided by `frontend/components/SpotifyMiniPlayer.tsx` (`variant="launcher-mini"`).
 - Visibility + blur handling is centralized in Electron (`desktop/src/main.ts`) and documented in `docs/WINDOW_VISIBILITY_STATE_MACHINE.md`.
 

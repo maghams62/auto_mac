@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.demo.graph_summary import GraphSummary
+from src.demo.scenario_classifier import PAYMENTS_SCENARIO
+from src.demo.vector_retriever import VectorRetrievalBundle
 from src.orchestrator.slash_slack.orchestrator import SlashSlackOrchestrator
+from src.reasoners import DocDriftAnswer
 
 
 class FakeSlashSlackAdapter:
@@ -51,13 +55,83 @@ class FakeSlashSlackAdapter:
         return "C123" if channel_name == "backend" else None
 
 
+class FakeLLMFormatter:
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, *, query, context, sections, messages):
+        self.calls += 1
+        return (
+            {
+                "summary": f"{context.get('channel_label', 'Slack')} summary",
+                "sections": sections or {},
+                "entities": [{"name": "billing_service", "type": "service"}],
+                "doc_drift": [],
+                "evidence": [],
+            },
+            None,
+        )
+
+
+class FakeReasoner:
+    def __init__(self, summary: str = "Doc drift summary"):
+        self.summary = summary
+        self.calls = 0
+
+    def answer_question(self, question: str, source: str = "slack") -> DocDriftAnswer:
+        self.calls += 1
+        return DocDriftAnswer(
+            question=question,
+            scenario=PAYMENTS_SCENARIO,
+            summary=self.summary,
+            sections={
+                "topics": [{"title": "VAT drift", "insight": "Docs lag behind VAT changes.", "evidence_ids": ["slack-1"]}],
+                "decisions": [],
+                "tasks": [],
+                "open_questions": [],
+                "references": [],
+            },
+            impacted={
+                "apis": [PAYMENTS_SCENARIO.api],
+                "services": ["core-api-service"],
+                "components": ["core.payments"],
+                "docs": ["docs/payments_api.md"],
+            },
+            evidence=[{"id": "slack-1", "source": "slack", "text": "VAT issue"}],
+            graph_summary=GraphSummary(api=PAYMENTS_SCENARIO.api),
+            vector_bundle=VectorRetrievalBundle(),
+            doc_drift=[{"doc": "docs/payments_api.md", "issue": "VAT", "services": ["core-api-service"], "components": ["core.payments"], "apis": [PAYMENTS_SCENARIO.api], "labels": ["doc_drift"]}],
+            next_steps=["Update docs"],
+            metadata={"scenario": PAYMENTS_SCENARIO.name},
+        )
+
+
 @pytest.fixture()
 def orchestrator():
     config = {
         "slack": {"default_channel_id": "C123"},
-        "slash_slack": {"graph_emit": False},
+        "slash_slack": {"graph_emit": False, "doc_drift_reasoner": False},
     }
-    return SlashSlackOrchestrator(config=config, tooling=FakeSlashSlackAdapter())
+    return SlashSlackOrchestrator(
+        config=config,
+        tooling=FakeSlashSlackAdapter(),
+        llm_formatter=FakeLLMFormatter(),
+    )
+
+
+@pytest.fixture()
+def reasoner_orchestrator():
+    config = {
+        "slack": {"default_channel_id": "C123"},
+        "slash_slack": {"graph_emit": False, "doc_drift_reasoner": True},
+    }
+    fake_reasoner = FakeReasoner()
+    return SlashSlackOrchestrator(
+        config=config,
+        tooling=FakeSlashSlackAdapter(),
+        llm_formatter=None,
+        reasoner=fake_reasoner,
+    )
 
 
 def test_handle_channel_recap_returns_sections(orchestrator):
@@ -80,4 +154,21 @@ def test_handle_empty_command_returns_error(orchestrator):
     result = orchestrator.handle("")
     assert result.get("error")
     assert "Provide a Slack request" in result.get("message", "")
+
+
+def test_doc_drift_reasoner_short_circuit(reasoner_orchestrator):
+    result = reasoner_orchestrator.handle("doc drift status for VAT payments?")
+    assert result["type"] == "slash_slack_summary"
+    assert result["message"] == "Doc drift summary"
+    assert result["context"]["mode"] == "doc_drift"
+    assert result["graph"]
+    assert result["sections"]["tasks"], "Next steps should populate tasks"
+
+
+def test_doc_drift_reasoner_includes_entities(reasoner_orchestrator):
+    result = reasoner_orchestrator.handle("drift report for payments")
+    entities = result.get("entities") or []
+    assert any(entity.get("type") == "service" for entity in entities)
+    evidence = result.get("evidence") or []
+    assert evidence and evidence[0]["id"] == "slack-1"
 

@@ -22,6 +22,8 @@ class NodeLabels(str, Enum):
     ACTIVITY_SIGNAL = "ActivitySignal"
     CODE_ARTIFACT = "CodeArtifact"
     SUPPORT_CASE = "SupportCase"
+    SLACK_EVENT = "SlackEvent"
+    GIT_EVENT = "GitEvent"
 
 
 class RelationshipTypes(str, Enum):
@@ -43,6 +45,11 @@ class RelationshipTypes(str, Enum):
     SIGNALS_ENDPOINT = "SIGNALS_ENDPOINT"
     SUPPORTS_COMPONENT = "SUPPORTS_COMPONENT"
     SUPPORTS_ENDPOINT = "SUPPORTS_ENDPOINT"
+    HAS_COMPONENT = "HAS_COMPONENT"
+    COMPLAINS_ABOUT_API = "COMPLAINS_ABOUT_API"
+    ABOUT_COMPONENT = "ABOUT_COMPONENT"
+    MODIFIES_API = "MODIFIES_API"
+    TOUCHES_COMPONENT = "TOUCHES_COMPONENT"
 
 
 @dataclass

@@ -3,15 +3,8 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Settings } from "@/types/electron";
-import { isElectron } from "@/lib/electron";
 import { useIsElectronRuntime } from "@/hooks/useIsElectron";
-
-const MIN_CONVO_TURNS = 1;
-const MAX_CONVO_TURNS = 5;
-const DEFAULT_CONVO_TURNS = 2;
-
-const clampMiniConversationDepth = (value: number) =>
-  Math.min(Math.max(value, MIN_CONVO_TURNS), MAX_CONVO_TURNS);
+import { spotlightUi, clampMiniConversationDepth } from "@/config/ui";
 
 interface PreferencesModalProps {
   isOpen: boolean;
@@ -38,7 +31,7 @@ export default function PreferencesModal({ isOpen, onClose }: PreferencesModalPr
       setSettings({
         ...currentSettings,
         miniConversationDepth: clampMiniConversationDepth(
-          currentSettings.miniConversationDepth ?? DEFAULT_CONVO_TURNS
+          currentSettings.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
         ),
       });
     } catch (error) {
@@ -56,7 +49,7 @@ export default function PreferencesModal({ isOpen, onClose }: PreferencesModalPr
       const payload: Settings = {
         ...settings,
         miniConversationDepth: clampMiniConversationDepth(
-          settings.miniConversationDepth ?? DEFAULT_CONVO_TURNS
+          settings.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
         ),
       };
       await window.electronAPI!.updateSettings(payload);
@@ -228,13 +221,17 @@ export default function PreferencesModal({ isOpen, onClose }: PreferencesModalPr
                       </label>
                       <input
                         type="number"
-                        min={MIN_CONVO_TURNS}
-                        max={MAX_CONVO_TURNS}
-                        value={settings.miniConversationDepth ?? DEFAULT_CONVO_TURNS}
+                        min={spotlightUi.miniConversation.minTurns}
+                        max={spotlightUi.miniConversation.maxTurns}
+                        value={
+                          settings.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
+                        }
                         onChange={(e) => {
                           const value = Number(e.target.value);
                           handleMiniConversationDepthChange(
-                            Number.isNaN(value) ? DEFAULT_CONVO_TURNS : value
+                            Number.isNaN(value)
+                              ? spotlightUi.miniConversation.defaultTurns
+                              : value
                           );
                         }}
                         className="w-full px-3 py-2 bg-glass border border-glass-strong rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"

@@ -1,21 +1,61 @@
 "use client";
 
-import { useState } from "react";
-import { Plus } from "lucide-react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { ArrowRight, Database, Plus, ShieldCheck, Slack } from "lucide-react";
 
 import { ProjectCard } from "@/components/projects/project-card";
 import { ProjectForm } from "@/components/projects/project-form";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDashboardStore } from "@/lib/state/dashboard-store";
-import type { Project, ProjectDraft } from "@/lib/types";
+import type { Project, ProjectDraft, Severity } from "@/lib/types";
 
 export default function ProjectsPage() {
   const projects = useDashboardStore((state) => state.projects);
   const addProject = useDashboardStore((state) => state.addProject);
   const updateProject = useDashboardStore((state) => state.updateProject);
+  const [focusedProjectId, setFocusedProjectId] = useState(projects[0]?.id ?? null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+
+  const focusedProject = useMemo(() => projects.find((project) => project.id === focusedProjectId) ?? projects[0], [focusedProjectId, projects]);
+  const heroMetrics = focusedProject
+    ? [
+        { label: "Doc health", value: `${focusedProject.docHealthScore}/100` },
+        { label: "Open drift issues", value: `${focusedProject.pulse.totalIssues}`, detail: "Across components" },
+        { label: "Critical issues", value: `${severityCounts.critical}`, detail: "Immediate escalation" },
+        { label: "Linked signals", value: `${linkedSystemsCount}`, detail: "Slack + tickets" },
+      ]
+    : [];
+
+  const severityCounts = useMemo(() => {
+    if (!focusedProject) {
+      return { critical: 0, high: 0, medium: 0, low: 0 } as Record<Severity, number>;
+    }
+    return focusedProject.docIssues.reduce<Record<Severity, number>>(
+      (acc, issue) => {
+        acc[issue.severity] += 1;
+        return acc;
+      },
+      { critical: 0, high: 0, medium: 0, low: 0 }
+    );
+  }, [focusedProject]);
+
+  const linkedSystemsCount = useMemo(() => {
+    if (!focusedProject) return 0;
+    return focusedProject.repos.reduce((count, repo) => count + (repo.linkedSystems.slackChannels?.length ?? 0), 0);
+  }, [focusedProject]);
 
   const handleCreate = async (draft: ProjectDraft) => {
     await addProject(draft);
@@ -68,6 +108,41 @@ export default function ProjectsPage() {
         </div>
       </div>
 
+      {focusedProject ? (
+        <Card className="border border-border/60 bg-card/80">
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-2">
+              <CardTitle className="flex flex-col gap-1 text-2xl">
+                <span>Projects command center</span>
+                <span className="text-sm font-normal text-muted-foreground">
+                  Drift + activity overview for {focusedProject.name}
+                </span>
+              </CardTitle>
+              <CardDescription>Select a project to preview metrics and jump into drift response.</CardDescription>
+            </div>
+            <div className="w-full max-w-xs">
+              <Select value={focusedProject.id} onValueChange={setFocusedProjectId}>
+                <SelectTrigger className="rounded-2xl border-border/60">
+                  <SelectValue placeholder="Choose project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <HeroMetricsRow metrics={heroMetrics} />
+            <ContextPills repos={focusedProject.repos} slackCount={linkedSystemsCount} />
+            <PrimaryActions projectId={focusedProject.id} />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="grid gap-6">
         {projects.map((project) => (
           <ProjectCard key={project.id} project={project} onEdit={() => setEditingProject(project)} />
@@ -88,4 +163,53 @@ export default function ProjectsPage() {
     </div>
   );
 }
+
+const HeroMetricsRow = ({ metrics }: { metrics: Array<{ label: string; value: string; detail?: string }> }) => (
+  <div className="grid gap-4 md:grid-cols-4">
+    {metrics.map((metric) => (
+      <div key={metric.label} className="rounded-2xl border border-border/60 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{metric.label}</div>
+        <div className="text-3xl font-bold text-foreground">{metric.value}</div>
+        {metric.detail ? <div className="text-xs text-muted-foreground">{metric.detail}</div> : null}
+      </div>
+    ))}
+  </div>
+);
+
+const ContextPills = ({ repos, slackCount }: { repos: Project["repos"]; slackCount: number }) => (
+  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+    {repos.map((repo) => (
+      <Badge key={repo.id} variant="outline" className="rounded-full border-border/40">
+        {repo.name}
+      </Badge>
+    ))}
+    <div className="flex items-center gap-2 rounded-full border border-border/60 px-4 py-2">
+      <Slack className="h-4 w-4 text-primary" />
+      {slackCount} monitored Slack signals
+    </div>
+  </div>
+);
+
+const PrimaryActions = ({ projectId }: { projectId: string }) => (
+  <div className="flex flex-wrap gap-3">
+    <Button asChild className="rounded-full px-5">
+      <Link href={`/projects/${projectId}`}>
+        Go to drift overview
+        <ArrowRight className="ml-2 h-4 w-4" />
+      </Link>
+    </Button>
+    <Button asChild variant="ghost" className="rounded-full">
+      <Link href={`/projects/${projectId}/impact`}>
+        View cross-system impact
+        <Database className="ml-2 h-4 w-4" />
+      </Link>
+    </Button>
+    <Button asChild variant="ghost" className="rounded-full">
+      <Link href={`/projects/${projectId}/components`}>
+        Inspect components
+        <ShieldCheck className="ml-2 h-4 w-4" />
+      </Link>
+    </Button>
+  </div>
+);
 

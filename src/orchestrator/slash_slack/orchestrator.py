@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import hashlib
+
 from ...integrations.slack_client import SlackAPIError
 from ...integrations.slash_slack_tooling import SlashSlackToolingAdapter
+from ...reasoners import DocDriftAnswer, DocDriftReasoner
 from .analyzer import SlackConversationAnalyzer
+from .llm_formatter import SlashSlackLLMFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +253,7 @@ class BaseSlackExecutor:
             data = "slack"
         return hashlib.sha1(data.encode("utf-8")).hexdigest()[:20]
 
-    def _build_result(
+    def _build_analysis(
         self,
         *,
         messages: List[Dict[str, Any]],
@@ -263,12 +266,12 @@ class BaseSlackExecutor:
         graph = analyzer.build_graph(context, sections)
         preview = messages[: min(len(messages), 12)]
         return {
-            "type": "slash_slack_summary",
-            "message": summary,
+            "summary": summary,
             "sections": sections,
             "graph": graph,
             "context": context,
             "messages_preview": preview,
+            "messages": messages,
         }
 
 
@@ -291,7 +294,7 @@ class ChannelRecapExecutor(BaseSlackExecutor):
             "time_window": query.time_range.to_dict(),
             "time_window_label": query.time_range.label(),
         }
-        return self._build_result(messages=messages, context=context, keywords=query.keywords)
+        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
 
 
 class ThreadRecapExecutor(BaseSlackExecutor):
@@ -315,7 +318,7 @@ class ThreadRecapExecutor(BaseSlackExecutor):
             "time_window": query.time_range.to_dict(),
             "time_window_label": query.time_range.label(),
         }
-        return self._build_result(messages=messages, context=context, keywords=query.keywords)
+        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
 
 
 class DecisionExecutor(BaseSlackExecutor):
@@ -335,7 +338,7 @@ class DecisionExecutor(BaseSlackExecutor):
             "time_window_label": query.time_range.label(),
             "search_terms": search_terms,
         }
-        return self._build_result(messages=messages, context=context, keywords=query.keywords)
+        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
 
 
 class TaskExecutor(BaseSlackExecutor):
@@ -355,7 +358,7 @@ class TaskExecutor(BaseSlackExecutor):
             "time_window_label": query.time_range.label(),
             "search_terms": search_terms,
         }
-        return self._build_result(messages=messages, context=context, keywords=query.keywords)
+        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
 
 
 class TopicExecutor(BaseSlackExecutor):
@@ -375,7 +378,7 @@ class TopicExecutor(BaseSlackExecutor):
             "time_window": query.time_range.to_dict(),
             "time_window_label": query.time_range.label(),
         }
-        return self._build_result(messages=messages, context=context, keywords=[entity] + query.keywords)
+        return self._build_analysis(messages=messages, context=context, keywords=[entity] + query.keywords)
 
 
 # ----------------------------------------------------------------------
@@ -386,6 +389,8 @@ class SlashSlackOrchestrator:
         self,
         config: Optional[Dict[str, Any]] = None,
         tooling: Optional[SlashSlackToolingAdapter] = None,
+        llm_formatter: Optional[SlashSlackLLMFormatter] = None,
+        reasoner: Optional[DocDriftReasoner] = None,
     ):
         self.config = config or {}
         slack_cfg = self.config.get("slack", {})
@@ -394,6 +399,12 @@ class SlashSlackOrchestrator:
         default_time_window_hours = slash_cfg.get("default_time_window_hours", 24)
         workspace_url = slash_cfg.get("workspace_url")
         self.graph_emit_enabled = slash_cfg.get("graph_emit", True)
+        self.debug_block_enabled = slash_cfg.get("debug_block_enabled", True)
+        self.debug_source_label = (
+            slash_cfg.get("debug_source_label")
+            or slack_cfg.get("debug_source_label")
+            or "synthetic_slack"
+        )
 
         self.tooling = tooling or SlashSlackToolingAdapter(config=self.config, workspace_url=workspace_url)
         self.parser = SlashSlackParser(default_channel_id=default_channel_id, default_time_window_hours=default_time_window_hours)
@@ -410,8 +421,39 @@ class SlashSlackOrchestrator:
             log_path = Path(log_path_str)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._graph_log_path = log_path
+        if llm_formatter is not None:
+            self.llm_formatter = llm_formatter
+        else:
+            try:
+                self.llm_formatter = SlashSlackLLMFormatter(self.config)
+            except Exception as exc:
+                logger.warning("[SLASH SLACK] Unable to initialize LLM formatter: %s", exc)
+                self.llm_formatter = None
+
+        reasoner_enabled = slash_cfg.get("doc_drift_reasoner", True)
+        self.doc_drift_keywords = [
+            kw.lower()
+            for kw in slash_cfg.get("doc_drift_keywords", ["doc drift", "drift", "api drift"])
+            if isinstance(kw, str) and kw.strip()
+        ]
+        self.empty_channel_fallback_hours = slash_cfg.get("empty_channel_fallback_hours", 72)
+        self.empty_channel_search_limit = slash_cfg.get("empty_channel_search_limit", 40)
+        self.reasoner: Optional[DocDriftReasoner] = None
+        if reasoner_enabled:
+            if reasoner is not None:
+                self.reasoner = reasoner
+            else:
+                try:
+                    self.reasoner = DocDriftReasoner(self.config)
+                except Exception as exc:
+                    logger.warning("[SLASH SLACK] Unable to initialize doc drift reasoner: %s", exc)
+                    self.reasoner = None
 
     def handle(self, command: str, *, session_id: Optional[str] = None) -> Dict[str, Any]:
+        reasoner_payload = self._maybe_handle_with_reasoner(command, session_id=session_id)
+        if reasoner_payload is not None:
+            return reasoner_payload
+
         try:
             query = self.parser.parse(command)
         except ValueError as exc:
@@ -423,7 +465,8 @@ class SlashSlackOrchestrator:
             return {"error": True, "message": f"Unsupported slack query type '{query.mode}'."}
 
         try:
-            result = executor.execute(query)
+            analysis = executor.execute(query)
+            analysis = self._apply_empty_channel_fallback(query, executor, analysis)
         except SlackAPIError as exc:
             logger.error("[SLASH SLACK] Slack API error: %s", exc)
             return {"error": True, "message": str(exc)}
@@ -433,17 +476,314 @@ class SlashSlackOrchestrator:
             logger.exception("[SLASH SLACK] unexpected error")
             return {"error": True, "message": f"Unexpected Slack error: {exc}"}
 
-        metadata = result.setdefault("metadata", {})
-        metadata.update({
+        llm_payload: Optional[Dict[str, Any]] = None
+        llm_error: Optional[str] = None
+        if self.llm_formatter:
+            try:
+                llm_payload, llm_error = self.llm_formatter.generate(
+                    query=self._serialize_query(query),
+                    context=analysis.get("context", {}),
+                    sections=analysis.get("sections", {}),
+                    messages=analysis.get("messages", []),
+                )
+            except Exception as exc:
+                logger.warning("[SLASH SLACK] LLM formatter raised error: %s", exc)
+                llm_payload = None
+                llm_error = str(exc)
+
+        final_result = self._build_final_payload(
+            command=command,
+            session_id=session_id,
+            query=query,
+            analysis=analysis,
+            llm_payload=llm_payload,
+            llm_error=llm_error,
+        )
+
+        msg_count = len(analysis.get("messages") or [])
+        context = analysis.get("context") or {}
+        logger.info(
+            "[SLASH SLACK] Completed %s for channel=%s (%s messages)",
+            query.mode,
+            context.get("channel_label") or query.channel_name or query.channel_id or "unknown",
+            msg_count,
+        )
+
+        graph_payload = final_result.get("graph")
+        metadata = final_result.get("metadata", {})
+        if self.graph_emit_enabled and graph_payload:
+            self._emit_graph_payload(graph_payload, metadata)
+
+        return final_result
+
+    def _maybe_handle_with_reasoner(
+        self,
+        command: str,
+        *,
+        session_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not self.reasoner:
+            return None
+        if not command or not command.strip():
+            return None
+        if not self._should_use_reasoner(command):
+            return None
+        try:
+            answer = self.reasoner.answer_question(command, source="slack")
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("[SLASH SLACK] Doc drift reasoner failed: %s", exc)
+            return None
+        logger.info("[SLASH SLACK] Doc drift reasoner handled command '%s'", command.strip()[:80])
+        if answer.error:
+            logger.debug("[SLASH SLACK] Doc drift reasoner reported error: %s", answer.error)
+        return self._build_reasoner_payload(command=command, session_id=session_id, answer=answer)
+
+    def _should_use_reasoner(self, command: str) -> bool:
+        if not self.doc_drift_keywords:
+            return False
+        lower = command.lower()
+        return any(keyword in lower for keyword in self.doc_drift_keywords)
+
+    def _build_reasoner_payload(
+        self,
+        *,
+        command: str,
+        session_id: Optional[str],
+        answer: DocDriftAnswer,
+    ) -> Dict[str, Any]:
+        sections = answer.sections or {
+            "topics": [{"title": "Doc drift overview", "insight": answer.summary, "evidence_ids": []}],
+            "decisions": [],
+            "tasks": [],
+            "open_questions": [],
+            "references": [],
+        }
+        if answer.next_steps:
+            tasks = sections.setdefault("tasks", [])
+            for step in answer.next_steps:
+                tasks.append(
+                    {
+                        "description": step,
+                        "assignees": [],
+                        "due": "",
+                        "timestamp": "",
+                        "permalink": "",
+                        "evidence_ids": [],
+                    }
+                )
+
+        graph_payload = self._graph_payload_from_reasoner(answer)
+        context = {
+            "mode": "doc_drift",
+            "question": answer.question,
+            "scenario": answer.scenario.name,
+            "api": answer.scenario.api,
+            "graph_summary": self._graph_context_dict(answer),
+            "vector_counts": {
+                "slack": len(answer.vector_bundle.slack),
+                "git": len(answer.vector_bundle.git),
+                "docs": len(answer.vector_bundle.docs),
+            },
+        }
+        metadata = {
             "raw_command": command.strip(),
-            "mode": query.mode,
+            "mode": "doc_drift_reasoner",
             "session_id": session_id,
-        })
+            "llm_used": True,
+            "llm_error": answer.error,
+        }
+        metadata.update(answer.metadata or {})
 
-        if self.graph_emit_enabled and result.get("graph"):
-            self._emit_graph_payload(result["graph"], metadata)
+        return {
+            "type": "slash_slack_summary",
+            "message": answer.summary,
+            "sections": sections,
+            "context": context,
+            "graph": graph_payload,
+            "entities": self._entities_from_reasoner(answer),
+            "doc_drift": answer.doc_drift,
+            "evidence": answer.evidence,
+            "metadata": metadata,
+        }
 
-        return result
+    def _apply_empty_channel_fallback(
+        self,
+        query: SlashSlackQuery,
+        executor: BaseSlackExecutor,
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        messages = analysis.get("messages") or []
+        if messages:
+            return analysis
+        if query.mode not in {"channel_recap"}:
+            return analysis
+
+        context = analysis.get("context") or {}
+        channel_id = query.channel_id or context.get("channel_id")
+        channel_label = context.get("channel_label") or query.channel_name or channel_id or "unknown"
+
+        if self.empty_channel_fallback_hours:
+            try:
+                fallback_range = TimeRange.from_hours(self.empty_channel_fallback_hours)
+                fallback_query = replace(query, time_range=fallback_range)
+                logger.info(
+                    "[SLASH SLACK] No recent messages for %s, expanding lookback to %sh",
+                    channel_label,
+                    self.empty_channel_fallback_hours,
+                )
+                analysis = executor.execute(fallback_query)
+                context = analysis.setdefault("context", {})
+                fallback_meta = context.setdefault("fallback", {})
+                fallback_meta["expanded_time_window_hours"] = self.empty_channel_fallback_hours
+                messages = analysis.get("messages") or []
+            except Exception as exc:
+                logger.warning("[SLASH SLACK] Expanded lookback failed: %s", exc)
+
+        if messages or not channel_id:
+            return analysis
+
+        search_terms = " ".join(query.keywords).strip() or query.raw
+        if not search_terms:
+            return analysis
+
+        try:
+            logger.info(
+                "[SLASH SLACK] Search fallback for %s with query '%s' (limit=%s)",
+                channel_label,
+                search_terms,
+                self.empty_channel_search_limit,
+            )
+            search_data = self.tooling.search_messages(
+                search_terms,
+                channel=channel_id,
+                limit=self.empty_channel_search_limit,
+            )
+            search_messages = search_data.get("messages", [])
+            if search_messages:
+                context = analysis.get("context") or {}
+                fallback_meta = context.setdefault("fallback", {})
+                fallback_meta["search_terms"] = search_terms
+                fallback_meta["search_matches"] = len(search_messages)
+                return executor._build_analysis(
+                    messages=search_messages,
+                    context=context,
+                    keywords=query.keywords,
+                )
+        except Exception as exc:
+            logger.warning("[SLASH SLACK] Search fallback failed: %s", exc)
+
+        return analysis
+
+    def _graph_context_dict(self, answer: DocDriftAnswer) -> Dict[str, Any]:
+        return {
+            "api": answer.graph_summary.api,
+            "services": answer.graph_summary.services,
+            "components": answer.graph_summary.components,
+            "docs": answer.graph_summary.docs,
+            "git_events": answer.graph_summary.git_events,
+            "slack_events": answer.graph_summary.slack_events,
+        }
+
+    def _graph_payload_from_reasoner(self, answer: DocDriftAnswer) -> Optional[Dict[str, Any]]:
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add_node(node_id: Optional[str], node_type: str, props: Dict[str, Any]) -> None:
+            if not node_id or node_id in seen:
+                return
+            nodes.append({"id": node_id, "type": node_type, "props": props})
+            seen.add(node_id)
+
+        api_id = f"api::{answer.scenario.api}"
+        add_node(api_id, "APIEndpoint", {"api": answer.scenario.api})
+
+        for service in answer.impacted.get("services", []):
+            node_id = f"service::{service}"
+            add_node(node_id, "Service", {"service_id": service})
+            edges.append({"from": node_id, "to": api_id, "type": "IMPACTS_API"})
+
+        for component in answer.impacted.get("components", []):
+            node_id = f"component::{component}"
+            add_node(node_id, "Component", {"component_id": component})
+            edges.append({"from": node_id, "to": api_id, "type": "EXPOSES_API"})
+
+        for doc in answer.impacted.get("docs", []):
+            node_id = f"doc::{doc}"
+            add_node(node_id, "DocSection", {"doc": doc})
+            edges.append({"from": node_id, "to": api_id, "type": "DOCUMENTS"})
+
+        for drift in answer.doc_drift:
+            drift_id = f"doc_drift::{drift.get('doc') or drift.get('issue')}"
+            add_node(drift_id, "DocDrift", drift)
+            edges.append({"from": drift_id, "to": api_id, "type": "DRIFT_ALERT"})
+
+        for ev in answer.evidence:
+            ev_id = ev.get("id")
+            add_node(ev_id, "Evidence", ev)
+            edges.append({"from": ev_id, "to": api_id, "type": "HAS_EVIDENCE"})
+
+        if not nodes:
+            return None
+        return {"nodes": nodes, "edges": edges}
+
+    def _entities_from_reasoner(self, answer: DocDriftAnswer) -> List[Dict[str, Any]]:
+        entities: List[Dict[str, Any]] = []
+        impacted = answer.impacted
+
+        for api in impacted.get("apis", []):
+            entities.append(
+                {
+                    "name": api,
+                    "type": "api",
+                    "apis": [api],
+                    "services": impacted.get("services", []),
+                    "components": impacted.get("components", []),
+                    "labels": ["api_endpoint"],
+                    "evidence_ids": [],
+                }
+            )
+
+        for service in impacted.get("services", []):
+            entities.append(
+                {
+                    "name": service,
+                    "type": "service",
+                    "services": [service],
+                    "components": [],
+                    "apis": impacted.get("apis", []),
+                    "labels": [],
+                    "evidence_ids": [],
+                }
+            )
+
+        for component in impacted.get("components", []):
+            entities.append(
+                {
+                    "name": component,
+                    "type": "component",
+                    "services": impacted.get("services", []),
+                    "components": [component],
+                    "apis": impacted.get("apis", []),
+                    "labels": [],
+                    "evidence_ids": [],
+                }
+            )
+
+        for doc in impacted.get("docs", []):
+            entities.append(
+                {
+                    "name": doc,
+                    "type": "doc",
+                    "services": impacted.get("services", []),
+                    "components": impacted.get("components", []),
+                    "apis": impacted.get("apis", []),
+                    "labels": ["doc_section"],
+                    "evidence_ids": [],
+                }
+            )
+
+        return entities
 
     def _emit_graph_payload(self, graph_payload: Dict[str, Any], metadata: Dict[str, Any]) -> None:
         if not self._graph_log_path:
@@ -459,4 +799,194 @@ class SlashSlackOrchestrator:
                 log_file.write("\n")
         except Exception as exc:
             logger.warning("[SLASH SLACK] Failed to persist graph payload: %s", exc)
+
+    @staticmethod
+    def _serialize_query(query: SlashSlackQuery) -> Dict[str, Any]:
+        return {
+            "raw": query.raw,
+            "mode": query.mode,
+            "channel_id": query.channel_id,
+            "channel_name": query.channel_name,
+            "thread_ts": query.thread_ts,
+            "keywords": query.keywords,
+            "entity": query.entity,
+            "time_range": query.time_range.to_dict(),
+            "limit": query.limit,
+        }
+
+    def _build_final_payload(
+        self,
+        *,
+        command: str,
+        session_id: Optional[str],
+        query: SlashSlackQuery,
+        analysis: Dict[str, Any],
+        llm_payload: Optional[Dict[str, Any]],
+        llm_error: Optional[str],
+    ) -> Dict[str, Any]:
+        fallback_summary = analysis.get("summary") or "Slack summary unavailable."
+        final_summary = (llm_payload or {}).get("summary") or fallback_summary
+        final_sections = (llm_payload or {}).get("sections") or analysis.get("sections", {})
+        final_graph = analysis.get("graph")
+        llm_graph = self._graph_from_llm_payload(llm_payload, analysis.get("context", {}))
+        final_graph = self._merge_graphs(final_graph, llm_graph)
+
+        result = {
+            "type": "slash_slack_summary",
+            "message": final_summary,
+            "sections": final_sections,
+            "context": analysis.get("context"),
+            "graph": final_graph,
+            "messages_preview": analysis.get("messages_preview"),
+            "entities": (llm_payload or {}).get("entities"),
+            "doc_drift": (llm_payload or {}).get("doc_drift"),
+            "evidence": (llm_payload or {}).get("evidence"),
+            "llm_payload": llm_payload,
+        }
+
+        metadata = result.setdefault("metadata", {})
+        metadata.update({
+            "raw_command": command.strip(),
+            "mode": query.mode,
+            "session_id": session_id,
+            "llm_used": bool(llm_payload),
+            "llm_error": llm_error,
+            "message_count": len(analysis.get("messages") or []),
+        })
+        context = analysis.get("context") or {}
+        channel_id = context.get("channel_id") or query.channel_id
+        if channel_id:
+            metadata["channel_id"] = channel_id
+        if context.get("channel_name"):
+            metadata["channel_name"] = context.get("channel_name")
+
+        if not result.get("message"):
+            result["message"] = fallback_summary
+
+        self._maybe_attach_debug_block(result, analysis, query)
+        return result
+
+    def _maybe_attach_debug_block(
+        self,
+        result: Dict[str, Any],
+        analysis: Dict[str, Any],
+        query: SlashSlackQuery,
+    ) -> None:
+        if not self.debug_block_enabled:
+            return
+        debug_block = self._build_debug_block(analysis, query)
+        if not debug_block:
+            return
+        result["debug"] = debug_block
+        result["message"] = self._append_json_block(result.get("message"), debug_block)
+
+    def _build_debug_block(self, analysis: Dict[str, Any], query: SlashSlackQuery) -> Optional[Dict[str, Any]]:
+        messages = analysis.get("messages") or []
+        retrieved_count = len(messages)
+        context = analysis.get("context") or {}
+        channel_label = (
+            context.get("channel_label")
+            or context.get("channel_name")
+            or query.channel_name
+            or query.channel_id
+            or "Slack"
+        )
+        sample_evidence: List[Dict[str, Any]] = []
+        snippet_message = next((msg for msg in messages if msg.get("text")), messages[0] if messages else None)
+        if snippet_message:
+            snippet_text = self._clean_snippet(
+                snippet_message.get("text")
+                or snippet_message.get("message")
+                or snippet_message.get("summary")
+                or ""
+            )
+            if snippet_text:
+                sample_evidence.append(
+                    {
+                        "channel": snippet_message.get("channel") or snippet_message.get("channel_name") or channel_label,
+                        "snippet": snippet_text,
+                    }
+                )
+
+        return {
+            "source": self.debug_source_label,
+            "retrieved_count": retrieved_count,
+            "sample_evidence": sample_evidence,
+            "status": "PASS" if retrieved_count > 0 else "WARN",
+        }
+
+    @staticmethod
+    def _append_json_block(message: Optional[str], payload: Dict[str, Any]) -> str:
+        block_text = json.dumps(payload, ensure_ascii=False)
+        formatted = f"```json\n{block_text}\n```"
+        if message:
+            if block_text in message:
+                return message
+            return f"{message.rstrip()}\n\n{formatted}"
+        return formatted
+
+    @staticmethod
+    def _clean_snippet(text: str, *, max_length: int = 160) -> str:
+        snippet = " ".join(text.strip().split())
+        if len(snippet) <= max_length:
+            return snippet
+        return snippet[: max_length - 3].rstrip() + "..."
+
+    def _graph_from_llm_payload(
+        self,
+        llm_payload: Optional[Dict[str, Any]],
+        context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not llm_payload:
+            return None
+
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        conversation_id = (context or {}).get("conversation_id")
+
+        entities = llm_payload.get("entities") or []
+        for entity in entities:
+            entity_id = entity.get("id") or self._stable_id(entity.get("name"), entity.get("type"), entity.get("permalink"))
+            nodes.append({"id": entity_id, "type": "Entity", "props": entity})
+            if conversation_id:
+                edges.append({"from": conversation_id, "to": entity_id, "type": "MENTIONS_ENTITY"})
+
+        doc_drifts = llm_payload.get("doc_drift") or []
+        for doc in doc_drifts:
+            doc_id = doc.get("permalink") or doc.get("doc") or self._stable_id(doc.get("doc"), doc.get("issue"))
+            nodes.append({"id": doc_id, "type": "DocDrift", "props": doc})
+            if conversation_id:
+                edges.append({"from": conversation_id, "to": doc_id, "type": "DOC_DRIFT"})
+
+        evidences = llm_payload.get("evidence") or []
+        for ev in evidences:
+            ev_id = ev.get("id") or ev.get("permalink") or self._stable_id(ev.get("channel"), ev.get("ts"))
+            nodes.append({"id": ev_id, "type": "Evidence", "props": ev})
+            if conversation_id:
+                edges.append({"from": conversation_id, "to": ev_id, "type": "HAS_EVIDENCE"})
+
+        if not nodes and not edges:
+            return None
+
+        return {"nodes": nodes, "edges": edges}
+
+    @staticmethod
+    def _merge_graphs(
+        base: Optional[Dict[str, Any]],
+        addition: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not addition:
+            return base
+        if not base:
+            return addition
+        base.setdefault("nodes", []).extend(addition.get("nodes", []))
+        base.setdefault("edges", []).extend(addition.get("edges", []))
+        return base
+
+    @staticmethod
+    def _stable_id(*parts: Optional[str]) -> str:
+        combined = "|".join([part for part in parts if part])
+        if not combined:
+            combined = f"slash-slack-{datetime.now(tz=timezone.utc).isoformat()}"
+        return hashlib.sha1(combined.encode("utf-8")).hexdigest()[:20]
 

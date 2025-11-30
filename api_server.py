@@ -2,11 +2,13 @@
 FastAPI server that provides REST and WebSocket endpoints for the UI.
 Connects to the existing AutomationAgent orchestrator.
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Event, Lock
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body, Request
@@ -14,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import tempfile
+import httpx
 
 from pathlib import Path
 from dotenv import load_dotenv
@@ -35,13 +38,22 @@ if str(project_root) not in sys.path:
 from src.agent.agent import AutomationAgent
 from src.agent.agent_registry import AgentRegistry
 from src.memory import SessionManager
+from src.memory.local_chat_cache import LocalChatCache
 from src.utils import load_config, save_config
 from src.workflow import WorkflowOrchestrator
 from src.services.feedback_logger import get_feedback_logger
+from src.services.context_resolution_service import ContextResolutionService
+from src.services.chat_storage import MongoChatStorage
+from src.utils.performance_monitor import get_performance_monitor
+from src.utils.startup_profiler import get_startup_profiler
 from src.utils.trajectory_logger import get_trajectory_logger
 from src.utils.error_logger import log_error_with_context
 from src.utils.api_logging import log_api_request, log_websocket_event, sanitize_payload
+from src.graph import ActivityService, GraphAnalyticsService, GraphService
+from src.graph.validation import GraphValidator
 from telemetry.config import get_tracer, sanitize_value, set_span_error
+from src.automation.background_jobs import ChatPersistenceWorker
+from src.vector.service_factory import validate_vectordb_config, VectorServiceConfigError
 import time
 
 # Initialize telemetry
@@ -50,12 +62,39 @@ from telemetry import init_telemetry
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+startup_profiler = get_startup_profiler()
+startup_profiler.mark("module_imported")
+
+def _configure_otel_logging():
+    """Downgrade OTLP exporter spam into a single actionable warning."""
+
+    class _OncePerRunHandler(logging.Handler):
+        def __init__(self):
+            super().__init__(level=logging.ERROR)
+            self._emitted = False
+
+        def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
+            if self._emitted:
+                return
+            self._emitted = True
+            logger.warning(
+                "[TELEMETRY] OTLP exporter unavailable – traces will remain local",
+                {"message": record.getMessage()},
+            )
+
+    exporter_logger = logging.getLogger("opentelemetry.exporter.otlp.proto.grpc.exporter")
+    exporter_logger.handlers.clear()
+    exporter_logger.addHandler(_OncePerRunHandler())
+    exporter_logger.setLevel(logging.ERROR)
+    exporter_logger.propagate = False
+
 
 # Initialize FastAPI app
 app = FastAPI(title="Cerebro OS API")
 
 # Initialize telemetry (must happen before FastAPI instrumentation)
 init_telemetry()
+_configure_otel_logging()
 
 # Add OpenTelemetry FastAPI instrumentation
 try:
@@ -97,9 +136,27 @@ app.add_middleware(
 
 # Import global ConfigManager
 from src.config_manager import get_global_config_manager, set_global_config_manager, ConfigManager
+from src.cache import StartupCacheManager
 
 # Initialize global config manager
 config_manager = get_global_config_manager()
+startup_profiler.mark("config_manager_ready")
+
+# Startup cache hydrates heavy artifacts (prompts, manifests) between launches
+startup_cache_manager = StartupCacheManager(
+    cache_path=os.getenv(
+        "STARTUP_CACHE_PATH",
+        str(project_root / "data" / "cache" / "startup_bootstrap.json"),
+    ),
+    fingerprint_sources=[
+        config_manager.get_config_path(),
+        project_root / "prompts",
+        project_root / "prompts" / "examples",
+    ],
+)
+automation_bootstrap = startup_cache_manager.load_section("automation_bootstrap")
+preloaded_prompts = automation_bootstrap.get("prompts") if automation_bootstrap else None
+startup_profiler.mark("startup_cache_ready", {"cache_hit": bool(preloaded_prompts)})
 
 # Initialize session manager
 session_manager = SessionManager(storage_dir="data/sessions", config=config_manager.get_config())
@@ -107,8 +164,38 @@ session_manager = SessionManager(storage_dir="data/sessions", config=config_mana
 # Initialize agent registry with session support
 agent_registry = AgentRegistry(config_manager.get_config(), session_manager=session_manager)
 
-# Initialize automation agent with session support
-agent = AutomationAgent(config_manager.get_config(), session_manager=session_manager)
+# Initialize automation agent with session support (prefer startup cache prompts)
+agent = AutomationAgent(
+    config_manager.get_config(),
+    session_manager=session_manager,
+    preloaded_prompts=preloaded_prompts,
+)
+startup_profiler.mark("automation_agent_ready", {"from_cache": bool(preloaded_prompts)})
+
+# Persist prompt bundle if cache miss (write once per invalidation)
+if not automation_bootstrap or not automation_bootstrap.get("prompts"):
+    startup_cache_manager.save_section(
+        "automation_bootstrap",
+        {
+            "prompts": agent.prompts,
+            "prompt_keys": sorted(agent.prompts.keys()),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    startup_profiler.mark("startup_cache_populated", {"cache_written": True})
+else:
+    startup_profiler.mark("startup_cache_populated", {"cache_written": False})
+
+# Conversation persistence
+_mongo_cfg = config_manager.get_config().get("mongo", {})
+_cache_cfg = _mongo_cfg.get("cache", {})
+chat_storage = MongoChatStorage(config_manager.get_config())
+chat_cache = LocalChatCache(
+    max_messages_per_session=_cache_cfg.get("max_messages_per_session", 75),
+    disk_path=_cache_cfg.get("disk_path", "data/cache/chat_sessions"),
+    flush_enabled=chat_storage.enabled,
+)
+chat_worker = ChatPersistenceWorker(chat_cache, chat_storage)
 
 # Lazy-load workflow orchestrator for indexing (only initialize when needed)
 _orchestrator = None
@@ -116,6 +203,118 @@ _orchestrator_lock = Lock()
 
 # Feedback logger (singleton)
 feedback_logger = get_feedback_logger()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def record_chat_event(
+    session_id: str,
+    role: str,
+    text: Optional[str],
+    metadata: Optional[Dict[str, Any]] = None,
+    vector_ids: Optional[List[str]] = None,
+) -> None:
+    """Persist chat event to cache and signal worker."""
+    if not text:
+        return
+    entry = {
+        "session_id": session_id or "default",
+        "role": role,
+        "text": text,
+        "metadata": metadata or {},
+        "vector_ids": vector_ids or [],
+        "created_at": _now_iso(),
+    }
+    chat_cache.append_message(entry)
+    chat_worker.notify_new_message()
+
+
+def _history_identity(payload: Dict[str, Any]) -> str:
+    raw_id = payload.get("_id")
+    if raw_id is not None:
+        return f"id:{raw_id}"
+    created = payload.get("created_at")
+    role = payload.get("role")
+    text = payload.get("text")
+    return f"ts:{created}|role:{role}|text:{text}"
+
+
+def _coerce_metadata(metadata: Any) -> Dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    try:
+        import json as _json
+        return _json.loads(_json.dumps(metadata, default=str))
+    except Exception:
+        return metadata
+
+
+def _normalize_history_item(payload: Dict[str, Any], source: str) -> Dict[str, Any]:
+    created_at = payload.get("created_at")
+    if isinstance(created_at, datetime):
+        created_at = created_at.isoformat()
+    elif not isinstance(created_at, str) or not created_at:
+        created_at = _now_iso()
+    text = (payload.get("text") or "").strip()
+    return {
+        "session_id": payload.get("session_id") or "default",
+        "role": payload.get("role") or "assistant",
+        "text": text,
+        "created_at": created_at,
+        "metadata": _coerce_metadata(payload.get("metadata") or {}),
+        "source": source,
+    }
+
+
+def _history_sort_key(entry: Dict[str, Any]) -> datetime:
+    value = entry.get("created_at")
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        cleaned = value.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(cleaned)
+        except ValueError:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+async def _build_chat_history_payload(session_id: str, limit: int) -> Dict[str, Any]:
+    cache_entries = chat_cache.list_recent(session_id, limit)
+    mongo_entries: List[Dict[str, Any]] = []
+    if chat_storage.enabled:
+        mongo_entries = await chat_storage.fetch_recent(session_id, limit)
+
+    seen = set()
+    combined: List[Dict[str, Any]] = []
+    for source, batch in (("cache", cache_entries), ("mongo", mongo_entries)):
+        for item in batch:
+            identity = _history_identity(item)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            combined.append(_normalize_history_item(item, source))
+
+    combined.sort(key=_history_sort_key)
+    combined = combined[-limit:]
+
+    counts = {
+        "cache": sum(1 for entry in combined if entry["source"] == "cache"),
+        "mongo": sum(1 for entry in combined if entry["source"] == "mongo"),
+    }
+    last_persisted = next(
+        (entry["created_at"] for entry in reversed(combined) if entry["source"] == "mongo"),
+        None,
+    )
+    return {
+        "session_id": session_id,
+        "messages": combined,
+        "counts": counts,
+        "last_persisted_at": last_persisted,
+    }
+
 
 def get_orchestrator():
     """Lazy-load WorkflowOrchestrator on first access to improve startup time."""
@@ -139,6 +338,44 @@ recurring_scheduler = RecurringTaskScheduler(
 
 # Store references for hot-reload (orchestrator will be lazy-loaded)
 config_manager.update_components(agent_registry, agent, None)  # Will be set when orchestrator is first accessed
+
+# Graph analytics/context services (optional)
+_graph_config = config_manager.get_config()
+graph_service = GraphService(_graph_config)
+graph_analytics_service = GraphAnalyticsService(graph_service)
+activity_service = ActivityService(_graph_config, graph_service=graph_service)
+context_resolution_cfg = _graph_config.get("context_resolution", {}) or {}
+impact_settings = context_resolution_cfg.get("impact", {}) or {}
+context_resolution_service = ContextResolutionService(
+    graph_service,
+    default_max_depth=impact_settings.get("default_max_depth", 2),
+    context_config=context_resolution_cfg,
+)
+graph_validator = GraphValidator(graph_service)
+
+
+def _require_graph_analytics() -> None:
+    if not graph_analytics_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Graph analytics service is not available. Enable Neo4j in config.yaml.",
+        )
+
+
+def _require_context_resolution() -> None:
+    if not context_resolution_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Context resolution service is not available. Enable Neo4j in config.yaml.",
+        )
+
+
+def _require_activity_service() -> None:
+    if not activity_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Activity service is not available. Enable Neo4j in config.yaml.",
+        )
 
 
 # WebSocket connection manager
@@ -312,6 +549,127 @@ bluesky_notifications = BlueskyNotificationService(
     config=config_manager.get_config()
 )
 
+# Initialize Branch Watcher service for Oqoqo self-evolving docs
+from src.services.branch_watcher_service import BranchWatcherService, get_branch_watcher_service
+branch_watcher = BranchWatcherService(
+    connection_manager=manager,
+    config=config_manager.get_config()
+)
+
+def _coerce_delay(value: Any, default: float = 8.0) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return default
+
+branch_watcher_settings = config_manager.get_config().get("branch_watcher", {}) or {}
+branch_watcher_enabled = branch_watcher_settings.get("enabled", True)
+branch_watcher_startup_delay = _coerce_delay(
+    branch_watcher_settings.get("startup_delay_seconds", 8.0)
+)
+
+branch_watcher_runtime: Dict[str, Any] = {
+    "lifecycle": "disabled" if not branch_watcher_enabled else "idle",
+    "last_start_attempt": None,
+    "last_started_at": None,
+    "last_error": None,
+    "startup_delay_seconds": branch_watcher_startup_delay,
+}
+branch_watcher_start_lock = asyncio.Lock()
+branch_watcher_start_task: Optional[asyncio.Task] = None
+
+
+def _update_branch_watcher_runtime(**updates: Any) -> None:
+    branch_watcher_runtime.update(updates)
+
+
+async def _deferred_branch_watcher_start(delay_override: Optional[float] = None) -> None:
+    if not branch_watcher_enabled:
+        logger.info("[BRANCH WATCHER] Disabled via config; skipping deferred start")
+        return
+
+    delay_seconds = branch_watcher_startup_delay if delay_override is None else max(0.0, delay_override)
+
+    async with branch_watcher_start_lock:
+        lifecycle = branch_watcher_runtime.get("lifecycle")
+        if lifecycle in {"scheduled", "starting", "running"}:
+            logger.debug("[BRANCH WATCHER] Start already in progress (%s)", lifecycle)
+            return
+        _update_branch_watcher_runtime(lifecycle="scheduled")
+
+    if delay_seconds > 0:
+        logger.info("[BRANCH WATCHER] Deferred start scheduled in %.1fs", delay_seconds)
+        try:
+            await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            _update_branch_watcher_runtime(lifecycle="cancelled")
+            raise
+
+    async with branch_watcher_start_lock:
+        # Stop if another task already transitioned us to running
+        if branch_watcher_runtime.get("lifecycle") == "running":
+            return
+        _update_branch_watcher_runtime(lifecycle="starting", last_start_attempt=_now_iso())
+
+    try:
+        await branch_watcher.start()
+        _update_branch_watcher_runtime(
+            lifecycle="running",
+            last_started_at=_now_iso(),
+            last_error=None,
+        )
+        logger.info("[BRANCH WATCHER] Background polling started")
+    except asyncio.CancelledError:
+        _update_branch_watcher_runtime(lifecycle="cancelled")
+        raise
+    except Exception as exc:
+        _update_branch_watcher_runtime(
+            lifecycle="error",
+            last_error=str(exc),
+        )
+        logger.exception("[BRANCH WATCHER] Failed to start deferred service")
+
+
+def schedule_branch_watcher_start(delay_override: Optional[float] = None) -> None:
+    global branch_watcher_start_task
+
+    if not branch_watcher_enabled:
+        _update_branch_watcher_runtime(lifecycle="disabled")
+        return
+
+    if branch_watcher_start_task and not branch_watcher_start_task.done():
+        logger.debug("[BRANCH WATCHER] Deferred start already scheduled")
+        return
+
+    branch_watcher_start_task = asyncio.create_task(_deferred_branch_watcher_start(delay_override))
+
+
+async def _cancel_branch_watcher_start_task() -> None:
+    global branch_watcher_start_task
+
+    if branch_watcher_start_task and not branch_watcher_start_task.done():
+        branch_watcher_start_task.cancel()
+        try:
+            await branch_watcher_start_task
+        except asyncio.CancelledError:
+            pass
+
+    branch_watcher_start_task = None
+
+
+def _build_branch_watcher_status() -> Dict[str, Any]:
+    status = branch_watcher.get_status()
+    status.update({
+        "enabled": branch_watcher_enabled,
+        "lifecycle": branch_watcher_runtime.get("lifecycle"),
+        "last_start_attempt": branch_watcher_runtime.get("last_start_attempt"),
+        "last_started_at": branch_watcher_runtime.get("last_started_at"),
+        "last_error": branch_watcher_runtime.get("last_error"),
+        "startup_delay_seconds": branch_watcher_runtime.get("startup_delay_seconds"),
+        "pending_start": bool(branch_watcher_start_task and not branch_watcher_start_task.done()),
+    })
+    return status
+
 # Track active agent tasks so we can support safe cancellation per session
 # Use async lock for thread-safe access
 _session_tasks_lock = asyncio.Lock()
@@ -336,6 +694,21 @@ class ChatResponse(BaseModel):
     status: str
     timestamp: str
 
+class ChatHistoryEntry(BaseModel):
+    session_id: str
+    role: str
+    text: str
+    created_at: str
+    metadata: Dict[str, Any] = {}
+    source: str
+
+
+class ChatHistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ChatHistoryEntry]
+    counts: Dict[str, int]
+    last_persisted_at: Optional[str]
+
 class SystemStats(BaseModel):
     indexed_documents: int
     total_chunks: int
@@ -356,19 +729,6 @@ class FeedbackPayload(BaseModel):
     plan_completed_at: Optional[str] = None
     step_statuses: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
-
-
-# Conversation History Models
-class ConversationMessage(BaseModel):
-    role: str  # 'user' | 'assistant' | 'system'
-    content: str
-    timestamp: Optional[str] = None
-    message_id: Optional[str] = None
-
-class ConversationHistoryResponse(BaseModel):
-    session_id: str
-    messages: List[ConversationMessage]
-    total_messages: int
 
 
 async def has_active_task(session_id: str) -> bool:
@@ -470,6 +830,68 @@ async def process_agent_request(
             "timestamp": datetime.now().isoformat()
         }, websocket)
         return
+    
+    # Check for API docs sync approval responses
+    # Triggered by user saying "yes", "sync", "update docs", etc. after a drift notification
+    approval_keywords = {"yes", "sync", "update", "approve", "apply", "sync docs", "update docs", "sync api docs"}
+    if normalized_msg in approval_keywords or normalized_msg.startswith("yes"):
+        # Check if there's a pending drift report
+        pending_report = branch_watcher.get_pending_report()
+        if pending_report:
+            logger.info(f"[API SERVER] User approved drift fix for branch '{pending_report.branch}'")
+            try:
+                from src.agent.apidocs_agent import write_api_spec
+                
+                if not pending_report.proposed_spec:
+                    await manager.send_message({
+                        "type": "error",
+                        "message": f"No proposed spec available for branch '{pending_report.branch}'. Cannot apply update.",
+                        "timestamp": datetime.now().isoformat()
+                    }, websocket)
+                    return
+                
+                # Apply the update
+                result = write_api_spec.invoke({
+                    "content": pending_report.proposed_spec,
+                    "backup": True
+                })
+                
+                if not result.get("success"):
+                    await manager.send_message({
+                        "type": "error",
+                        "message": f"Failed to apply spec update: {result.get('error', 'Unknown error')}",
+                        "timestamp": datetime.now().isoformat()
+                    }, websocket)
+                    return
+                
+                branch_name = pending_report.branch
+                branch_watcher.clear_pending_report(branch_name)
+                
+                # Send success confirmation with Swagger link
+                await manager.send_message({
+                    "type": "apidocs_sync",
+                    "message": f"✅ **API documentation updated successfully!**\n\n"
+                              f"The API spec has been synced with changes from branch `{branch_name}`.\n\n"
+                              f"📄 **View updated docs:** [Swagger UI](http://localhost:8000/docs) | [ReDoc](http://localhost:8000/redoc)",
+                    "timestamp": datetime.now().isoformat(),
+                    "apidocs_sync": {
+                        "branch": branch_name,
+                        "spec_path": result.get("path"),
+                        "backup_path": result.get("backup_path"),
+                        "swagger_url": "http://localhost:8000/docs",
+                        "redoc_url": "http://localhost:8000/redoc",
+                    }
+                }, websocket)
+                return
+                
+            except Exception as e:
+                logger.error(f"[API SERVER] Error applying drift fix: {e}", exc_info=True)
+                await manager.send_message({
+                    "type": "error",
+                    "message": f"Error applying API spec update: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                }, websocket)
+                return
 
     # Get the current event loop
     loop = asyncio.get_event_loop()
@@ -1066,15 +1488,72 @@ async def process_agent_request(
         elif result_dict.get("type") == "reply" and "completion_event" in result_dict:
             completion_event = result_dict["completion_event"]
 
+        # Check for special response types that need custom handling
+        # API Docs Drift (Oqoqo pattern) - send as apidocs_drift type for frontend drift card
+        apidocs_drift_result = None
+        apidocs_sync_result = None
+        if result_dict.get("type") == "result" and result_dict.get("agent") == "apidocs":
+            inner_result = result_dict.get("result", {})
+            if inner_result.get("type") == "apidocs_drift":
+                apidocs_drift_result = inner_result
+                logger.info(f"[API SERVER] 📄 Detected apidocs_drift result, will send as apidocs_drift type")
+            elif inner_result.get("type") == "apidocs_sync":
+                apidocs_sync_result = inner_result
+                logger.info(f"[API SERVER] ✅ Detected apidocs_sync result (no drift)")
+        
         # Build response payload
-        response_payload = {
-            "type": "response",
-            "message": formatted_message,
-            "status": result_status,
-            "session_id": session_id,
-            "interaction_count": len(session_memory.interactions),
-            "timestamp": datetime.now().isoformat()
-        }
+        if apidocs_drift_result:
+            # Send as apidocs_drift type for the frontend drift card
+            response_payload = {
+                "type": "apidocs_drift",
+                "message": apidocs_drift_result.get("message", "API Documentation Drift Detected"),
+                "status": "completed",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat(),
+                "apidocs_drift": {
+                    "has_drift": apidocs_drift_result.get("has_drift", True),
+                    "changes": apidocs_drift_result.get("changes", []),
+                    "summary": apidocs_drift_result.get("summary", ""),
+                    "proposed_spec": apidocs_drift_result.get("proposed_spec"),
+                    "change_count": apidocs_drift_result.get("change_count", 0),
+                    "breaking_changes": apidocs_drift_result.get("breaking_changes", 0),
+                }
+            }
+            logger.info(f"[API SERVER] Built apidocs_drift response payload with {apidocs_drift_result.get('change_count', 0)} changes")
+        elif apidocs_sync_result:
+            # No drift - send as system message
+            response_payload = {
+                "type": "system",
+                "message": apidocs_sync_result.get("message", "✅ API documentation is in sync with code."),
+                "status": "completed",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            logger.info(f"[API SERVER] Built apidocs_sync response payload (no drift)")
+        else:
+            response_payload = {
+                "type": "response",
+                "message": formatted_message,
+                "status": result_status,
+                "session_id": session_id,
+                "interaction_count": len(session_memory.interactions),
+                "timestamp": datetime.now().isoformat()
+            }
+            result_payload = None
+            if isinstance(result_dict, dict):
+                final_result = result_dict.get("final_result")
+                nested_result = result_dict.get("result") if isinstance(result_dict.get("result"), dict) else None
+                if isinstance(final_result, dict):
+                    result_payload = final_result
+                elif isinstance(nested_result, dict):
+                    result_payload = nested_result
+                elif result_dict.get("type") in {"slash_slack_summary", "slash_git_summary"}:
+                    result_payload = result_dict
+
+            if result_payload:
+                response_payload["result"] = result_payload
+                if result_payload.get("type") == "slash_slack_summary":
+                    logger.info("[API SERVER] Included slash_slack_summary payload in response for frontend consumption")
         
         # Add files array if present
         if files_array is not None:
@@ -1096,6 +1575,13 @@ async def process_agent_request(
         if completion_event is not None:
             response_payload["completion_event"] = completion_event
             logger.info(f"[API SERVER] Including completion_event: {completion_event.get('action_type')}")
+
+        record_chat_event(
+            session_id,
+            "assistant",
+            formatted_message,
+            metadata={"transport": "websocket", "status": result_status},
+        )
 
         # CRITICAL: Validate response payload before sending
         def validate_response_payload(payload: dict) -> tuple:
@@ -1195,6 +1681,16 @@ async def process_agent_request(
                 _session_response_acks[session_id].set()
                 logger.info(f"[API SERVER] Response delivery acknowledged for session {session_id}")
 
+        # Always emit a completion status so the launcher clears the processing banner
+        normalized_result_status = (result_status or "").lower()
+        if normalized_result_status not in {"cancelled", "error", "failed"}:
+            await manager.send_message({
+                "type": "status",
+                "status": "complete",
+                "message": "",
+                "timestamp": datetime.now().isoformat()
+            }, websocket)
+
         if result_status == "cancelled":
             await manager.send_message({
                 "type": "status",
@@ -1227,6 +1723,12 @@ async def process_agent_request(
                 "session_id": session_id,
                 "timestamp": datetime.now().isoformat()
             }, websocket)
+            record_chat_event(
+                session_id,
+                "assistant",
+                "Execution cancelled.",
+                metadata={"transport": "websocket", "status": "cancelled"},
+            )
             logger.info(f"[API SERVER] ✅ Cancellation response sent to session {session_id}")
             
             # Signal response delivered for cancellation
@@ -1260,6 +1762,12 @@ async def process_agent_request(
                 "session_id": session_id,
                 "timestamp": datetime.now().isoformat()
             }, websocket)
+            record_chat_event(
+                session_id,
+                "assistant",
+                f"Error: {str(e)}",
+                metadata={"transport": "websocket", "status": "error"},
+            )
             logger.info(f"[API SERVER] ✅ Error response sent to session {session_id}")
             
             # Signal response delivered for error
@@ -1350,70 +1858,209 @@ async def get_stats():
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/conversation/history/{session_id}", response_model=ConversationHistoryResponse)
-async def get_conversation_history(session_id: str, limit: int = 100):
-    """
-    Retrieve conversation history for a given session.
-    Returns the most recent messages in chronological order.
-    """
-    tracer = get_tracer(__name__)
-    with tracer.start_as_current_span("get_conversation_history") as span:
-        span.set_attribute("session_id", session_id)
-        span.set_attribute("limit", limit)
 
+@app.get("/api/storage/status")
+async def storage_status():
+    """Report health for chat persistence layers."""
+    mongo_status = await chat_storage.health()
+    cache_status = chat_cache.describe()
+    startup_cache_status = startup_cache_manager.describe()
+    return {
+        "mongo": mongo_status,
+        "cache": cache_status,
+        "startup_cache": startup_cache_status,
+    }
+
+
+@app.get("/api/vector/health")
+async def vector_health():
+    """Return connectivity details for the configured Qdrant instance."""
+    try:
+        vectordb_config = validate_vectordb_config(config_manager.get_config())
+    except VectorServiceConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    headers = {"Content-Type": "application/json"}
+    api_key = vectordb_config.get("api_key")
+    if api_key:
+        headers["api-key"] = api_key
+    base_url = vectordb_config["url"].rstrip("/")
+    timeout = vectordb_config.get("timeout_seconds", 6.0)
+
+    async with httpx.AsyncClient(base_url=base_url, headers=headers, timeout=timeout) as client:
+        start = time.perf_counter()
         try:
-            # Get session from SessionManager
-            session = session_manager.get_session(session_id)
-            if not session:
-                logger.info(f"No session found for {session_id}, returning empty history")
-                # Return empty history instead of 404 - session may not exist yet
-                return ConversationHistoryResponse(
-                    session_id=session_id,
-                    messages=[],
-                    total_messages=0
-                )
+            response = await client.get("/collections")
+            response.raise_for_status()
+        except Exception as exc:
+            logger.error("[VECTOR HEALTH] Failed to query Qdrant: %s", exc)
+            raise HTTPException(status_code=502, detail=f"Failed to query Qdrant: {exc}") from exc
 
-            # Get conversation history from session
-            conversation_history = getattr(session, 'conversation_history', [])
+        latency_ms = (time.perf_counter() - start) * 1000
+        collections = response.json().get("result", {}).get("collections", [])
+        return {
+            "status": "ok",
+            "url": str(client.base_url),
+            "collection": vectordb_config["collection"],
+            "collections_visible": len(collections),
+            "latency_ms": round(latency_ms, 2),
+        }
 
-            # Take the most recent messages (up to limit)
-            history = conversation_history[-limit:] if conversation_history else []
 
-            # Convert to API format
-            messages = []
-            for msg in history:
-                # Handle different message formats
-                role = msg.get("role", "assistant")
-                content = msg.get("content", "")
+@app.get("/api/chat/history", response_model=ChatHistoryResponse)
+async def get_chat_history(session_id: str, limit: int = 50):
+    """Return cached + persisted chat history for a session."""
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    limit = max(1, min(limit, 500))
+    payload = await _build_chat_history_payload(session_id, limit)
+    return payload
 
-                # Skip empty messages
-                if not content:
-                    continue
 
-                messages.append(ConversationMessage(
-                    role=role,
-                    content=content,
-                    timestamp=msg.get("timestamp", datetime.now().isoformat()),
-                    message_id=msg.get("message_id", msg.get("id"))
-                ))
+@app.get("/api/activity-graph/activity-level")
+async def get_activity_graph_activity_level(
+    component_id: str,
+    window_hours: int = 168,
+    limit: int = 15,
+):
+    """
+    Return aggregated activity score and recent signals for a component.
+    """
+    if not component_id:
+        raise HTTPException(status_code=400, detail="component_id is required")
 
-            span.set_attribute("messages_count", len(messages))
-            logger.info(f"Retrieved {len(messages)} messages for session {session_id}")
+    _require_graph_analytics()
+    limit = max(1, min(limit, 50))
+    window_hours = max(0, window_hours)
+    result = graph_analytics_service.get_component_activity(
+        component_id=component_id,
+        window_hours=window_hours,
+        limit=limit,
+    )
+    return result
 
-            return ConversationHistoryResponse(
-                session_id=session_id,
-                messages=messages,
-                total_messages=len(messages)
-            )
-        except Exception as e:
-            logger.error(f"Error retrieving conversation history: {e}", exc_info=True)
-            set_span_error(span, e)
-            # Return empty history on error instead of raising exception
-            return ConversationHistoryResponse(
-                session_id=session_id,
-                messages=[],
-                total_messages=0
-            )
+
+@app.get("/api/activity-graph/dissatisfaction")
+async def get_activity_graph_dissatisfaction(
+    window_hours: int = 168,
+    limit: int = 5,
+    components: Optional[List[str]] = None,
+):
+    """
+    Return leaderboard of components ranked by dissatisfaction signals.
+    """
+    _require_graph_analytics()
+    limit = max(1, min(limit, 25))
+    window_hours = max(0, window_hours)
+    results = graph_analytics_service.get_dissatisfaction_leaderboard(
+        window_hours=window_hours,
+        limit=limit,
+        components=components,
+    )
+    return {
+        "window_hours": window_hours,
+        "limit": limit,
+        "results": results,
+    }
+
+
+@app.get("/api/activity/component/{component_id}")
+async def get_activity_component(component_id: str, window_days: int = 14):
+    """
+    Return aggregated Git/Slack/doc-drift metrics for a component.
+    """
+    if not component_id:
+        raise HTTPException(status_code=400, detail="component_id is required")
+    _require_activity_service()
+    window_days = max(0, window_days)
+    return activity_service.get_activity_for_component(component_id, window_days=window_days)
+
+
+@app.get("/api/activity/top-components")
+async def get_activity_top_components(limit: int = 5, window_days: int = 14):
+    """
+    Return the noisiest components ranked by doc-drift intensity.
+    """
+    _require_activity_service()
+    limit = max(1, min(limit, 25))
+    window_days = max(0, window_days)
+    results = activity_service.get_top_components_by_doc_drift(limit=limit, window_days=window_days)
+    return {
+        "window_days": window_days,
+        "limit": limit,
+        "results": results,
+    }
+
+
+@app.get("/api/context-resolution/impacts")
+async def get_context_resolution_impacts(
+    api_id: Optional[str] = None,
+    component_id: Optional[str] = None,
+    max_depth: Optional[int] = None,
+    include_docs: Optional[bool] = None,
+    include_services: Optional[bool] = None,
+):
+    """
+    Return docs/services/components impacted by a component/API change.
+    """
+    if not api_id and not component_id:
+        raise HTTPException(status_code=400, detail="api_id or component_id is required")
+
+    _require_context_resolution()
+    include_docs = (
+        include_docs
+        if include_docs is not None
+        else impact_settings.get("include_docs", True)
+    )
+    include_services = (
+        include_services
+        if include_services is not None
+        else impact_settings.get("include_services", True)
+    )
+
+    result = context_resolution_service.resolve_impacts(
+        api_id=api_id,
+        component_id=component_id,
+        max_depth=max_depth,
+        include_docs=include_docs,
+        include_services=include_services,
+    )
+    return result
+
+
+@app.post("/api/context-resolution/changes")
+async def post_context_resolution_changes(request: ContextChangeRequest):
+    """
+    Given changed code artifacts (and optional component), return docs/components to update.
+    """
+    if not request.component_id and not request.artifact_ids:
+        raise HTTPException(status_code=400, detail="component_id or artifact_ids is required")
+
+    _require_context_resolution()
+    result = context_resolution_service.resolve_change_impacts(
+        component_id=request.component_id,
+        artifact_ids=request.artifact_ids,
+        max_depth=request.max_depth,
+        include_docs=request.include_docs,
+        include_activity=request.include_activity,
+        include_cross_repo=request.include_cross_repo,
+        activity_window_hours=request.activity_window_hours,
+    )
+    return result
+
+
+@app.get("/api/graph/validation")
+async def get_graph_validation():
+    """
+    Run lightweight graph validation checks.
+    """
+    if not graph_validator.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Graph validator unavailable. Enable Neo4j in config.yaml.",
+        )
+    return graph_validator.run_checks()
+
 
 @app.post("/api/telemetry/slash-command")
 async def record_slash_command_telemetry(data: Dict[str, Any] = Body(...)):
@@ -1424,7 +2071,6 @@ async def record_slash_command_telemetry(data: Dict[str, Any] = Body(...)):
         timestamp = data.get("timestamp")
         
         # Record via performance monitor (same as backend does)
-        from src.utils.performance_monitor import get_performance_monitor
         try:
             get_performance_monitor().record_batch_operation("slash_command_usage", 1)
         except Exception as e:
@@ -1485,6 +2131,16 @@ class FrontendLogEntry(BaseModel):
     error: Optional[Dict[str, Any]] = None
 
 
+class ContextChangeRequest(BaseModel):
+    component_id: Optional[str] = None
+    artifact_ids: Optional[List[str]] = None
+    max_depth: Optional[int] = None
+    include_docs: bool = True
+    include_activity: bool = True
+    include_cross_repo: Optional[bool] = None
+    activity_window_hours: Optional[int] = None
+
+
 @app.post("/api/logs")
 async def receive_frontend_log(log_entry: FrontendLogEntry):
     """Receive and store frontend logs for unified logging"""
@@ -1531,6 +2187,126 @@ async def receive_frontend_log(log_entry: FrontendLogEntry):
         # Don't raise error - logging failures shouldn't break the app
         return {"status": "error", "message": str(exc)}
 
+
+@app.post("/webhooks/github")
+async def github_webhook(request: Request):
+    """
+    Handle GitHub webhook events for PR notifications.
+
+    Processes pull_request events, validates signatures, and stores PR metadata
+    for the Git agent to query.
+    """
+    try:
+        # Get raw body for signature verification
+        body = await request.body()
+
+        # Get signature from header
+        signature = request.headers.get("X-Hub-Signature-256", "")
+
+        # Get event type
+        event_type = request.headers.get("X-GitHub-Event", "")
+
+        # Parse JSON payload
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            logger.error("[GITHUB WEBHOOK] Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        # Initialize webhook service
+        from src.services.github_webhook_service import GitHubWebhookService
+        webhook_service = GitHubWebhookService(config_manager.get_config())
+
+        # Verify signature
+        if not webhook_service.verify_signature(body, signature):
+            logger.error("[GITHUB WEBHOOK] Signature verification failed")
+            raise HTTPException(status_code=401, detail="Invalid signature")
+
+        # Process PR event
+        pr_metadata = webhook_service.process_pr_event(event_type, payload)
+
+        # If event was ignored, return success but note it
+        if pr_metadata.get("ignored"):
+            logger.info(f"[GITHUB WEBHOOK] Event ignored: {pr_metadata.get('reason')}")
+            return {
+                "status": "ignored",
+                "reason": pr_metadata.get("reason"),
+            }
+
+        # Broadcast WebSocket notification for PR events
+        if event_type == "pull_request" and not pr_metadata.get("ignored"):
+            action = pr_metadata.get("action", "unknown")
+            pr_number = pr_metadata.get("pr_number")
+            title = pr_metadata.get("title", "")
+            repo = pr_metadata.get("repo", "")
+            branch = pr_metadata.get("base_branch", "")
+            author = pr_metadata.get("author", "")
+            url = pr_metadata.get("url", "")
+
+            # Create notification message based on action
+            notification_messages = {
+                "opened": f"New PR opened: #{pr_number} - {title}",
+                "ready_for_review": f"PR #{pr_number} ready for review: {title}",
+                "closed": f"PR #{pr_number} {'merged' if pr_metadata.get('merged_at') else 'closed'}: {title}",
+                "synchronize": f"PR #{pr_number} updated with new commits: {title}",
+                "reopened": f"PR #{pr_number} reopened: {title}",
+            }
+
+            notification_message = notification_messages.get(
+                action,
+                f"PR #{pr_number} {action} on {repo}/{branch}: {title}"
+            )
+
+            # Broadcast to all connected WebSocket clients
+            websocket_message = {
+                "type": "github_pr",
+                "message": notification_message,
+                "github_pr": {
+                    "repo": repo,
+                    "branch": branch,
+                    "number": pr_number,
+                    "title": title,
+                    "author": author,
+                    "url": url,
+                    "action": action,
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Send to all connected clients
+            for websocket in manager.active_connections:
+                try:
+                    await websocket.send_json(websocket_message)
+                    logger.info(f"[GITHUB WEBHOOK] Sent PR notification to WebSocket client")
+                except Exception as e:
+                    logger.warning(f"[GITHUB WEBHOOK] Failed to send to WebSocket: {e}")
+
+            # Send system notification (optional - using notifications agent)
+            try:
+                from src.agent.notifications_agent import send_system_notification
+                send_system_notification(
+                    title="GitHub PR Event",
+                    message=notification_message,
+                    sound="Glass",
+                )
+                logger.info(f"[GITHUB WEBHOOK] Sent system notification")
+            except Exception as e:
+                logger.warning(f"[GITHUB WEBHOOK] Failed to send system notification: {e}")
+
+        logger.info(f"[GITHUB WEBHOOK] Successfully processed {event_type} event")
+        return {
+            "status": "success",
+            "event_type": event_type,
+            "pr_metadata": pr_metadata,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"[GITHUB WEBHOOK] Error processing webhook: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
     """Synchronous chat endpoint (for simple requests)"""
@@ -1539,11 +2315,23 @@ async def chat(message: ChatMessage):
         
         # Get session ID from request if available, otherwise use default
         session_id = message.session_id or "default"
+        record_chat_event(
+            session_id,
+            "user",
+            message.message,
+            metadata={"transport": "rest"},
+        )
         
         # Handle /clear command
         normalized_msg = message.message.strip().lower() if message.message else ""
         if normalized_msg == "/clear" or normalized_msg == "clear":
             session_manager.clear_session(session_id)
+            record_chat_event(
+                session_id,
+                "assistant",
+                "✨ Context cleared. Starting a new session.",
+                metadata={"transport": "rest", "status": "completed"},
+            )
             return ChatResponse(
                 response="✨ Context cleared. Starting a new session.",
                 status="completed",
@@ -1617,6 +2405,12 @@ async def chat(message: ChatMessage):
             response_text = str(result_dict)
             status = "completed"
 
+        record_chat_event(
+            session_id,
+            "assistant",
+            response_text,
+            metadata={"transport": "rest", "status": status},
+        )
         return ChatResponse(
             response=response_text,
             status=status,
@@ -1752,6 +2546,7 @@ async def list_commands():
             {"id": "whatsapp", "title": "WhatsApp", "icon": "💬", "type": "with_input", "placeholder": "What to do with WhatsApp...", "category": "Communication", "description": "Read and analyze WhatsApp messages", "keywords": ["whatsapp", "wa"]},
             {"id": "wa", "title": "WA", "icon": "💬", "type": "with_input", "placeholder": "What to do with WhatsApp...", "category": "Communication", "description": "WhatsApp (alias)", "keywords": ["whatsapp", "wa"]},
             {"id": "discord", "title": "Discord", "icon": "💬", "type": "with_input", "placeholder": "What to do with Discord...", "category": "Communication", "description": "Send Discord messages", "keywords": ["discord", "message"]},
+            {"id": "slack", "title": "Slack", "icon": "💬", "type": "with_input", "placeholder": "e.g. search #incidents for errors...", "category": "Communication", "description": "Fetch and summarize Slack discussions", "keywords": ["slack", "channel", "chat", "search"]},
             
             # Social Media
             {"id": "bluesky", "title": "Bluesky", "icon": "🦋", "type": "with_input", "placeholder": "What to post...", "category": "Social", "description": "Post to Bluesky", "keywords": ["bluesky", "post", "social"]},
@@ -1765,6 +2560,10 @@ async def list_commands():
             {"id": "day", "title": "Day", "icon": "📅", "type": "with_input", "placeholder": "Generate daily briefing...", "category": "Productivity", "description": "Generate comprehensive daily briefings", "keywords": ["day", "daily", "briefing", "overview"]},
             {"id": "report", "title": "Report", "icon": "📄", "type": "with_input", "placeholder": "What report to generate...", "category": "Productivity", "description": "Generate PDF reports from local files", "keywords": ["report", "pdf", "generate"]},
             {"id": "recurring", "title": "Recurring", "icon": "🔄", "type": "with_input", "placeholder": "Schedule recurring task...", "category": "Productivity", "description": "Schedule recurring tasks", "keywords": ["recurring", "schedule", "repeat"]},
+            {"id": "git", "title": "GitHub PRs", "icon": "🐙", "type": "with_input", "placeholder": "e.g. PR #42 or open PRs on main...", "category": "Development", "description": "Inspect GitHub pull requests", "keywords": ["git", "github", "pr", "pull request"]},
+            {"id": "pr", "title": "PR Lookup", "icon": "🐙", "type": "with_input", "placeholder": "Inspect PR #123...", "category": "Development", "description": "Alias for GitHub PR summaries", "keywords": ["pr", "pull request", "github"]},
+            {"id": "oq", "title": "Activity Intelligence", "icon": "🧭", "type": "with_input", "placeholder": "Ask about recent activity...", "category": "Intelligence", "description": "Combine Slack + Git signals for status updates", "keywords": ["oq", "activity", "status", "recent work"]},
+            {"id": "activity", "title": "Activity Query", "icon": "🧭", "type": "with_input", "placeholder": "e.g. What's happening with onboarding?", "category": "Intelligence", "description": "Alias for Oqoqo reasoning", "keywords": ["activity", "oqoqo", "status"]},
             
             # Media
             {"id": "spotify", "title": "Spotify", "icon": "🎵", "type": "with_input", "placeholder": "Control Spotify...", "category": "Media", "description": "Control Spotify playback", "keywords": ["spotify", "music", "play"]},
@@ -2263,7 +3062,7 @@ async def update_config(request: ConfigUpdateRequest):
         updated_config = config_manager.update_config(request.updates)
         
         # Update component references
-        config_manager.update_components(agent_registry, agent, orchestrator)
+        config_manager.update_components(agent_registry, agent, _orchestrator)
         
         # Return sanitized updated config
         sanitized = updated_config.copy()
@@ -2296,7 +3095,7 @@ async def reload_config_endpoint():
     """Force reload configuration from file."""
     try:
         config_manager.reload_config()
-        config_manager.update_components(agent_registry, agent, orchestrator)
+        config_manager.update_components(agent_registry, agent, _orchestrator)
         return {"success": True, "message": "Config reloaded from file"}
     except Exception as e:
         logger.error(f"Error reloading config: {e}")
@@ -2364,6 +3163,20 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                 continue
 
             logger.info(f"WebSocket received (session {session_id}): message='{message}', command='{command}'")
+            if stripped_message:
+                record_chat_event(
+                    session_id,
+                    "user",
+                    stripped_message,
+                    metadata={"transport": "websocket"},
+                )
+            elif command:
+                record_chat_event(
+                    session_id,
+                    "user",
+                    command,
+                    metadata={"transport": "websocket", "input_type": "command"},
+                )
 
             # Handle /help command - show help in sidebar (frontend handles this)
             normalized_message = stripped_message.lower().strip() if stripped_message else ""
@@ -2576,6 +3389,12 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                     "session_status": "cleared",
                     "timestamp": datetime.now().isoformat()
                 }, websocket)
+                record_chat_event(
+                    session_id,
+                    "assistant",
+                    "✨ Context cleared. Starting a new session.",
+                    metadata={"transport": "websocket", "type": "system"},
+                )
                 logger.info(f"Session cleared successfully for session {session_id}")
                 continue
 
@@ -3286,11 +4105,21 @@ async def text_to_speech_api(
 @app.on_event("startup")
 async def startup_event():
     """Start background services on app startup."""
+    startup_profiler.mark("fastapi_startup_event")
     logger.info("Starting recurring task scheduler...")
     await recurring_scheduler.start()
 
     logger.info("Starting Bluesky notification service...")
     await bluesky_notifications.start()
+    
+    if branch_watcher_enabled:
+        logger.info("Scheduling Branch Watcher service (Oqoqo API docs)...")
+        schedule_branch_watcher_start()
+    else:
+        logger.info("Branch Watcher service disabled via config; skipping startup")
+
+    logger.info("Starting chat persistence worker...")
+    await chat_worker.start()
     
     # Background warm-up: Initialize heavy components after server is ready
     async def warm_up_orchestrator():
@@ -3307,6 +4136,9 @@ async def startup_event():
     # Start background task (fire and forget)
     asyncio.create_task(warm_up_orchestrator())
 
+    startup_profiler.mark("fastapi_startup_complete")
+    logger.info("[STARTUP] Backend timeline", {"events": startup_profiler.summary()})
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -3316,6 +4148,14 @@ async def shutdown_event():
 
     logger.info("Stopping Bluesky notification service...")
     await bluesky_notifications.stop()
+    
+    logger.info("Stopping Branch Watcher service...")
+    await _cancel_branch_watcher_start_task()
+    await branch_watcher.stop()
+    _update_branch_watcher_runtime(lifecycle="stopped")
+
+    logger.info("Stopping chat persistence worker...")
+    await chat_worker.stop()
 
 
 # API endpoint for managing recurring tasks
@@ -3766,6 +4606,14 @@ async def spotify_pause():
 
         result = client.pause_playback()
         logger.info(f"Pause result: {result}")
+        
+        # Broadcast playback paused event to all WebSocket clients
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "pause",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
         # Handle 204 No Content responses
         if result.get("status_code") == 204:
             return {"success": True, "message": "Playback paused"}
@@ -3829,6 +4677,14 @@ async def spotify_play():
             raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
 
         result = client.resume_playback()
+        
+        # Broadcast playback started event to all WebSocket clients
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "play",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
         # Handle 204 No Content responses
         if result.get("status_code") == 204:
             return {"success": True, "message": "Playback resumed"}
@@ -3864,6 +4720,14 @@ async def spotify_next():
         # Use web player device if available
         global web_player_device_id
         result = client.skip_to_next(device_id=web_player_device_id)
+        
+        # Broadcast track change event to all WebSocket clients
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "next",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
         return {"success": True, "message": "Skipped to next track"}
     except HTTPException:
         raise
@@ -3896,11 +4760,432 @@ async def spotify_previous():
         # Use web player device if available
         global web_player_device_id
         result = client.skip_to_previous(device_id=web_player_device_id)
+        
+        # Broadcast track change event to all WebSocket clients
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "previous",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
         return {"success": True, "message": "Skipped to previous track"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error skipping to previous track: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# API DOCS - SELF-EVOLVING DOCUMENTATION (OQOQO PATTERN)
+# ============================================================================
+
+@app.get("/api/apidocs/spec")
+async def get_api_spec():
+    """
+    Get the current API specification from docs/api-spec.yaml.
+    
+    Returns the human-facing API documentation that may drift from code.
+    """
+    try:
+        from src.agent.apidocs_agent import read_api_spec
+        result = read_api_spec.invoke({})
+        
+        if not result.get("exists"):
+            raise HTTPException(status_code=404, detail=result.get("error", "API spec not found"))
+        
+        return {
+            "success": True,
+            "path": result["path"],
+            "content": result["content"],
+            "line_count": result.get("line_count", 0)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading API spec: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apidocs/code")
+async def get_api_code():
+    """
+    Get extracted endpoint definitions from api_server.py.
+    
+    Returns the actual API as implemented in code (source of truth).
+    """
+    try:
+        from src.agent.apidocs_agent import read_api_code
+        result = read_api_code.invoke({"include_full": False})
+        
+        if not result.get("exists"):
+            raise HTTPException(status_code=404, detail=result.get("error", "API code not found"))
+        
+        return {
+            "success": True,
+            "path": result["path"],
+            "endpoint_count": result["endpoint_count"],
+            "endpoints": result["endpoints"],
+            "content": result["content"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading API code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApidocsCheckRequest(BaseModel):
+    """Request body for drift check."""
+    include_proposed_spec: bool = True
+
+
+@app.post("/api/apidocs/check-drift")
+async def check_api_drift(request: ApidocsCheckRequest = ApidocsCheckRequest()):
+    """
+    Check for drift between API code and documentation.
+    
+    Uses LLM-based semantic diff to detect meaningful API changes:
+    - New/removed endpoints
+    - Parameter changes (added, removed, type changed)
+    - Response schema changes
+    - Breaking vs non-breaking changes
+    
+    Returns a drift report with:
+    - List of changes detected
+    - Human-readable summary
+    - Proposed spec update (if drift found)
+    """
+    try:
+        from src.agent.apidocs_agent import read_api_spec, read_api_code
+        from src.services.api_diff_service import get_api_diff_service
+        
+        # Read current spec
+        spec_result = read_api_spec.invoke({})
+        if not spec_result.get("exists"):
+            raise HTTPException(status_code=404, detail="API spec not found. Create docs/api-spec.yaml first.")
+        
+        # Read code endpoints (use summary, not full code - more efficient for LLM)
+        code_result = read_api_code.invoke({"include_full": False})
+        if not code_result.get("exists"):
+            raise HTTPException(status_code=404, detail="API code not found")
+        
+        # Run semantic diff
+        diff_service = get_api_diff_service(config_manager.get_config())
+        drift_report = diff_service.check_drift(
+            code_content=code_result["content"],
+            spec_content=spec_result["content"]
+        )
+        
+        result = drift_report.to_dict()
+        
+        # Optionally exclude proposed spec (can be large)
+        if not request.include_proposed_spec:
+            result.pop("proposed_spec", None)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking API drift: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApidocsApplyRequest(BaseModel):
+    """Request body for applying spec update."""
+    proposed_spec: str
+    create_backup: bool = True
+
+
+@app.post("/api/apidocs/apply")
+async def apply_api_spec_update(request: ApidocsApplyRequest):
+    """
+    Apply a proposed spec update to docs/api-spec.yaml.
+    
+    This is called after user approves the drift fix.
+    Creates a backup before overwriting.
+    """
+    try:
+        from src.agent.apidocs_agent import write_api_spec
+        
+        result = write_api_spec.invoke({
+            "content": request.proposed_spec,
+            "backup": request.create_backup
+        })
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to apply update"))
+        
+        return {
+            "success": True,
+            "message": "API spec updated successfully",
+            "path": result["path"],
+            "backup_path": result.get("backup_path")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying API spec update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apidocs/urls")
+async def get_api_docs_urls():
+    """
+    Get URLs to view API documentation.
+    
+    Returns links to Swagger UI, ReDoc, and the spec file.
+    """
+    try:
+        from src.agent.apidocs_agent import get_api_spec_url
+        return get_api_spec_url.invoke({})
+    except Exception as e:
+        logger.error(f"Error getting API docs URLs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApidocsBranchCheckRequest(BaseModel):
+    """Request body for branch-based drift check."""
+    branch_name: str
+    include_proposed_spec: bool = True
+
+
+@app.post("/api/apidocs/check-branch")
+async def check_branch_for_drift(request: ApidocsBranchCheckRequest):
+    """
+    Check if a GitHub branch has API changes that cause documentation drift.
+    
+    Compares the specified branch against main to detect if api_server.py changed.
+    If changes are detected, runs semantic diff against docs/api-spec.yaml.
+    
+    This is the Oqoqo pattern for PR-based self-evolving documentation.
+    
+    Args:
+        branch_name: The feature branch to check against main
+        include_proposed_spec: Whether to generate a proposed spec update
+        
+    Returns:
+        - has_api_changes: Whether the monitored file changed in the branch
+        - has_drift: Whether there's drift between code and spec
+        - changes: List of detected API changes
+        - proposed_spec: Updated spec YAML (if drift found and requested)
+    """
+    try:
+        from src.services.github_pr_service import get_github_pr_service, GitHubAPIError
+        from src.agent.apidocs_agent import read_api_spec
+        from src.services.api_diff_service import get_api_diff_service
+        
+        github_service = get_github_pr_service()
+        
+        # Step 1: Check if the branch has changes to the monitored file
+        logger.info(f"[APIDOCS] Checking branch '{request.branch_name}' for API changes")
+        branch_result = github_service.check_branch_for_api_changes(request.branch_name)
+        
+        if branch_result.get("error"):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"GitHub API error: {branch_result['error']}"
+            )
+        
+        if not branch_result.get("has_changes"):
+            return {
+                "has_api_changes": False,
+                "has_drift": False,
+                "branch": request.branch_name,
+                "base_branch": branch_result.get("base_branch", "main"),
+                "monitored_file": branch_result.get("monitored_file"),
+                "message": f"No changes to {branch_result.get('monitored_file')} in branch '{request.branch_name}'"
+            }
+        
+        # Step 2: Get current spec
+        spec_result = read_api_spec.invoke({})
+        if not spec_result.get("exists"):
+            raise HTTPException(
+                status_code=404, 
+                detail="API spec not found. Create docs/api-spec.yaml first."
+            )
+        
+        # Step 3: Run semantic diff between branch code and current spec
+        branch_code = branch_result.get("branch_file_content", "")
+        if not branch_code:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch file content from branch"
+            )
+        
+        diff_service = get_api_diff_service(config_manager.get_config())
+        drift_report = diff_service.check_drift(
+            code_content=branch_code,
+            spec_content=spec_result["content"]
+        )
+        
+        result = {
+            "has_api_changes": True,
+            "has_drift": drift_report.has_drift,
+            "branch": request.branch_name,
+            "base_branch": branch_result.get("base_branch", "main"),
+            "monitored_file": branch_result.get("monitored_file"),
+            "total_files_changed": branch_result.get("total_files_changed", 0),
+            "ahead_by": branch_result.get("ahead_by", 0),
+            "changes": [c.to_dict() if hasattr(c, 'to_dict') else c for c in drift_report.changes],
+            "change_count": len(drift_report.changes),
+            "breaking_changes": sum(1 for c in drift_report.changes if hasattr(c, 'severity') and c.severity.value == "breaking"),
+            "summary": drift_report.summary,
+        }
+        
+        # Optionally include proposed spec
+        if request.include_proposed_spec and drift_report.has_drift:
+            result["proposed_spec"] = drift_report.proposed_spec
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking branch for drift: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apidocs/watcher/status")
+async def get_branch_watcher_status():
+    """
+    Get the current status of the Branch Watcher service.
+    
+    Returns information about watched branches, pending drift reports,
+    and the service running state.
+    """
+    try:
+        return _build_branch_watcher_status()
+    except Exception as e:
+        logger.error(f"Error getting branch watcher status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apidocs/watcher/pending")
+async def get_pending_drift_reports():
+    """
+    Get all pending drift reports awaiting user approval.
+    
+    Returns a list of branches with detected drift that haven't been
+    approved or rejected yet.
+    """
+    try:
+        pending = []
+        for branch, report in branch_watcher.pending_drift_reports.items():
+            pending.append({
+                "branch": report.branch,
+                "has_drift": report.has_drift,
+                "change_count": report.change_count,
+                "breaking_changes": report.breaking_changes,
+                "summary": report.summary,
+                "detected_at": report.detected_at,
+                "has_proposed_spec": report.proposed_spec is not None,
+            })
+        return {
+            "pending_count": len(pending),
+            "reports": pending
+        }
+    except Exception as e:
+        logger.error(f"Error getting pending drift reports: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApidocsApprovalRequest(BaseModel):
+    """Request body for approving/rejecting a drift fix."""
+    branch: Optional[str] = None  # If None, uses most recent pending report
+    approved: bool = True
+
+
+@app.post("/api/apidocs/watcher/approve")
+async def approve_drift_fix(request: ApidocsApprovalRequest):
+    """
+    Approve or reject a pending drift fix.
+    
+    If approved, applies the proposed spec update and sends confirmation.
+    If rejected, clears the pending report without applying changes.
+    
+    Returns a response with the Swagger docs URL on success.
+    """
+    try:
+        from src.agent.apidocs_agent import write_api_spec
+        
+        # Get the pending report
+        report = branch_watcher.get_pending_report(request.branch)
+        if not report:
+            raise HTTPException(
+                status_code=404, 
+                detail="No pending drift report found" + (f" for branch '{request.branch}'" if request.branch else "")
+            )
+        
+        branch_name = report.branch
+        
+        if not request.approved:
+            # User rejected - just clear the pending report
+            branch_watcher.clear_pending_report(branch_name)
+            return {
+                "success": True,
+                "action": "rejected",
+                "branch": branch_name,
+                "message": f"Drift fix for branch '{branch_name}' was rejected. No changes made."
+            }
+        
+        # User approved - apply the spec update
+        if not report.proposed_spec:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No proposed spec available for branch '{branch_name}'"
+            )
+        
+        # Apply the update
+        result = write_api_spec.invoke({
+            "content": report.proposed_spec,
+            "backup": True
+        })
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to apply spec update: {result.get('error', 'Unknown error')}"
+            )
+        
+        # Clear the pending report
+        branch_watcher.clear_pending_report(branch_name)
+        
+        # Send confirmation via WebSocket
+        confirmation_message = {
+            "type": "apidocs_sync",
+            "message": f"✅ API documentation updated successfully!\n\n"
+                      f"The API spec has been synced with changes from branch `{branch_name}`.\n\n"
+                      f"**View updated docs:** http://localhost:8000/docs",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "apidocs_sync": {
+                "branch": branch_name,
+                "spec_path": result.get("path"),
+                "backup_path": result.get("backup_path"),
+                "swagger_url": "http://localhost:8000/docs",
+                "redoc_url": "http://localhost:8000/redoc",
+            }
+        }
+        
+        await manager.broadcast(confirmation_message)
+        
+        return {
+            "success": True,
+            "action": "approved",
+            "branch": branch_name,
+            "message": f"API documentation updated successfully from branch '{branch_name}'",
+            "spec_path": result.get("path"),
+            "backup_path": result.get("backup_path"),
+            "swagger_url": "http://localhost:8000/docs",
+            "redoc_url": "http://localhost:8000/redoc"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving drift fix: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

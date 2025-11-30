@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { spotlightUi } from "@/config/ui";
 
 type DesktopExpandAnimationProps = {
   isVisible: boolean;
@@ -9,57 +10,109 @@ type DesktopExpandAnimationProps = {
 };
 
 /**
- * Lightweight gradient sweep that mirrors Raycast-style window expansion.
- * Renders on top of the desktop view while the heavy chat bundle lazy-loads.
+ * Lightweight, Raycast-inspired expand animation that feels instant while
+ * the desktop bundle hydrates. Keeps overlays translucent so the user still
+ * perceives motion from the underlying window.
  */
 export default function DesktopExpandAnimation({
   isVisible,
-  headline = "Launching desktop mode",
-  subhead = "Hydrating context…",
+  headline = "Opening Cerebros Desktop",
+  subhead = "Linking live context…",
 }: DesktopExpandAnimationProps) {
   return (
-    <motion.div
-      className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-neutral-950/70 backdrop-blur-3xl"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: isVisible ? 1 : 0 }}
-      transition={{ duration: 0.35, ease: "easeOut" }}
-      aria-hidden="true"
-    >
-      <motion.div
-        className="w-[360px] h-[360px] rounded-[32px] bg-gradient-to-br from-accent-primary/80 via-purple-500/70 to-transparent border border-white/20 shadow-2xl flex flex-col items-center justify-center text-center text-white p-10"
-        initial={{ scale: 0.9, rotate: -2 }}
-        animate={{
-          scale: isVisible ? 1 : 0.96,
-          rotate: isVisible ? 0 : 1,
-        }}
-        transition={{ duration: 0.45, ease: "easeOut" }}
-      >
+    <AnimatePresence>
+      {isVisible && (
         <motion.div
-          className="mb-4 rounded-full bg-white/20 px-4 py-1 text-xs uppercase tracking-[0.2em]"
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: isVisible ? 1 : 0, y: isVisible ? 0 : -8 }}
-          transition={{ delay: 0.05 }}
+          className="pointer-events-none absolute inset-0 z-40"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={spotlightUi.motion.fade}
+          aria-hidden="true"
         >
-          Cerebros
+          {/* Soft vignette */}
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-b from-neutral-950/45 via-neutral-950/10 to-neutral-950/45 backdrop-blur-md"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          />
+
+          {/* Glass card */}
+          <motion.div
+            className="absolute left-1/2 top-[22%] -translate-x-1/2 w-[260px] sm:w-[320px]"
+            initial={{ opacity: 0, y: -20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            transition={spotlightUi.motion.spring}
+          >
+            <div className="relative rounded-[22px] border border-white/10 bg-neutral-900/80 px-8 py-6 shadow-2xl shadow-black/50">
+              {/* Top glow */}
+              <div className="absolute inset-x-8 -top-6 h-8 rounded-full bg-gradient-to-r from-accent-primary/40 via-white/30 to-purple-400/40 blur-3xl opacity-70" />
+
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-white/50 mb-4">
+                <span className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#1DB954] animate-pulse" />
+                  Cerebros
+                </span>
+                <span>Desktop</span>
+              </div>
+
+              <motion.h2
+                className="text-lg font-semibold text-white text-center"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.05, duration: 0.2 }}
+              >
+                {headline}
+              </motion.h2>
+              <motion.p
+                className="text-sm text-white/60 text-center mt-1"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.08, duration: 0.2 }}
+              >
+                {subhead}
+              </motion.p>
+
+              <div className="mt-4 space-y-2 text-xs text-white/60">
+                {[
+                  "Booting command router",
+                  "Priming slash commands",
+                  "Syncing Spotify + Slack state",
+                ].map((step, index) => (
+                  <motion.div
+                    key={step}
+                    className="flex items-center gap-2"
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.12 + index * 0.04 }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                    <span className="truncate">{step}</span>
+                  </motion.div>
+                ))}
+              </div>
+
+              <motion.div
+                className="mt-5 h-1.5 rounded-full bg-white/10 overflow-hidden"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.15, duration: 0.2 }}
+              >
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-accent-primary via-purple-500 to-sky-400"
+                  initial={{ width: "10%" }}
+                  animate={{ width: ["15%", "70%", "100%"] }}
+                  transition={{ duration: 1.6, ease: "easeInOut" }}
+                />
+              </motion.div>
+            </div>
+          </motion.div>
         </motion.div>
-        <motion.h2
-          className="text-lg font-semibold"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: isVisible ? 1 : 0, y: isVisible ? 0 : 8 }}
-          transition={{ delay: 0.1 }}
-        >
-          {headline}
-        </motion.h2>
-        <motion.p
-          className="text-sm text-white/70 mt-2"
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: isVisible ? 1 : 0, y: isVisible ? 0 : 6 }}
-          transition={{ delay: 0.16 }}
-        >
-          {subhead}
-        </motion.p>
-      </motion.div>
-    </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

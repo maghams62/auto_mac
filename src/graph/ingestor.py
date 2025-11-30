@@ -27,6 +27,16 @@ class GraphIngestor:
 
     def upsert_service(self, service_id: str, properties: Optional[Dict[str, str]] = None) -> None:
         self._merge_node(NodeLabels.SERVICE, service_id, properties)
+        # Ensure service nodes carry a default name for readability
+
+    def link_service_component(self, service_id: str, component_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.SERVICE,
+            service_id,
+            RelationshipTypes.HAS_COMPONENT,
+            NodeLabels.COMPONENT,
+            component_id,
+        )
 
     def upsert_code_artifact(
         self,
@@ -122,15 +132,32 @@ class GraphIngestor:
                 NodeLabels.COMPONENT,
                 component_id,
             )
+
+    def upsert_git_event(
+        self,
+        event_id: str,
+        *,
+        component_ids: Iterable[str] = (),
+        endpoint_ids: Iterable[str] = (),
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._merge_node(NodeLabels.GIT_EVENT, event_id, properties)
+        for component_id in component_ids:
+            self._merge_relationship(
+                NodeLabels.GIT_EVENT,
+                event_id,
+                RelationshipTypes.TOUCHES_COMPONENT,
+                NodeLabels.COMPONENT,
+                component_id,
+            )
         for endpoint_id in endpoint_ids:
             self._merge_relationship(
-                NodeLabels.PR,
-                pr_id,
-                RelationshipTypes.MODIFIES_ENDPOINT,
+                NodeLabels.GIT_EVENT,
+                event_id,
+                RelationshipTypes.MODIFIES_API,
                 NodeLabels.API_ENDPOINT,
                 endpoint_id,
             )
-
     def upsert_api_endpoint(
         self,
         api_id: str,
@@ -179,6 +206,32 @@ class GraphIngestor:
                 RelationshipTypes.DISCUSSES_ISSUE,
                 NodeLabels.ISSUE,
                 issue_id,
+            )
+
+    def upsert_slack_event(
+        self,
+        event_id: str,
+        *,
+        component_ids: Iterable[str] = (),
+        endpoint_ids: Iterable[str] = (),
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._merge_node(NodeLabels.SLACK_EVENT, event_id, properties)
+        for component_id in component_ids:
+            self._merge_relationship(
+                NodeLabels.SLACK_EVENT,
+                event_id,
+                RelationshipTypes.ABOUT_COMPONENT,
+                NodeLabels.COMPONENT,
+                component_id,
+            )
+        for endpoint_id in endpoint_ids:
+            self._merge_relationship(
+                NodeLabels.SLACK_EVENT,
+                event_id,
+                RelationshipTypes.COMPLAINS_ABOUT_API,
+                NodeLabels.API_ENDPOINT,
+                endpoint_id,
             )
 
     def upsert_activity_signal(

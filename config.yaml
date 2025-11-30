@@ -8,6 +8,137 @@ openai:
   temperature: 0.2
   max_tokens: 2000
 
+# VectorDB Configuration (Docs/Issues semantic search)
+vectordb:
+  enabled: true
+  provider: "qdrant"  # Future-safe: can swap to pinecone/weaviate/etc.
+  url: "${QDRANT_URL:-${VECTORDB_URL:-http://localhost:6333}}"
+  api_key: "${QDRANT_API_KEY:-${VECTORDB_API_KEY:-}}"
+  collection: "${QDRANT_COLLECTION:-${VECTORDB_COLLECTION:-oqoqo_context}}"
+  embedding_model: "${VECTORDB_EMBEDDING_MODEL:-text-embedding-3-small}"
+  default_top_k: 12
+  min_score: 0.35
+  timeout_seconds: 6.0
+  dimension: 1536
+
+mongo:
+  enabled: false
+  uri: "${MONGO_URI:-mongodb://127.0.0.1:27017}"
+  database: "${MONGO_DB:-oqoqo}"
+  chat_collection: "${MONGO_CHAT_COLLECTION:-chat_messages}"
+  ttl_days: 30
+  cache:
+    max_messages_per_session: 75
+    disk_path: "data/cache/chat_sessions"
+
+# Graph / Neo4j Configuration
+graph:
+  enabled: false
+  uri: "${NEO4J_URI:-bolt://localhost:7687}"
+  username: "${NEO4J_USERNAME:-neo4j}"
+  password: "${NEO4J_PASSWORD:-}"
+  database: "${NEO4J_DATABASE:-neo4j}"
+  ingest_batch_size: 100
+
+activity_ingest:
+  state_dir: "data/state/activity_ingest"
+  slack:
+    enabled: false
+    batch_limit: 200
+    workspace_url: ""  # Optional e.g., https://yourteam.slack.com
+    dissatisfaction_keywords:
+      - "fail"
+      - "error"
+      - "broken"
+      - "down"
+    negative_reactions:
+      - "thumbsdown"
+      - "rage"
+      - "angry"
+    channels:
+      - id: "C0123456789"
+        name: "#payments"
+        components:
+          - "comp:payments"
+        endpoint_ids:
+          - "api:payments:/charge"
+        tags:
+          - "payments"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+        dissatisfaction_keywords:
+          - "timeout"
+          - "failure"
+  git:
+    enabled: false
+    default_branch: "main"
+    lookback_hours: 168
+    include_issues: true
+    max_issues: 15
+    issue_labels:
+      - "bug"
+      - "documentation"
+    issue_dissatisfaction_labels:
+      - "bug"
+      - "docs"
+      - "documentation"
+    default_issue_components:
+      - "comp:core"
+    issue_component_map:
+      - labels:
+          - "documentation"
+          - "docs"
+        keywords:
+          - "guide"
+          - "tutorial"
+        components:
+          - "comp:docs"
+      - labels:
+          - "bug"
+        components:
+          - "comp:core"
+    repos:
+      - owner: "tiangolo"
+        name: "fastapi"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "master"
+        max_prs: 10
+        max_commits: 20
+        max_issues: 15
+        default_components:
+          - "comp:core"
+        default_issue_components:
+          - "comp:docs"
+        component_map:
+          - match: "docs/en/docs/"
+            components:
+              - "comp:docs"
+          - match: "fastapi/routing"
+            components:
+              - "comp:core"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+          - labels:
+              - "bug"
+            components:
+              - "comp:core"
+
+context_resolution:
+  dependency_files:
+    - "configs/dependency_map.yaml"
+  repo_mode: "polyrepo"  # or "monorepo" to limit blast radius to each repo boundary
+  activity_window_hours: 168
+  impact:
+    default_max_depth: 2
+    include_docs: true
+    include_services: true
+
 # Reasoning Trace Configuration (Experimental)
 # Enables persistent reasoning memory across agent executions
 reasoning_trace:
@@ -461,3 +592,81 @@ performance:
     verification: true            # Run verification in background
     memory_updates: true          # Update memory asynchronously
     logging: true                 # Async logging
+
+# Slack Configuration
+slack:
+  bot_token: "${SLACK_BOT_TOKEN}"          # Slack Bot Token (xoxb-...)
+  default_channel_id: "${SLACK_CHANNEL_ID}" # Default channel ID for fetching messages
+
+  # Monitored channels for search (channel IDs)
+  # Example: ["C0123456789", "C9876543210"]
+  monitored_channels: []
+
+  # Search settings
+  search:
+    default_limit: 20    # Default number of messages to return
+    max_limit: 100       # Maximum messages per search request
+
+# Slash-Slack agent configuration
+slash_slack:
+  default_channel_id: ""            # Optional override if different from slack.default_channel_id
+  default_time_window_hours: 24     # Default lookback window for channel recaps
+  workspace_url: ""                 # e.g., https://yourteam.slack.com for permalink construction
+  graph_emit: true                  # Emit graph payloads for Neo4j ingestion hooks
+  graph_log_path: "data/logs/slash/slack_graph.jsonl"
+  empty_channel_fallback_hours: 72  # When no messages match, extend the lookback window (hours)
+  empty_channel_search_limit: 40    # Max messages to retrieve via Slack search fallback
+  doc_drift_keywords:               # Only run doc drift reasoner when these keywords appear
+    - "doc drift"
+    - "drift"
+    - "api drift"
+  debug_block_enabled: ${SLASH_SLACK_DEBUG_BLOCK_ENABLED:-true}
+  debug_source_label: "${SLASH_SLACK_DEBUG_SOURCE_LABEL:-synthetic_slack}"
+
+slash_git:
+  doc_drift_reasoner: true
+  debug_block_enabled: ${SLASH_GIT_DEBUG_BLOCK_ENABLED:-true}
+  debug_source_label: "${SLASH_GIT_DEBUG_SOURCE_LABEL:-synthetic_git}"
+  debug_repo_label: "${SLASH_GIT_DEBUG_REPO_LABEL:-${GITHUB_REPO_NAME:-auto_mac}}"
+
+# Activity Intelligence / Oqoqo
+activity:
+  oqoqo:
+    api_key: "${OQOQO_API_KEY:-}"               # API key for multi-source reasoning backend
+    base_url: "${OQOQO_BASE_URL:-https://api.oqoqo.ai}"
+    dataset: "${OQOQO_DATASET:-production}"     # Workspace or dataset slug
+
+# GitHub Integration (Oqoqo Self-Evolving Docs + Git Agent)
+# Used for PR/branch-based API documentation drift detection and Git agent tools
+github:
+  token: "${GITHUB_TOKEN}"              # GitHub Personal Access Token
+  repo_owner: "${GITHUB_REPO_OWNER:-maghams62}"   # Repository owner
+  repo_name: "${GITHUB_REPO_NAME:-auto_mac}"      # Repository name
+  monitored_file: "api_server.py"       # File to monitor for API changes
+  base_branch: "${GITHUB_BASE_BRANCH:-main}"      # Base branch to compare against
+
+  # PR webhook filtering
+  webhook:
+    enabled: true                       # Enable webhook event processing
+    filter_by_branch: true              # Only process PRs targeting base_branch
+
+  # PR notification actions to handle
+  notification_actions:
+    - opened                            # New PR opened
+    - ready_for_review                  # PR marked ready for review
+    - closed                            # PR closed or merged
+    - synchronize                       # PR updated with new commits
+    - reopened                          # PR reopened
+
+branch_watcher:
+  enabled: true
+  startup_delay_seconds: 8              # Delay before starting GitHub polling (seconds)
+
+synthetic_git:
+  base_dir: "data/synthetic_git"
+  branch: "${SYNTHETIC_GIT_BRANCH:-synthetic-git-dataset}"
+  base_branch: "${SYNTHETIC_GIT_BASE_BRANCH:-main}"
+  remote_url: "${SYNTHETIC_GIT_REMOTE:-}"
+  repo_owner: "${SYNTHETIC_GIT_REPO_OWNER:-maghams62}"
+  repo_name: "${SYNTHETIC_GIT_REPO_NAME:-auto_mac}"
+  commit_message: "chore(synthetic-git): refresh dataset"

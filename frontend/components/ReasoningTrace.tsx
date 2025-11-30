@@ -92,36 +92,36 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
   const getStatusColor = (status: string) => {
     switch (status) {
       case "running":
-        return "border-blue-500 bg-blue-50/50";
+        return "border-blue-400/60 bg-blue-500/10";
       case "completed":
-        return "border-green-500 bg-green-50/50";
+        return "border-green-400/60 bg-green-500/10";
       case "failed":
-        return "border-red-500 bg-red-50/50";
+        return "border-red-400/60 bg-red-500/10";
       case "skipped":
-        return "border-gray-400 bg-gray-50/50";
+        return "border-white/10 bg-white/5";
       default:
-        return "border-gray-300 bg-gray-50/50";
+        return "border-white/10 bg-white/5";
     }
   };
 
   const getTimelineColor = (status: string) => {
     switch (status) {
       case "running":
-        return "bg-blue-500";
+        return "bg-blue-400";
       case "completed":
-        return "bg-green-500";
+        return "bg-green-400";
       case "failed":
-        return "bg-red-500";
+        return "bg-red-400";
       case "skipped":
-        return "bg-gray-400";
+        return "bg-white/20";
       default:
-        return "bg-gray-300";
+        return "bg-white/10";
     }
   };
 
   return (
-    <div className={cn("w-full max-w-2xl mx-auto", className)}>
-      <div className="space-y-4">
+    <div className={cn("w-full max-w-2xl mx-auto rounded-2xl border border-surface-outline/40 bg-surface/95 backdrop-blur-lg shadow-2xl p-4", className)}>
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
         {planState.steps.map((step, index) => (
           <motion.div
             key={step.id}
@@ -131,7 +131,7 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
             className="relative"
           >
             {/* Timeline line */}
-            <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-gray-200 -z-10">
+            <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-white/10 -z-10">
               <motion.div
                 className={cn("w-full", getTimelineColor(step.status))}
                 initial={{ height: 0 }}
@@ -146,25 +146,12 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
             {/* Step node */}
             <motion.div
               className={cn(
-                "flex items-start gap-4 p-4 rounded-lg border transition-all duration-300",
-                getStatusColor(step.status),
-                step.status === "running" && "ring-2 ring-blue-500/30"
+                "flex items-start gap-4 p-4 rounded-xl border transition-colors duration-300 bg-white/5",
+                getStatusColor(step.status)
               )}
-              animate={step.status === "running" ? {
-                boxShadow: [
-                  "0 0 20px rgba(59, 130, 246, 0.3)",
-                  "0 0 40px rgba(59, 130, 246, 0.5)",
-                  "0 0 20px rgba(59, 130, 246, 0.3)"
-                ]
-              } : {}}
-              transition={step.status === "running" ? {
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut"
-              } : {}}
             >
               {/* Status icon */}
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center shadow-sm">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center">
                 {getStatusIcon(step.status)}
               </div>
 
@@ -172,10 +159,10 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-900">
+                    <span className="text-sm font-medium text-white">
                       Step {step.id}: {step.action}
                     </span>
-                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    <span className="text-xs text-white/60 bg-white/10 px-2 py-0.5 rounded">
                       {step.status}
                     </span>
                   </div>
@@ -200,7 +187,7 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
                 </div>
 
                 {/* Step reasoning - always visible */}
-                <div className="mt-2 text-sm text-gray-600">
+                <div className="mt-2 text-sm text-white/70">
                   <strong>Reasoning:</strong> {step.reasoning}
                 </div>
 
@@ -214,15 +201,15 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
                       transition={{ duration: 0.3 }}
                       className="mt-3 space-y-2 overflow-hidden"
                     >
-                      <div className="text-sm text-gray-600">
+                      <div className="text-sm text-white/70">
                         <strong>Expected Output:</strong> {step.expected_output}
                       </div>
 
                       {/* Parameters */}
                       {step.parameters && Object.keys(step.parameters).length > 0 && (
-                        <div className="text-sm text-gray-600">
+                        <div className="text-sm text-white/70">
                           <strong>Parameters:</strong>
-                          <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
+                          <pre className="mt-1 text-xs bg-black/30 p-2 rounded overflow-x-auto text-white/80 border border-white/10">
                             {JSON.stringify(step.parameters, null, 2)}
                           </pre>
                         </div>
@@ -230,7 +217,7 @@ export default function ReasoningTrace({ planState, className }: ReasoningTraceP
 
                       {/* Dependencies */}
                       {step.dependencies && step.dependencies.length > 0 && (
-                        <div className="text-sm text-gray-600">
+                        <div className="text-sm text-white/70">
                           <strong>Dependencies:</strong> Steps {step.dependencies.join(", ")}
                         </div>
                       )}

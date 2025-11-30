@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "project_atlas": {
+      "git": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_git/git_events.json",
+      "slack": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_slack/slack_events.json",
+      "tickets": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_tickets/tickets.json",
+      "support": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_support/support_events.json"
+    },
+    "project_nimbus": {
+      "git": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_git/git_events.json",
+      "slack": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_slack/slack_events.json",
+      "tickets": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_tickets/tickets.json",
+      "support": "https://raw.githubusercontent.com/maghams62/oqoqo_test/main/data/synthetic_support/support_events.json"
+    }
+  }
+}
+

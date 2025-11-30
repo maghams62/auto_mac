@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { MapPinned, NotebookPen, Settings2 } from "lucide-react";
+import { AlertTriangle, MapPinned, NotebookPen, Settings2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { Project } from "@/lib/types";
+import type { Project, Severity } from "@/lib/types";
 
 interface ProjectCardProps {
   project: Project;
@@ -12,6 +12,14 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, onEdit }: ProjectCardProps) {
+  const severityCounts = project.docIssues.reduce<Record<Severity, number>>(
+    (acc, issue) => {
+      acc[issue.severity] += 1;
+      return acc;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0 }
+  );
+
   return (
     <Card className="bg-card/80">
       <CardHeader className="flex flex-row items-start justify-between">
@@ -24,16 +32,34 @@ export function ProjectCard({ project, onEdit }: ProjectCardProps) {
         </Badge>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-4">
           <Metric label="Doc health" value={`${project.docHealthScore}/100`} />
-          <Metric label="Repositories" value={`${project.repos.length}`} description="Monitored sources" />
+          <Metric label="Repos" value={`${project.repos.length}`} description="Monitored sources" />
+          <Metric label="Components impacted" value={`${project.pulse.impactedComponents}`} description="Graph nodes" />
           <Metric label="Open drift issues" value={`${project.pulse.totalIssues}`} description="Across components" />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-muted-foreground">
+          <AlertTriangle className="h-4 w-4 text-amber-400" />
+          <span>
+            <span className="text-red-300">{severityCounts.critical}</span> critical •{" "}
+            <span className="text-orange-300">{severityCounts.high}</span> high •{" "}
+            <span className="text-yellow-200">{severityCounts.medium}</span> medium
+          </span>
         </div>
 
         <div className="flex flex-wrap gap-2">
           {project.tags.map((tag) => (
             <Badge key={tag} variant="outline" className="border-border/50 bg-muted/10">
               {tag}
+            </Badge>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+          {project.repos.map((repo) => (
+            <Badge key={repo.id} variant="outline" className="rounded-full border-border/40 text-[11px]">
+              {repo.name}
             </Badge>
           ))}
         </div>

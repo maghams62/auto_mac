@@ -27,8 +27,61 @@ export interface PlanState {
   last_sequence_number: number;
 }
 
+export interface SlashSlackTopic {
+  topic: string;
+  mentions?: number;
+  sample?: string;
+}
+
+export interface SlashSlackDecision {
+  text: string;
+  timestamp?: string;
+  participant?: string;
+  participant_id?: string;
+  permalink?: string;
+}
+
+export interface SlashSlackTask {
+  description: string;
+  timestamp?: string;
+  assignee?: string;
+  assignee_id?: string;
+  permalink?: string;
+}
+
+export interface SlashSlackQuestion {
+  text: string;
+  timestamp?: string;
+  participant?: string;
+  permalink?: string;
+}
+
+export interface SlashSlackReference {
+  kind: string;
+  url: string;
+  message_ts?: string;
+}
+
+export interface SlashSlackSections {
+  topics?: SlashSlackTopic[];
+  decisions?: SlashSlackDecision[];
+  tasks?: SlashSlackTask[];
+  open_questions?: SlashSlackQuestion[];
+  references?: SlashSlackReference[];
+}
+
+export interface SlashSlackPayload {
+  type: "slash_slack_summary";
+  message: string;
+  sections?: SlashSlackSections;
+  context?: Record<string, any>;
+  graph?: Record<string, any>;
+  messages_preview?: Array<Record<string, any>>;
+  metadata?: Record<string, any>;
+}
+
 export interface Message {
-  type: "user" | "assistant" | "system" | "error" | "status" | "plan" | "bluesky_notification";
+  type: "user" | "assistant" | "system" | "error" | "status" | "plan" | "bluesky_notification" | "apidocs_drift";
   message: string;
   timestamp: string;
   status?: string;
@@ -82,6 +135,23 @@ export interface Message {
     subject_post?: any;
     post?: any;
   };
+  // API Docs drift detection (Oqoqo pattern)
+  apidocs_drift?: {
+    has_drift: boolean;
+    changes: Array<{
+      change_type: string;
+      severity: "breaking" | "non_breaking" | "cosmetic";
+      endpoint: string;
+      description: string;
+      code_value?: string;
+      spec_value?: string;
+    }>;
+    summary: string;
+    proposed_spec?: string;
+    change_count: number;
+    breaking_changes: number;
+  };
+  slash_slack?: SlashSlackPayload;
 }
 
 interface UseWebSocketReturn {
@@ -367,6 +437,47 @@ export function useWebSocket(url: string): UseWebSocketReturn {
             return;
           }
 
+          // Handle API Docs drift notifications (Oqoqo pattern)
+          if (rawType === "apidocs_drift" || data.type === "apidocs_drift") {
+            const driftData = data.data || data;
+            const timestamp = data.timestamp || new Date().toISOString();
+
+            // Create human-readable message
+            let messageText = "📄 API Documentation Drift Detected\n\n";
+            messageText += driftData.summary || `${driftData.change_count || 0} change(s) found between code and documentation.`;
+
+            // Add to chat
+            setMessages((prev) => [
+              ...prev,
+              {
+                type: "apidocs_drift",
+                message: messageText,
+                timestamp: timestamp,
+                apidocs_drift: {
+                  has_drift: driftData.has_drift ?? true,
+                  changes: driftData.changes || [],
+                  summary: driftData.summary || "",
+                  proposed_spec: driftData.proposed_spec,
+                  change_count: driftData.change_count || 0,
+                  breaking_changes: driftData.breaking_changes || 0,
+                },
+              },
+            ]);
+
+            console.log("📄 API Docs drift detected:", driftData.summary);
+            return;
+          }
+
+          // Handle Spotify playback updates - emit event for SpotifyMiniPlayer to refresh
+          if (rawType === "spotify_playback_update") {
+            console.log("🎵 Spotify playback update:", data.action);
+            // Dispatch a custom event that SpotifyMiniPlayer listens for
+            window.dispatchEvent(new CustomEvent('spotify:playback_update', { 
+              detail: { action: data.action, timestamp: data.timestamp } 
+            }));
+            return;
+          }
+
           let messageType: Message["type"] = "assistant";
 
           switch (rawType) {
@@ -388,8 +499,15 @@ export function useWebSocket(url: string): UseWebSocketReturn {
               messageType = "assistant";
           }
 
+          let slashSlackPayload: SlashSlackPayload | null = null;
+          if (data.result && typeof data.result === "object" && data.result.type === "slash_slack_summary") {
+            slashSlackPayload = data.result as SlashSlackPayload;
+          }
+
           const payload =
-            typeof data.message === "string" && data.message.trim().length > 0
+            (slashSlackPayload?.message && slashSlackPayload.message.trim().length > 0)
+              ? slashSlackPayload.message
+              : typeof data.message === "string" && data.message.trim().length > 0
               ? data.message
               : typeof data.content === "string" && data.content.trim().length > 0
               ? data.content
@@ -402,10 +520,11 @@ export function useWebSocket(url: string): UseWebSocketReturn {
           const hasFiles = data.files && Array.isArray(data.files) && data.files.length > 0;
           const hasCompletionEvent = data.completion_event;
           const hasDocuments = data.documents && Array.isArray(data.documents) && data.documents.length > 0;
+          const hasSlashSlack = !!slashSlackPayload;
           
           // Skip empty payloads for non-status messages, UNLESS they have files/documents/completion_event
-          if (!payload && messageType !== "status" && !hasFiles && !hasDocuments && !hasCompletionEvent) {
-            console.log("[useWebSocket] Skipping message with empty payload and no files/documents/completion_event");
+          if (!payload && messageType !== "status" && !hasFiles && !hasDocuments && !hasCompletionEvent && !hasSlashSlack) {
+            console.log("[useWebSocket] Skipping message with empty payload and no files/documents/completion_event/slash_slack");
             return;
           }
 
@@ -429,6 +548,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
               files: data.files || undefined, // Extract files array if present
               documents: data.documents || undefined, // Extract documents array if present
               completion_event: data.completion_event || undefined, // Extract completion event if present
+              slash_slack: slashSlackPayload || undefined,
             },
           ]);
         } catch (error) {

@@ -2,16 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { isElectron } from "@/lib/electron";
 import { useIsElectronRuntime } from "@/hooks/useIsElectron";
 import type { Settings } from "@/types/electron";
-
-const MIN_CONVO_TURNS = 1;
-const MAX_CONVO_TURNS = 5;
-const DEFAULT_CONVO_TURNS = 2;
-
-const clampMiniConversationDepth = (value: number) =>
-  Math.min(Math.max(value, MIN_CONVO_TURNS), MAX_CONVO_TURNS);
+import { spotlightUi, clampMiniConversationDepth } from "@/config/ui";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -24,7 +17,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     hideOnBlur: true,
     startAtLogin: false,
     theme: "dark",
-    miniConversationDepth: DEFAULT_CONVO_TURNS,
+    miniConversationDepth: spotlightUi.miniConversation.defaultTurns,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
@@ -39,7 +32,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             ...prev,
             ...loaded,
             miniConversationDepth: clampMiniConversationDepth(
-              loaded.miniConversationDepth ?? DEFAULT_CONVO_TURNS
+              loaded.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
             ),
           }));
         }
@@ -71,7 +64,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     try {
       const payload: Settings = {
         ...settings,
-        miniConversationDepth: clampMiniConversationDepth(settings.miniConversationDepth ?? DEFAULT_CONVO_TURNS),
+        miniConversationDepth: clampMiniConversationDepth(
+          settings.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
+        ),
       };
       await window.electronAPI?.updateSettings(payload);
       setSaveStatus("success");
@@ -202,15 +197,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </label>
               <input
                 type="number"
-                min={MIN_CONVO_TURNS}
-                max={MAX_CONVO_TURNS}
+                min={spotlightUi.miniConversation.minTurns}
+                max={spotlightUi.miniConversation.maxTurns}
                 value={settings.miniConversationDepth}
                 onChange={(e) => {
                   const value = Number(e.target.value);
                   setSettings({
                     ...settings,
                     miniConversationDepth: clampMiniConversationDepth(
-                      Number.isNaN(value) ? DEFAULT_CONVO_TURNS : value
+                      Number.isNaN(value)
+                        ? spotlightUi.miniConversation.defaultTurns
+                        : value
                     ),
                   });
                 }}

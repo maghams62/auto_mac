@@ -7,6 +7,16 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Resolve npm binary early so we can surface actionable guidance instead of
+# letting later steps fail with "command not found".
+NPM_BIN="$(command -v npm 2>/dev/null || true)"
+if [ -z "$NPM_BIN" ]; then
+    echo -e "${RED}✗ npm executable not found in \$PATH${NC}"
+    echo "  - Install Node.js (which bundles npm) or ensure your shell exports the npm path before running start_ui.sh."
+    echo "  - Example: export PATH=\"\$HOME/.nvm/versions/node/\$(nvm version)/bin:\$PATH\""
+    exit 1
+fi
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Cerebro OS - Clean Start${NC}"
 echo -e "${BLUE}========================================${NC}"
@@ -140,7 +150,7 @@ fi
 if [ ! -d "frontend/node_modules" ]; then
     echo -e "  ${YELLOW}Node modules not found. Installing...${NC}"
     cd frontend
-    npm install
+    "$NPM_BIN" install
     cd ..
     echo -e "  ${GREEN}✓ Node modules installed${NC}"
 else
@@ -212,7 +222,7 @@ fi
 # Start frontend Next.js server
 echo "  - Starting frontend UI on port 3000..."
 cd frontend
-npm run dev > ../frontend.log 2>&1 &
+"$NPM_BIN" run dev > ../frontend.log 2>&1 &
 FRONTEND_PID=$!
 cd ..
 

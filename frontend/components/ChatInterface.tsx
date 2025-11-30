@@ -24,7 +24,6 @@ import { useToast } from "@/lib/useToast";
 const HelpOverlay = lazy(() => import("./HelpOverlay"));
 const KeyboardShortcutsOverlay = lazy(() => import("./KeyboardShortcutsOverlay"));
 const SpotifyPlayer = lazy(() => import("./SpotifyPlayer"));
-const PlanProgressRail = lazy(() => import("./PlanProgressRail"));
 const ReasoningTrace = lazy(() => import("./ReasoningTrace"));
 
 const MAX_VISIBLE_MESSAGES = 200; // Limit to prevent performance issues
@@ -58,7 +57,6 @@ export default function ChatInterface() {
   const wsUrl = useMemo(() => getWebSocketUrl("/ws/chat"), []);
   const { messages: allMessages, isConnected, connectionState, lastError, planState, sendMessage, sendCommand } = useWebSocket(wsUrl);
   const { bootPhase, assetsLoaded, signalBootComplete, signalBootError } = useBootContext();
-  const [planRailCollapsed, setPlanRailCollapsed] = useState(false);
   const [showReasoningTrace, setShowReasoningTrace] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const { addToast } = useToast();
@@ -77,6 +75,14 @@ export default function ChatInterface() {
     }
     return allMessages.slice(-MAX_VISIBLE_MESSAGES);
   }, [allMessages]);
+
+  const isPlanActive = Boolean(planState && (planState.status === "planning" || planState.status === "executing"));
+
+  useEffect(() => {
+    if (!isPlanActive && showReasoningTrace) {
+      setShowReasoningTrace(false);
+    }
+  }, [isPlanActive, showReasoningTrace]);
   
   useEffect(() => {
     if (!planState || !currentTelemetry) {
@@ -515,34 +521,6 @@ export default function ChatInterface() {
 
   return (
     <>
-      {/* Plan Progress Rail - Lazy loaded */}
-      <Suspense fallback={null}>
-        <PlanProgressRail
-          planState={planState}
-          isCollapsed={planRailCollapsed}
-          showReasoningTrace={showReasoningTrace}
-          onToggleCollapse={() => setPlanRailCollapsed(!planRailCollapsed)}
-          onToggleReasoningTrace={() => setShowReasoningTrace(!showReasoningTrace)}
-        />
-      </Suspense>
-
-      {/* Reasoning Trace Panel - Lazy loaded */}
-      <AnimatePresence>
-        {planState && showReasoningTrace && (
-          <motion.div
-            initial={{ opacity: 0, x: 300 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 300 }}
-            transition={{ duration: 0.3 }}
-            className="fixed top-20 right-4 z-40"
-          >
-            <Suspense fallback={<div className="w-96 h-96 bg-background-secondary rounded-lg" />}>
-              <ReasoningTrace planState={planState} />
-            </Suspense>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Screen reader announcements */}
       <div
         aria-live="polite"
@@ -561,7 +539,35 @@ export default function ChatInterface() {
             messageCount={messages.length}
             onClearSession={() => sendCommand("clear")}
             onShowHelp={() => setShowHelpOverlay(true)}
+            planActive={isPlanActive}
+            onTogglePlanTrace={() => setShowReasoningTrace((prev) => !prev)}
+            isTraceOpen={showReasoningTrace}
           />
+          <AnimatePresence>
+            {planState && showReasoningTrace && (
+              <motion.div
+                key="reasoning-trace"
+                initial={{ opacity: 0, y: -16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -16 }}
+                transition={{ duration: 0.25 }}
+                className="px-6 pt-4 sm:px-8 lg:px-12"
+              >
+                <div className="relative mx-auto max-w-4xl">
+                  <button
+                    onClick={() => setShowReasoningTrace(false)}
+                    className="absolute -top-3 -right-3 z-10 rounded-full bg-surface/90 text-text-primary border border-surface-outline/60 shadow-lg w-8 h-8 flex items-center justify-center hover:bg-surface/80 transition-colors"
+                    aria-label="Close plan trace"
+                  >
+                    ✕
+                  </button>
+                  <Suspense fallback={<div className="w-full h-64 bg-background-secondary/80 rounded-2xl border border-surface-outline/40" />}>
+                    <ReasoningTrace planState={planState} className="shadow-2xl border border-surface-outline/60" />
+                  </Suspense>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="flex-1 flex flex-col">
             <div className="flex-1 w-full px-6 sm:px-8 lg:px-12" role="region" aria-label="Chat conversation">
               <div className="mx-auto flex h-full w-full max-w-4xl flex-col">

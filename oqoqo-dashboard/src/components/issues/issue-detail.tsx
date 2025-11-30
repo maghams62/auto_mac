@@ -1,21 +1,30 @@
 import Link from "next/link";
-import { ExternalLink, GitCommit, MessageSquare, Ticket } from "lucide-react";
+import { ExternalLink, FileText, GitCommit, LifeBuoy, MessageSquare, Ticket } from "lucide-react";
 
+import { AskOqoqoCard } from "@/components/common/ask-oqoqo";
+import { AskCerebrosButton } from "@/components/common/ask-cerebros-button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import type { DocIssue, Project } from "@/lib/types";
+import { describeIssueSignals } from "@/lib/issues/descriptions";
+import type { DocIssue, Project, SignalSource } from "@/lib/types";
 import { cn, shortDate } from "@/lib/utils";
-import { severityTokens, statusTokens } from "@/lib/ui/tokens";
+import { severityTokens, signalSourceTokens, statusTokens } from "@/lib/ui/tokens";
 import { Button } from "@/components/ui/button";
 
 interface IssueDetailBodyProps {
   issue: DocIssue;
   project: Project;
+  showAskCard?: boolean;
+  showDeepLinkButton?: boolean;
 }
 
-export function IssueDetailBody({ issue, project }: IssueDetailBodyProps) {
+export function IssueDetailBody({ issue, project, showAskCard = true, showDeepLinkButton = true }: IssueDetailBodyProps) {
   const component = project.components.find((item) => item.id === issue.componentId);
   const repo = project.repos.find((item) => item.id === issue.repoId);
+  const relevantEvents =
+    component?.sourceEvents
+      .filter((event) => issue.divergenceSources.includes(event.source))
+      .slice(0, 4) ?? [];
 
   const severity = severityTokens[issue.severity];
   const status = statusTokens[issue.status];
@@ -28,8 +37,14 @@ export function IssueDetailBody({ issue, project }: IssueDetailBodyProps) {
           <Badge className={cn("border text-xs", status.color)}>{status.label}</Badge>
           <span className="text-xs text-muted-foreground">Detected {shortDate(issue.detectedAt)}</span>
         </div>
+        <AskCerebrosButton
+          command={`/slack docdrift ${component?.name ?? issue.componentId}`}
+          label="Ask Cerebros"
+          size="sm"
+        />
         <h2 className="text-xl font-semibold text-foreground">{issue.title}</h2>
         <p className="text-sm text-muted-foreground">{issue.summary}</p>
+        <p className="text-xs text-muted-foreground">{describeIssueSignals(issue)}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -51,10 +66,25 @@ export function IssueDetailBody({ issue, project }: IssueDetailBodyProps) {
         <DetailCard label="Doc path" value={issue.docPath} />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <Signal metric="Git churn" value={issue.signals.gitChurn} icon={GitCommit} />
         <Signal metric="Tickets referenced" value={issue.signals.ticketsMentioned} icon={Ticket} />
         <Signal metric="Slack mentions" value={issue.signals.slackMentions} icon={MessageSquare} />
+        <Signal metric="Support mentions" value={issue.signals.supportMentions ?? 0} icon={LifeBuoy} />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Cross-system divergence</h3>
+        <div className="flex flex-wrap gap-2">
+          {issue.divergenceSources.map((source) => {
+            const token = signalSourceTokens[source];
+            return (
+              <Badge key={`${issue.id}-${source}`} className={cn("border text-[10px]", token.color)}>
+                {token.label}
+              </Badge>
+            );
+          })}
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -77,9 +107,49 @@ export function IssueDetailBody({ issue, project }: IssueDetailBodyProps) {
         </div>
       </div>
 
-      <Button asChild variant="outline" className="rounded-full">
-        <Link href={`/projects/${project.id}/issues/${issue.id}`}>Open dedicated issue view</Link>
-      </Button>
+      {relevantEvents.length ? (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Signals powering this issue</h3>
+          <div className="space-y-3">
+            {relevantEvents.map((event) => {
+              const Icon = detailSourceIconMap[event.source];
+              const token = signalSourceTokens[event.source];
+              return (
+                <div key={event.id} className="rounded-2xl border border-border/50 p-4">
+                  <div className="flex items-start gap-3">
+                    <Icon className="mt-1 h-4 w-4 text-primary" />
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">{event.title}</div>
+                      <p className="text-xs text-muted-foreground">{event.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-muted-foreground">
+                    <span>{shortDate(event.timestamp)}</span>
+                    <div className="flex items-center gap-2">
+                      <Badge className={cn("border text-[10px]", token.color)}>{token.label}</Badge>
+                      {event.link ? (
+                        <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" asChild>
+                          <a href={event.link} target="_blank" rel="noreferrer">
+                            Open source
+                          </a>
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {showAskCard ? <AskOqoqoCard context="issue" title={issue.title} summary={issue.summary} /> : null}
+
+      {showDeepLinkButton ? (
+        <Button asChild variant="outline" className="rounded-full">
+          <Link href={`/projects/${project.id}/issues/${issue.id}`}>Open dedicated issue view</Link>
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -132,4 +202,12 @@ const Signal = ({
     </div>
   </div>
 );
+
+const detailSourceIconMap: Record<SignalSource, React.ComponentType<{ className?: string }>> = {
+  git: GitCommit,
+  docs: FileText,
+  slack: MessageSquare,
+  tickets: Ticket,
+  support: LifeBuoy,
+};
 

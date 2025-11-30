@@ -61,5 +61,35 @@
       "incident",
       "docs_followup"
     ]
+  },
+  {
+    "id": "git_pr:notifications-service:142",
+    "source_type": "git_pr",
+    "repo": "notifications-service",
+    "repo_url": "https://github.com/acme/notifications-service",
+    "branch": "main",
+    "pr_number": 142,
+    "author": "dave",
+    "timestamp": "2025-11-26T12:00:00Z",
+    "title": "Require template_version for /v1/notifications/send",
+    "body": "Compliance asked that we log the template_version used for every receipt. This PR threads template_version through send_notification; docs owners still need to refresh the playbook.",
+    "merged": true,
+    "files_changed": [
+      "src/notifications.py"
+    ],
+    "text_for_embedding": "PR #142: Require template_version for /v1/notifications/send. Adds template_version argument but docs remain outdated.",
+    "service_ids": [
+      "notifications-service"
+    ],
+    "component_ids": [
+      "notifications.dispatch"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "labels": [
+      "api_contract",
+      "doc_drift"
+    ]
   }
 ]

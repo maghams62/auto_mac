@@ -76,6 +76,11 @@ class BranchWatcherService:
         
         # Background task
         self.poll_task: Optional[asyncio.Task] = None
+
+        # Telemetry for health/debug
+        self.last_poll_started_at: Optional[str] = None
+        self.last_poll_completed_at: Optional[str] = None
+        self.last_poll_error: Optional[str] = None
         
         logger.info(f"[BRANCH WATCHER] Initialized with {self.poll_interval}s poll interval")
     
@@ -148,7 +153,7 @@ class BranchWatcherService:
     async def _fetch_branches(self) -> List[str]:
         """Fetch list of branches from GitHub."""
         try:
-            branches = self.github_service.list_branches()
+            branches = await asyncio.to_thread(self.github_service.list_branches)
             # Filter out excluded branches
             return [b for b in branches if b not in self.excluded_branches]
         except GitHubAPIError as e:
@@ -158,7 +163,7 @@ class BranchWatcherService:
     async def _check_branch_for_changes(self, branch_name: str) -> Optional[Dict[str, Any]]:
         """Check if a branch has changes to the monitored file."""
         try:
-            result = self.github_service.check_branch_for_api_changes(branch_name)
+            result = await asyncio.to_thread(self.github_service.check_branch_for_api_changes, branch_name)
             return result
         except GitHubAPIError as e:
             logger.error(f"[BRANCH WATCHER] Failed to check branch {branch_name}: {e}")
@@ -312,11 +317,15 @@ class BranchWatcherService:
         
         while self.running:
             try:
+                self.last_poll_started_at = datetime.now(timezone.utc).isoformat()
                 await self._poll_branches()
+                self.last_poll_completed_at = datetime.now(timezone.utc).isoformat()
+                self.last_poll_error = None
                 retry_count = 0  # Reset on success
                 
             except Exception as e:
                 retry_count += 1
+                self.last_poll_error = str(e)
                 logger.error(f"[BRANCH WATCHER] Poll error (attempt {retry_count}): {e}")
                 
                 if retry_count >= self.max_retries:
@@ -335,6 +344,9 @@ class BranchWatcherService:
         
         logger.info("[BRANCH WATCHER] Starting background service...")
         self.running = True
+        self.last_poll_started_at = None
+        self.last_poll_completed_at = None
+        self.last_poll_error = None
         
         # Load persistent state
         self._load_persistent_state()
@@ -393,6 +405,9 @@ class BranchWatcherService:
             "watched_branches": len(self.watched_branches),
             "pending_reports": len(self.pending_drift_reports),
             "pending_branches": list(self.pending_drift_reports.keys()),
+            "last_poll_started_at": self.last_poll_started_at,
+            "last_poll_completed_at": self.last_poll_completed_at,
+            "last_poll_error": self.last_poll_error,
         }
 
 

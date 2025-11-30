@@ -25,6 +25,8 @@ Cerebros implementation are listed here. Historical write-ups live in
 | Electron UI Guide | `docs/development/ELECTRON_UI_GUIDE.md` | How to edit the Raycast-style UI safely |
 | Launcher Startup Flow | `docs/architecture/launcher_startup_flow.md` | Lifecycle of the spotlight + expanded windows |
 | Window Visibility State Machine | `docs/WINDOW_VISIBILITY_STATE_MACHINE.md` | Blur/focus logic for the launcher |
+| Spotlight vs. Desktop Map | `docs/architecture/spotlight_vs_desktop.md` | Component/data flow comparison between launcher and expanded chat |
+| Spotlight UX Audit | `docs/spotlight_ux_findings.md` | Current-state comparison vs. Raycast + improvement backlog |
 | Stable Guide §3 | `docs/LLM_CODEBASE_GUIDE.md` | Launcher + desktop workflow details |
 | Spotify Guardrails | `CRITICAL_BEHAVIOR.md` (section) | Constraints for media controls in spotlight view |
 

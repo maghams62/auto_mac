@@ -1,19 +1,24 @@
 "use client";
 
-import { useRef, useEffect, useCallback, memo } from "react";
+import { useRef, useEffect, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Message, PlanState } from "@/lib/useWebSocket";
-import { cn } from "@/lib/utils";
 import BlueskyNotificationCard from "./BlueskyNotificationCard";
+import SlashSlackSummaryCard from "./SlashSlackSummaryCard";
+import TaskCompletionCard from "./TaskCompletionCard";
+import FileList from "./FileList";
+import DocumentList from "./DocumentList";
+import StatusRow from "./StatusRow";
 import logger from "@/lib/logger";
 import { useGlobalEventBus } from "@/lib/telemetry";
+import { spotlightUi } from "@/config/ui";
+import { openExpandedWindow, isElectron } from "@/lib/electron";
 
 interface LauncherHistoryPanelProps {
   messages: Message[];
   planState?: PlanState | null;
   isProcessing?: boolean;
   maxHeight?: number;
-  onExpand?: () => void;
   maxTurns?: number;
 }
 
@@ -37,102 +42,197 @@ const getConversationCutoffIndex = (messages: Message[], turns: number) => {
   return 0;
 };
 
-// Compact message component for launcher history
-const CompactMessage = memo(({ message, index }: { message: Message; index: number }) => {
-  const isUser = message.type === "user";
-  const isAssistant = message.type === "assistant";
-  const isStatus = message.type === "status";
-  const isBluesky = message.type === "bluesky_notification";
+type ConversationPair = {
+  id: string;
+  user?: Message;
+  assistant?: Message;
+  statuses: Message[];
+};
 
-  // Skip status messages in compact view
-  if (isStatus && message.status === "processing") return null;
+type HistoryItem =
+  | { kind: "pair"; pair: ConversationPair }
+  | { kind: "bluesky"; message: Message };
 
-  // Bluesky notification
-  if (isBluesky && message.bluesky_notification) {
-    return (
-      <div className="px-3 py-2">
-        <BlueskyNotificationCard
-          notification={message.bluesky_notification}
-          onAction={(action, uri, url) => {
-            logger.info("[HISTORY] Bluesky action", { action, uri });
-            if (action === "open" && url) {
-              window.open(url, "_blank");
-            }
-          }}
-        />
-      </div>
+const buildHistoryItems = (messages: Message[]): HistoryItem[] => {
+  const items: HistoryItem[] = [];
+  let current: ConversationPair | null = null;
+
+  const pushCurrent = () => {
+    if (current && (current.user || current.assistant || current.statuses.length > 0)) {
+      items.push({ kind: "pair", pair: current });
+      current = null;
+    }
+  };
+
+  messages.forEach((message, index) => {
+    if (message.type === "bluesky_notification" && message.bluesky_notification) {
+      pushCurrent();
+      items.push({ kind: "bluesky", message });
+      return;
+    }
+
+    if (message.type === "user" && message.message) {
+      pushCurrent();
+      current = {
+        id: `pair-${message.timestamp || index}-${index}`,
+        user: message,
+        statuses: [],
+      };
+      return;
+    }
+
+    if (message.type === "assistant" && message.message) {
+      if (!current) {
+        current = {
+          id: `pair-${message.timestamp || index}-${index}`,
+          assistant: message,
+          statuses: [],
+        };
+        return;
+      }
+
+      if (current.assistant) {
+        pushCurrent();
+        current = {
+          id: `pair-${message.timestamp || index}-${index}`,
+          assistant: message,
+          statuses: [],
+        };
+        return;
+      }
+
+      current.assistant = message;
+      return;
+    }
+
+    if (message.type === "status" && message.goal) {
+      if (!current) {
+        current = {
+          id: `status-${message.timestamp || index}-${index}`,
+          statuses: [message],
+        };
+      } else {
+        current.statuses = [...current.statuses, message];
+      }
+    }
+  });
+
+  pushCurrent();
+  return items;
+};
+
+const formatTimestampLabel = (timestamp?: string, formatter?: Intl.DateTimeFormat) => {
+  if (!timestamp || !formatter) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return formatter.format(date);
+};
+
+const ConversationPairCard = memo(
+  ({
+    pair,
+    index,
+    formatter,
+  }: {
+    pair: ConversationPair;
+    index: number;
+    formatter?: Intl.DateTimeFormat;
+  }) => {
+    const timestampLabel = formatTimestampLabel(
+      pair.assistant?.timestamp || pair.user?.timestamp,
+      formatter
     );
-  }
+    const assistantFileCount = pair.assistant?.files?.length ?? 0;
 
-  // User message
-  if (isUser) {
     return (
       <motion.div
-        initial={{ opacity: 0, x: 10 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: index * 0.05 }}
-        className="flex justify-end px-3 py-1.5"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -6 }}
+        transition={{ delay: index * 0.04, duration: 0.2 }}
+        className="px-4 py-3"
       >
-        <div className="max-w-[80%] bg-accent-primary/20 text-text-primary rounded-xl px-3 py-2 text-sm">
-          {message.message}
-        </div>
-      </motion.div>
-    );
-  }
-
-  // Assistant message
-  if (isAssistant && message.message) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, x: -10 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: index * 0.05 }}
-        className="flex justify-start px-3 py-1.5"
-      >
-        <div className="max-w-[85%] bg-glass/30 text-text-primary rounded-xl px-3 py-2 text-sm">
-          <div className="whitespace-pre-wrap leading-relaxed line-clamp-4">
-            {message.message}
+        <div className="rounded-2xl border border-glass/25 bg-glass/20 backdrop-blur-xl p-4 shadow-inner shadow-black/10">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-white/50">
+            <span className="flex items-center gap-1 text-white/60">
+              <span className="text-white/50">Dialogue</span>
+            </span>
+            {timestampLabel && <span className="text-white/40">{timestampLabel}</span>}
           </div>
-          {/* Show file count if present */}
-          {message.files && message.files.length > 0 && (
-            <div className="mt-1.5 text-xs text-text-muted flex items-center gap-1">
-              <span>📁</span>
-              <span>{message.files.length} file{message.files.length > 1 ? 's' : ''}</span>
+
+          <div className="mt-3 space-y-3">
+            {pair.user && (
+              <div className="flex gap-3">
+                <span className="text-[10px] font-semibold text-white/50 mt-1 shrink-0">You</span>
+                <div className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white/90 whitespace-pre-wrap leading-relaxed line-clamp-3">
+                  {pair.user.message}
+                </div>
+              </div>
+            )}
+
+            {pair.assistant && (
+              <div className="flex gap-3">
+                <span className="text-[10px] font-semibold text-accent-primary mt-1 shrink-0">
+                  Cerebros
+                </span>
+                <div className="flex-1 space-y-3">
+                  <div className="rounded-2xl border border-accent-primary/20 bg-accent-primary/5 px-4 py-2.5 text-sm text-white/90 whitespace-pre-wrap leading-relaxed line-clamp-4">
+                    {pair.assistant.message}
+                  </div>
+                  {pair.assistant.slash_slack && (
+                    <SlashSlackSummaryCard summary={pair.assistant.slash_slack} />
+                  )}
+                  {pair.assistant.completion_event && (
+                    <TaskCompletionCard completionEvent={pair.assistant.completion_event} />
+                  )}
+                  {pair.assistant.status && (
+                    <StatusRow status={pair.assistant.status} />
+                  )}
+                  {assistantFileCount > 0 && pair.assistant.files && (
+                    <FileList
+                      files={pair.assistant.files}
+                      summaryBlurb={pair.assistant.message}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {pair.statuses.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {pair.statuses.map((status) => (
+                <span
+                  key={`${status.goal}-${status.timestamp}`}
+                  className="text-[10px] text-amber-200 bg-amber-400/10 border border-amber-400/30 rounded-full px-2 py-0.5"
+                >
+                  🎯 {status.goal}
+                </span>
+              ))}
             </div>
           )}
         </div>
       </motion.div>
     );
   }
+);
 
-  // Status with goal (plan started)
-  if (isStatus && message.goal) {
-    return (
-      <div className="px-3 py-1.5">
-        <div className="text-xs text-accent-primary flex items-center gap-1.5">
-          <span>🎯</span>
-          <span className="truncate">{message.goal}</span>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-});
-
-CompactMessage.displayName = "CompactMessage";
+ConversationPairCard.displayName = "ConversationPairCard";
 
 export default function LauncherHistoryPanel({
   messages,
   planState,
   isProcessing,
-  maxHeight = 200,
-  onExpand,
+  maxHeight = spotlightUi.historyPanel.maxHeight,
   maxTurns,
 }: LauncherHistoryPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const eventBus = useGlobalEventBus();
+  const timeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(undefined, spotlightUi.historyPanel.timestampFormat),
+    []
+  );
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -172,78 +272,116 @@ export default function LauncherHistoryPanel({
     return false;
   });
 
-  // Don't show if no messages
-  if (displayMessages.length === 0) return null;
+  const {
+    trimmedMessages,
+    displayedTurns,
+    hiddenTurns,
+    displayCount,
+  } = useMemo(() => {
+    if (displayMessages.length === 0) {
+      return {
+        trimmedMessages: [],
+        displayedTurns: 0,
+        hiddenTurns: 0,
+        displayCount: 0,
+      };
+    }
 
-  const totalTurns = countUserTurns(displayMessages);
-  const cutoffIndex = maxTurns ? getConversationCutoffIndex(displayMessages, maxTurns) : 0;
-  const trimmedMessages = displayMessages.slice(cutoffIndex);
-  const displayedTurns = countUserTurns(trimmedMessages);
-  const hiddenTurns = Math.max(totalTurns - displayedTurns, 0);
+    const totalTurns = countUserTurns(displayMessages);
+    const cutoffIndex = maxTurns ? getConversationCutoffIndex(displayMessages, maxTurns) : 0;
+    const trimmed = displayMessages.slice(cutoffIndex);
+    const displayed = countUserTurns(trimmed);
+    return {
+      trimmedMessages: trimmed,
+      displayedTurns: displayed,
+      hiddenTurns: Math.max(totalTurns - displayed, 0),
+      displayCount: displayMessages.length,
+    };
+  }, [displayMessages, maxTurns]);
+
+  const historyItems = useMemo(() => buildHistoryItems(trimmedMessages), [trimmedMessages]);
+
+  if (displayCount === 0 || trimmedMessages.length === 0) {
+    return null;
+  }
 
   return (
     <div className="border-t border-glass/30 bg-glass/10">
-      {/* Header with expand button */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-glass/20">
-        <div className="flex items-center gap-2 text-xs text-text-muted">
-          <span>💬</span>
-          <span>
-            {maxTurns
-              ? `Conversation (Last ${displayedTurns} turn${displayedTurns === 1 ? "" : "s"})`
-              : `Conversation (${displayMessages.length})`}
-          </span>
-          {hiddenTurns > 0 && (
-            <span className="text-[10px] uppercase tracking-wide text-text-muted/70">
-              +{hiddenTurns} older
-            </span>
-          )}
-          {isProcessing && (
-            <motion.span
-              animate={{ opacity: [0.5, 1, 0.5] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="text-accent-primary"
-            >
-              •
-            </motion.span>
-          )}
-        </div>
-        {onExpand && (
-          <button
-            onClick={() => {
-              logger.info("[HISTORY] Expand button clicked");
-              eventBus.emit('window:expand', { 
-                messageCount: displayMessages.length,
-                timestamp: Date.now() 
-              });
-              onExpand();
-            }}
-            className="text-xs text-text-muted hover:text-text-primary transition-colors flex items-center gap-1 px-2 py-0.5 rounded hover:bg-glass-hover"
-          >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
-            <span>Expand</span>
-          </button>
-        )}
-      </div>
-
-      {/* Scrollable message list */}
       <div
         ref={scrollRef}
         className="overflow-y-auto"
         style={{ maxHeight }}
       >
-        <AnimatePresence mode="popLayout">
-          {trimmedMessages.map((message, index) => (
-            <CompactMessage key={`${message.type}-${index}`} message={message} index={index} />
-          ))}
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-glass/20 bg-glass/30 backdrop-blur-md">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/60">
+            <span className="text-white/80">Recent</span>
+            <span className="text-white/50">
+              {maxTurns
+                ? `Last ${displayedTurns} turn${displayedTurns === 1 ? "" : "s"}`
+                : `${displayCount} message${displayCount === 1 ? "" : "s"}`}
+            </span>
+            {hiddenTurns > 0 && (
+              <span className="text-[10px] text-white/40">+{hiddenTurns} older</span>
+            )}
+            {isProcessing && (
+              <motion.span
+                animate={{ opacity: [0.4, 1, 0.4] }}
+                transition={{ duration: 1.2, repeat: Infinity }}
+                className="text-accent-primary text-base leading-none"
+              >
+                •
+              </motion.span>
+            )}
+          </div>
+        </div>
+
+        {/* Scrollable message list */}
+        <AnimatePresence mode="sync">
+          {historyItems.map((item, index) => {
+            if (item.kind === "pair") {
+              return (
+                <ConversationPairCard
+                  key={item.pair.id || `pair-${index}`}
+                  pair={item.pair}
+                  index={index}
+                  formatter={timeFormatter}
+                />
+              );
+            }
+
+            if (item.kind === "bluesky" && item.message.bluesky_notification) {
+              return (
+                <motion.div
+                  key={`bluesky-${item.message.timestamp}-${index}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ delay: index * 0.04, duration: 0.2 }}
+                  className="px-4 py-3"
+                >
+                  <BlueskyNotificationCard
+                    notification={item.message.bluesky_notification}
+                    onAction={(action, uri, url) => {
+                      logger.info("[HISTORY] Bluesky action", { action, uri });
+                      if (action === "open" && url) {
+                        window.open(url, "_blank");
+                      }
+                    }}
+                  />
+                </motion.div>
+              );
+            }
+
+            return null;
+          })}
         </AnimatePresence>
         <div ref={bottomRef} />
       </div>
 
       {/* Active plan indicator */}
       {planState && (planState.status === "executing" || planState.status === "planning") && (
-        <div className="px-3 py-2 border-t border-glass/20 bg-accent-primary/5">
+        <div className="px-4 py-3 border-t border-glass/20 bg-accent-primary/5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs">
             <motion.span
               animate={{ rotate: 360 }}
@@ -260,6 +398,14 @@ export default function LauncherHistoryPanel({
               </span>
             )}
           </div>
+          {isElectron() && (
+            <button
+              onClick={openExpandedWindow}
+              className="text-[11px] font-semibold uppercase tracking-wide text-accent-primary border border-accent-primary/40 rounded-full px-3 py-1 hover:bg-accent-primary/20 hover:text-white transition-colors"
+            >
+              Expand view
+            </button>
+          )}
         </div>
       )}
     </div>

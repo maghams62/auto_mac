@@ -2,6 +2,13 @@
 
 DocDrift-inspired dashboard that lets Oqoqo teams configure monitored repos, visualize documentation drift, and explore cross-service dependencies before Cerebros automation is wired up.
 
+## Vision & Intent
+
+- **Multi-source intelligence:** Normalizes Git, docs, Slack, tickets, and support signals into a single activity graph so we can ask “what changed?” across every system, not just docs.
+- **Component-centric truth:** Every repo, doc section, and ticket ultimately anchors to a component/API node so we can show drift, activity, dissatisfaction, and dependency impact per node.
+- **Cross-system divergence:** Surfaces when sources disagree (e.g., Git vs docs vs Slack sentiment) via badges, prioritized drift issues, and impact views.
+- **Independent yet integrable:** Ships as a standalone Next.js app on port `3100`, keeping Cerebros (port `3000`) untouched while still exposing deep links and config exports Cerebros can ingest later.
+
 ## Stack
 
 - **Next.js 16 / App Router / TypeScript**
@@ -44,6 +51,23 @@ Each view has a shareable URL so Cerebros can deep-link (e.g. `/projects/atlas/c
 - `docIssues`: severity, linked code paths, cross-signal counts.
 - `dependencies` & `changeImpacts`: toy upstream/downstream edges showing how Service A affects docs in Services B/C.
 - `useDashboardStore`: Zustand store that seeds mock data, tracks filters, and serializes monitored-source config for future Cerebros ingestion.
+
+### Hydration stability
+
+- The synthetic dataset reads a single clock from `NEXT_PUBLIC_MOCK_SNAPSHOT_EPOCH` (or `MOCK_SNAPSHOT_EPOCH`) so that server-rendered HTML matches the client bundle byte-for-byte. Set this env var in `.env.local` if you want to preview a different snapshot; otherwise it defaults to `2025-01-15T00:00:00.000Z`.
+- `/src/tests/hydration.mock-data.test.ts` reloads the mock data module twice to ensure the snapshot stays identical; run `npm run test -- src/tests/hydration.mock-data.test.ts` after tweaking fixtures.
+- `HydrationDiagnostics` (`src/components/system/hydration-diagnostics.tsx`) remains mounted globally and emits `hydration.clean` or `hydration.extension-attrs` events so we can detect browser extensions or stray attributes that might break React hydration.
+
+## UI primitives & layout
+
+- `src/components/layout/app-shell.tsx` now centralizes global chrome:
+  - `SidebarNav`: consolidates workspace + per-project navigation and owns the single `ProjectSwitcher`.
+  - `LiveStatusWidget`: merges the ingest-mode pill and live-status badge into one compact status chip.
+- `src/app/(dashboard)/projects/page.tsx` exposes reusable building blocks:
+  - `HeroMetricsRow`: renders the four key KPIs in a consistent grid.
+  - `ContextPills`: lists monitored repos alongside the Slack signal count.
+  - `PrimaryActions`: bundles all primary CTA buttons (overview, impact, components) without repeating copy inline.
+- `src/app/(dashboard)/projects/[projectId]/graph/page.tsx` ships a `GraphToolbar` that groups the provider badge, node/issue tabs, severity filters, and a legend popover so the visualization stays above the fold.
 
 ## Future Cerebros Integration
 

@@ -1,4 +1,8 @@
 from src.agent.slash_git_assistant import SlashGitAssistant
+from src.demo.graph_summary import GraphSummary
+from src.demo.scenario_classifier import PAYMENTS_SCENARIO
+from src.demo.vector_retriever import VectorRetrievalBundle
+from src.reasoners import DocDriftAnswer
 
 
 class DummyRegistry:
@@ -40,7 +44,7 @@ def test_branch_switch_sets_context():
         "list_repository_branches": {"count": 2, "branches": ["main", "develop"], "default_branch": "main"},
     })
     session_manager = FakeSessionManager()
-    assistant = SlashGitAssistant(registry, session_manager, {})
+    assistant = SlashGitAssistant(registry, session_manager, {"slash_git": {"doc_drift_reasoner": False}})
 
     response = assistant.handle("use develop", session_id="abc")
 
@@ -62,7 +66,7 @@ def test_repo_info_summary_mentions_default_branch():
             }
         }
     })
-    assistant = SlashGitAssistant(registry, None, {})
+    assistant = SlashGitAssistant(registry, None, {"slash_git": {"doc_drift_reasoner": False}})
 
     response = assistant.handle("repo info", session_id=None)
 
@@ -99,11 +103,56 @@ def test_recent_commits_use_default_branch_when_no_context():
             ],
         },
     })
-    assistant = SlashGitAssistant(registry, FakeSessionManager(), {})
+    assistant = SlashGitAssistant(registry, FakeSessionManager(), {"slash_git": {"doc_drift_reasoner": False}})
 
     response = assistant.handle("last commit", session_id="session-x")
 
     assert response["status"] == "success"
     assert "`main`" in response["message"]
     assert response["data"]["commits"][0]["short_sha"] == "abc123d"
+
+
+class FakeDocReasoner:
+    def __init__(self):
+        self.calls = 0
+
+    def answer_question(self, question: str, source: str = "git") -> DocDriftAnswer:
+        self.calls += 1
+        return DocDriftAnswer(
+            question=question,
+            scenario=PAYMENTS_SCENARIO,
+            summary="Payments doc drift detected.",
+            sections={
+                "topics": [{"title": "Payments", "insight": "VAT mismatch noted.", "evidence_ids": []}],
+                "decisions": [],
+                "tasks": [],
+                "open_questions": [],
+                "references": [],
+            },
+            impacted={
+                "apis": [PAYMENTS_SCENARIO.api],
+                "services": ["core-api-service"],
+                "components": ["core.payments"],
+                "docs": ["docs/payments_api.md"],
+            },
+            evidence=[{"id": "git-1", "source": "git", "text": "Commit updated VAT handling."}],
+            graph_summary=GraphSummary(api=PAYMENTS_SCENARIO.api),
+            vector_bundle=VectorRetrievalBundle(),
+            doc_drift=[{"doc": "docs/payments_api.md", "issue": "Missing vat_code", "services": ["core-api-service"], "components": ["core.payments"], "apis": [PAYMENTS_SCENARIO.api], "labels": ["doc_drift"]}],
+            next_steps=["Patch docs"],
+            metadata={"scenario": PAYMENTS_SCENARIO.name},
+        )
+
+
+def test_doc_drift_reasoner_short_circuit():
+    registry = DummyRegistry({})
+    reasoner = FakeDocReasoner()
+    assistant = SlashGitAssistant(registry, None, {"slash_git": {"doc_drift_reasoner": True}}, reasoner=reasoner)
+
+    response = assistant.handle("Why are payments docs drifting?", session_id=None)
+
+    assert response["status"] == "success"
+    assert "Payments doc drift detected." in response["message"]
+    assert response["data"]["impacted"]["apis"] == [PAYMENTS_SCENARIO.api]
+    assert reasoner.calls == 1
 

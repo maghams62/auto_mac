@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { useThemeTokens } from "@/lib/theme/tokens";
 
 // Prevent hydration mismatch by rendering time only on client
 function ClientTime() {
@@ -33,16 +32,20 @@ interface HeaderProps {
   messageCount?: number;
   onClearSession?: () => void;
   onShowHelp?: () => void;
+  planActive?: boolean;
+  onTogglePlanTrace?: () => void;
+  isTraceOpen?: boolean;
 }
 
 export default function Header({
   isConnected = true,
   messageCount = 0,
   onClearSession,
-  onShowHelp
+  onShowHelp,
+  planActive = false,
+  onTogglePlanTrace,
+  isTraceOpen = false
 }: HeaderProps) {
-  const tokens = useThemeTokens();
-
   return (
     <header className={cn(
       "sticky top-0 z-50 border-b backdrop-blur-glass shadow-elevated",
@@ -90,6 +93,12 @@ export default function Header({
                     • {messageCount} messages
                   </span>
                 )}
+                {planActive && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-accent-primary font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent-primary animate-pulse" />
+                    Plan running
+                  </span>
+                )}
               </span>
             </div>
 
@@ -103,6 +112,25 @@ export default function Header({
 
           {/* Right Section - Quick Actions */}
           <div className="flex items-center gap-2">
+            {planActive && onTogglePlanTrace && (
+              <button
+                onClick={onTogglePlanTrace}
+                className={cn(
+                  "inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium transition-all duration-200 ease-out focus:outline-none focus:ring-2",
+                  isTraceOpen
+                    ? "text-accent-primary bg-surface-elevated/80 border border-accent-primary/40 shadow-soft focus:ring-accent-primary/40"
+                    : "text-text-muted hover:text-text-primary hover:bg-surface-elevated/80 focus:ring-accent-primary/30"
+                )}
+                title={isTraceOpen ? "Hide plan trace" : "Show plan trace"}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M6 12a3 3 0 116 0 3 3 0 01-6 0z" strokeWidth="1.5" />
+                  <path d="M12 5l4-2 4 2v4l-4 2-4-2V5z" strokeWidth="1.5" />
+                  <path d="M12 13v6l4 2 4-2v-6" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+
             {onShowHelp && (
               <button
                 onClick={onShowHelp}
