@@ -57,6 +57,7 @@ Each view has a shareable URL so Cerebros can deep-link (e.g. `/projects/atlas/c
 - The synthetic dataset reads a single clock from `NEXT_PUBLIC_MOCK_SNAPSHOT_EPOCH` (or `MOCK_SNAPSHOT_EPOCH`) so that server-rendered HTML matches the client bundle byte-for-byte. Set this env var in `.env.local` if you want to preview a different snapshot; otherwise it defaults to `2025-01-15T00:00:00.000Z`.
 - `/src/tests/hydration.mock-data.test.ts` reloads the mock data module twice to ensure the snapshot stays identical; run `npm run test -- src/tests/hydration.mock-data.test.ts` after tweaking fixtures.
 - `HydrationDiagnostics` (`src/components/system/hydration-diagnostics.tsx`) remains mounted globally and emits `hydration.clean` or `hydration.extension-attrs` events so we can detect browser extensions or stray attributes that might break React hydration.
+- Some browser extensions (notably ones that add `bis_skin_checked` or `bis_register` attributes) mutate the DOM between SSR and hydration; the root layout now strips those attributes both immediately and via a short `MutationObserver`, but if the warning reappears, re-launch the dashboard in an extension-free profile to confirm before filing an issue.
 
 ## UI primitives & layout
 

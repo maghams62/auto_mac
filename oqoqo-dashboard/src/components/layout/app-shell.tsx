@@ -171,12 +171,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <div className="text-xs uppercase tracking-[0.5em] text-muted-foreground">Oqoqo</div>
               <div className="text-lg font-semibold">Activity Graph Intelligence</div>
               {selectedProject ? (
-                <p className="text-xs text-muted-foreground">
-                  Focused on <span className="text-foreground">{selectedProject.name}</span>{" "}
-                  <Badge variant="outline" className="ml-1 rounded-full border-primary/30 text-[10px] text-primary">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>
+                    Focused on <span className="text-foreground">{selectedProject.name}</span>
+                  </span>
+                  <Badge variant="outline" className="rounded-full border-primary/30 text-[10px] text-primary">
                     {selectedProject.horizon}
                   </Badge>
-                </p>
+                </div>
               ) : (
                 <p className="text-xs text-muted-foreground">Select a project from the sidebar to get started.</p>
               )}

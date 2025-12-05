@@ -29,15 +29,10 @@ export default function ProjectsPage() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
-  const focusedProject = useMemo(() => projects.find((project) => project.id === focusedProjectId) ?? projects[0], [focusedProjectId, projects]);
-  const heroMetrics = focusedProject
-    ? [
-        { label: "Doc health", value: `${focusedProject.docHealthScore}/100` },
-        { label: "Open drift issues", value: `${focusedProject.pulse.totalIssues}`, detail: "Across components" },
-        { label: "Critical issues", value: `${severityCounts.critical}`, detail: "Immediate escalation" },
-        { label: "Linked signals", value: `${linkedSystemsCount}`, detail: "Slack + tickets" },
-      ]
-    : [];
+  const focusedProject = useMemo(
+    () => projects.find((project) => project.id === focusedProjectId) ?? projects[0],
+    [focusedProjectId, projects]
+  );
 
   const severityCounts = useMemo(() => {
     if (!focusedProject) {
@@ -56,6 +51,18 @@ export default function ProjectsPage() {
     if (!focusedProject) return 0;
     return focusedProject.repos.reduce((count, repo) => count + (repo.linkedSystems.slackChannels?.length ?? 0), 0);
   }, [focusedProject]);
+
+  const heroMetrics = useMemo(() => {
+    if (!focusedProject) {
+      return [];
+    }
+    return [
+      { label: "Doc health", value: `${focusedProject.docHealthScore}/100` },
+      { label: "Open drift issues", value: `${focusedProject.pulse.totalIssues}`, detail: "Across components" },
+      { label: "Critical issues", value: `${severityCounts.critical}`, detail: "Immediate escalation" },
+      { label: "Linked signals", value: `${linkedSystemsCount}`, detail: "Slack + tickets" },
+    ];
+  }, [focusedProject, severityCounts, linkedSystemsCount]);
 
   const handleCreate = async (draft: ProjectDraft) => {
     await addProject(draft);
