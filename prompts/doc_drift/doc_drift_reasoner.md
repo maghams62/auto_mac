@@ -109,6 +109,12 @@ provided evidence snippets.
    - Cite evidence via `evidence_ids`.
    - Clearly state when evidence is sparse or ambiguous.
 5. Return **only** the JSON structure—keep reasoning internal.
+6. When explaining severity, explicitly reference:
+   - Which components/services/docs/Slack threads triggered the signal.
+   - Recency of the newest evidence (e.g., “Slack thread from 2h ago”).
+   - Source trust: Git & doc issues outrank Slack anecdotes; call out conflicts.
+7. Suggest concrete remediation steps (docs to update, services to patch, alerts to silence) so the dashboard can display actionable resolution hints.
+8. Use the provided metadata fields (`components`, `doc_priorities`, `source weights`) so your explanation names the same nodes the dashboard highlights.
 
 ---
 

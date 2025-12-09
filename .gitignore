@@ -22,8 +22,7 @@ wheels/
 
 # Virtual Environment
 venv/
-ENV/
-env/
+
 
 # IDE
 .vscode/
@@ -34,7 +33,7 @@ env/
 
 # Environment variables
 .env
-.env.local
+.env.*
 
 # Data files
 data/embeddings/*.index
@@ -76,8 +75,15 @@ data/app.log
 # Session data and cache
 data/sessions/
 data/cache/
+data/state/youtube_videos/
 data/bluesky_state.json
 data/spotify_tokens.json
+data/live/
+data/logs/
+data/reports/
+data/state/
+data/pr_events.json
+data/neo4j/
 
 # Test results
 data/test_results/results/
@@ -85,3 +91,9 @@ mail_diagnostic_results.json
 
 # IDE
 .cursor/
+
+# Local virtualenvs
+venv-slash-tests/
+
+# Local clones
+docs-portal/

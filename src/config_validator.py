@@ -13,15 +13,21 @@ from pathlib import Path
 from .config.models import (
     BrowserSettings,
     BlueskySettings,
+    ContextResolutionSettings,
     DiscordCredentials,
     DiscordSettings,
     DocumentsSettings,
     EmailSettings,
+    ImpactEvidenceSettings,
+    ImpactPipelineSettings,
+    ImpactNotificationSettings,
+    ImpactSettings,
     IMessageSettings,
     MapsSettings,
     OpenAISettings,
     ScreenshotSettings,
     SpotifyAPISettings,
+    TraceabilitySettings,
     TwitterSettings,
     VisionSettings,
     VoiceSettings,
@@ -35,6 +41,26 @@ logger = logging.getLogger(__name__)
 class ConfigValidationError(Exception):
     """Raised when config validation fails."""
     pass
+
+
+def _parse_impact_level(
+    value: Optional[Union[str, int]],
+    *,
+    default: str,
+) -> str:
+    """
+    Normalize user-provided impact level strings.
+    """
+    allowed = {"low", "medium", "high"}
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized not in allowed:
+        raise ConfigValidationError(
+            f"Invalid impact.notifications.min_impact_level '{value}'. "
+            "Expected one of: low, medium, high."
+        )
+    return normalized
 
 
 class ConfigAccessor:
@@ -57,6 +83,7 @@ class ConfigAccessor:
         """
         self.config = config
         self._validate_structure()
+        self._validate_metadata_cache_settings()
 
     def _validate_structure(self):
         """Validate that required top-level sections exist."""
@@ -100,6 +127,43 @@ class ConfigAccessor:
             value = value[part]
         
         return value
+
+    def _validate_metadata_cache_settings(self) -> None:
+        metadata_cache = self.config.get("metadata_cache", {})
+        slack_cfg = metadata_cache.get("slack", {})
+        git_cfg = metadata_cache.get("git", {})
+
+        def _validate_positive_int(value: Any, path: str, *, allow_zero: bool = False) -> None:
+            if value is None:
+                return
+            try:
+                int_value = int(value)
+            except (TypeError, ValueError):
+                raise ConfigValidationError(f"{path} must be an integer.")
+            if allow_zero:
+                if int_value < 0:
+                    raise ConfigValidationError(f"{path} must be zero or greater.")
+            else:
+                if int_value <= 0:
+                    raise ConfigValidationError(f"{path} must be greater than zero.")
+
+        def _validate_bool(value: Any, path: str) -> None:
+            if value is None:
+                return
+            if not isinstance(value, bool):
+                raise ConfigValidationError(f"{path} must be true or false.")
+
+        _validate_positive_int(slack_cfg.get("ttl_seconds"), "metadata_cache.slack.ttl_seconds")
+        _validate_positive_int(slack_cfg.get("max_items"), "metadata_cache.slack.max_items")
+        _validate_bool(slack_cfg.get("log_metrics"), "metadata_cache.slack.log_metrics")
+
+        _validate_positive_int(git_cfg.get("repo_ttl_seconds"), "metadata_cache.git.repo_ttl_seconds")
+        _validate_positive_int(git_cfg.get("branch_ttl_seconds"), "metadata_cache.git.branch_ttl_seconds")
+        _validate_positive_int(
+            git_cfg.get("max_branches_per_repo"),
+            "metadata_cache.git.max_branches_per_repo",
+        )
+        _validate_bool(git_cfg.get("log_metrics"), "metadata_cache.git.log_metrics")
 
     # User-specific data accessors with validation
 
@@ -338,6 +402,32 @@ class ConfigAccessor:
         path.mkdir(parents=True, exist_ok=True)
         return ScreenshotSettings(base_dir=str(path))
 
+    def get_traceability_settings(self) -> TraceabilitySettings:
+        """
+        Get traceability configuration (investigation storage + graph hooks).
+        """
+        traceability_cfg = self.get("traceability", {})
+        investigations_path = traceability_cfg.get("investigations_path", "data/live/investigations.jsonl")
+        max_entries = int(traceability_cfg.get("max_entries", 500))
+        neo4j_cfg = traceability_cfg.get("neo4j", {}) or {}
+        neo4j_enabled = bool(neo4j_cfg.get("enabled", False))
+        retention_days = int(traceability_cfg.get("retention_days", 30))
+        max_file_bytes = int(traceability_cfg.get("max_file_bytes", 5 * 1024 * 1024))
+        missing_evidence_threshold = int(traceability_cfg.get("missing_evidence_threshold", 5))
+        missing_evidence_window_seconds = int(traceability_cfg.get("missing_evidence_window_seconds", 3600))
+        enabled = bool(traceability_cfg.get("enabled", True))
+
+        return TraceabilitySettings(
+            investigations_path=str(investigations_path),
+            max_entries=max_entries,
+            retention_days=retention_days,
+            max_file_bytes=max_file_bytes,
+            missing_evidence_threshold=missing_evidence_threshold,
+            missing_evidence_window_seconds=missing_evidence_window_seconds,
+            enabled=enabled,
+            neo4j_enabled=neo4j_enabled,
+        )
+
     def get_vision_config(self) -> VisionSettings:
         """
         Get configuration for vision-assisted UI navigation.
@@ -368,6 +458,60 @@ class ConfigAccessor:
             headless=browser_config.get("headless", True),
             timeout=int(browser_config.get("timeout", 30000)),
             unique_session_search=browser_config.get("unique_session_search", True),
+        )
+
+    def get_context_resolution_settings(self) -> ContextResolutionSettings:
+        """
+        Return normalized context resolution configuration used by impact analysis.
+        """
+        cr_cfg = self.get("context_resolution", {})
+        dependency_files = [
+            str(path) for path in cr_cfg.get("dependency_files", []) or []
+        ]
+        repo_mode = str(cr_cfg.get("repo_mode", "polyrepo"))
+        activity_window = int(cr_cfg.get("activity_window_hours", 168))
+
+        impact_cfg = cr_cfg.get("impact", {}) or {}
+        evidence_cfg = impact_cfg.get("evidence", {}) or {}
+        pipeline_cfg = impact_cfg.get("pipeline", {}) or {}
+
+        evidence = ImpactEvidenceSettings(
+            llm_enabled=bool(evidence_cfg.get("llm_enabled", False)),
+            llm_model=evidence_cfg.get("llm_model"),
+            max_bullets=int(evidence_cfg.get("max_bullets", 5)),
+        )
+        pipeline = ImpactPipelineSettings(
+            slack_lookup_hours=int(pipeline_cfg.get("slack_lookup_hours", 72)),
+            git_lookup_hours=int(pipeline_cfg.get("git_lookup_hours", 168)),
+            notify_slack=bool(pipeline_cfg.get("notify_slack", False)),
+        )
+        notifications_cfg = impact_cfg.get("notifications", {}) or {}
+        min_impact_level = _parse_impact_level(
+            notifications_cfg.get("min_impact_level"),
+            default="high",
+        )
+        notifications = ImpactNotificationSettings(
+            enabled=bool(notifications_cfg.get("enabled", False)),
+            slack_channel=notifications_cfg.get("slack_channel"),
+            github_app_id=notifications_cfg.get("github_app_id"),
+            min_impact_level=min_impact_level,
+        )
+        impact = ImpactSettings(
+            default_max_depth=int(impact_cfg.get("default_max_depth", 2)),
+            include_docs=bool(impact_cfg.get("include_docs", True)),
+            include_services=bool(impact_cfg.get("include_services", True)),
+            include_components=bool(impact_cfg.get("include_components", True)),
+            include_slack_threads=bool(impact_cfg.get("include_slack_threads", True)),
+            max_recommendations=int(impact_cfg.get("max_recommendations", 5)),
+            evidence=evidence,
+            pipeline=pipeline,
+            notifications=notifications,
+        )
+        return ContextResolutionSettings(
+            dependency_files=dependency_files,
+            repo_mode=repo_mode,
+            activity_window_hours=activity_window,
+            impact=impact,
         )
 
     def get_maps_config(self) -> MapsSettings:

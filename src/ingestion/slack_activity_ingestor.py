@@ -9,11 +9,16 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 import time
+import os
 
 from ..graph import GraphIngestor, GraphService
+from ..graph.universal_nodes import UniversalNodeWriter
 from ..vector import ContextChunk, get_vector_search_service
 from ..vector.context_chunk import generate_slack_entity_id
 from ..integrations.slack_client import SlackAPIClient, SlackAPIError
+from ..utils.component_ids import normalize_component_ids, resolve_component_id
+from ..utils.slack_links import build_slack_permalink
+from .loggers import SignalLogWriter
 from .state import ActivityIngestState
 
 logger = logging.getLogger(__name__)
@@ -35,7 +40,8 @@ class SlackActivityIngestor:
         self.enabled = bool(self.slack_cfg.get("enabled", False))
         self.batch_limit = max(1, min(self.slack_cfg.get("batch_limit", 200), 1000))
         self.state_store = ActivityIngestState(activity_cfg.get("state_dir", "data/state/activity_ingest"))
-        self.workspace_url = (self.slack_cfg.get("workspace_url") or "").rstrip("/")
+        self.workspace_url = self._resolve_workspace_url(self.slack_cfg, config)
+        self.team_id = self._resolve_team_id(self.slack_cfg, config)
         self.default_keywords = [
             kw.lower()
             for kw in self.slack_cfg.get("dissatisfaction_keywords", ["fail", "error", "broken", "down"])
@@ -46,8 +52,16 @@ class SlackActivityIngestor:
 
         self.graph_service = graph_service or GraphService(config)
         self.graph_ingestor = GraphIngestor(self.graph_service)
+        self.universal_writer = UniversalNodeWriter(self.graph_service)
         self.vector_service = vector_service or get_vector_search_service(config)
         self.vector_collection = getattr(self.vector_service, "collection", None) if self.vector_service else None
+        ag_cfg = config.get("activity_graph") or {}
+        slack_log_path = (
+            self.slack_cfg.get("graph_log_path")
+            or ag_cfg.get("slack_graph_path")
+            or "data/logs/slash/slack_graph.jsonl"
+        )
+        self.signal_logger = SignalLogWriter(slack_log_path)
 
         token_override = self.slack_cfg.get("bot_token")
         try:
@@ -206,8 +220,20 @@ class SlackActivityIngestor:
 
         entity_id = generate_slack_entity_id(channel_id, ts)
         tags = ["slack", channel_id] + channel_cfg.get("tags", [])
+        graph_node_id = entity_id
+        metadata = {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "user": user,
+            "permalink": permalink,
+            "thread_ts": message.get("thread_ts"),
+            "reply_count": message.get("reply_count"),
+            "source_modality": "slack",
+            "source_id": graph_node_id,
+            "graph_node_id": graph_node_id,
+        }
         chunk = ContextChunk(
-            chunk_id=ContextChunk.generate_chunk_id(),
+            chunk_id=entity_id,
             entity_id=entity_id,
             source_type="slack",
             text=chunk_text,
@@ -215,14 +241,7 @@ class SlackActivityIngestor:
             service=None,
             timestamp=ts_dt,
             tags=tags,
-            metadata={
-                "channel_id": channel_id,
-                "channel_name": channel_name,
-                "user": user,
-                "permalink": permalink,
-                "thread_ts": message.get("thread_ts"),
-                "reply_count": message.get("reply_count"),
-            },
+            metadata=metadata,
             collection=self.vector_collection,
         )
         return chunk
@@ -234,7 +253,7 @@ class SlackActivityIngestor:
         ts = message.get("ts", "0")
         ts_dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
         signal_id = f"signal:slack:{channel_cfg.get('id')}:{ts}"
-        component_ids = channel_cfg.get("components", [])
+        component_ids = normalize_component_ids(channel_cfg.get("components", []))
         endpoint_ids = channel_cfg.get("endpoint_ids", [])
         weight = self._compute_signal_weight(message, channel_cfg, ts_dt)
 
@@ -253,6 +272,7 @@ class SlackActivityIngestor:
             signal_weight=weight,
             last_seen=ts_dt.isoformat(),
         )
+        self._log_slack_signal(message, channel_cfg, component_ids, ts_dt)
 
     def _compute_signal_weight(
         self,
@@ -305,28 +325,114 @@ class SlackActivityIngestor:
                     "duration_ms": round(duration_ms, 2),
                 },
             )
-        else:
-            logger.info(
-                "[SLACK INGEST] Indexed slack chunks into Qdrant",
-                extra={
-                    "collection": collection,
-                    "chunk_count": chunk_count,
-                    "duration_ms": round(duration_ms, 2),
-                },
-            )
+            return
+
+        logger.info(
+            "[SLACK INGEST] Indexed slack chunks into Qdrant",
+            extra={
+                "collection": collection,
+                "chunk_count": chunk_count,
+                "duration_ms": round(duration_ms, 2),
+            },
+        )
+        self.universal_writer.ingest_chunks(chunks)
 
     def _build_permalink(self, channel_id: str, ts: str) -> str:
-        if not self.workspace_url:
-            return ""
-        ts_formatted = ts.replace(".", "")
-        return f"{self.workspace_url}/archives/{channel_id}/p{ts_formatted}"
+        permalink = build_slack_permalink(
+            channel_id,
+            ts,
+            workspace_url=self.workspace_url,
+            team_id=self.team_id,
+        )
+        return permalink or ""
+
+    def _resolve_workspace_url(self, slack_cfg: Dict[str, Any], config: Dict[str, Any]) -> str:
+        """
+        Determine the Slack workspace base URL from config or environment variables.
+        """
+        workspace_url: str = (
+            slack_cfg.get("workspace_url")
+            or (config.get("slack") or {}).get("workspace_url")
+            or ""
+        )
+        if "${" in workspace_url:
+            workspace_url = ""
+        env_url = os.environ.get("SLACK_WORKSPACE_URL") or os.environ.get("SLACK_WORKSPACE")
+        if not workspace_url and env_url:
+            workspace_url = env_url
+        if workspace_url and not workspace_url.startswith("http"):
+            workspace_url = f"https://{workspace_url.lstrip('/')}"
+        return workspace_url.rstrip("/")
+
+    def _resolve_team_id(self, slack_cfg: Dict[str, Any], config: Dict[str, Any]) -> Optional[str]:
+        team_id = (
+            slack_cfg.get("workspace_id")
+            or slack_cfg.get("team_id")
+            or (config.get("slash_slack") or {}).get("workspace_id")
+            or (config.get("slash_slack") or {}).get("team_id")
+            or (config.get("slack") or {}).get("workspace_id")
+            or (config.get("slack") or {}).get("team_id")
+            or os.environ.get("SLACK_TEAM_ID")
+            or os.environ.get("SLACK_WORKSPACE_ID")
+        )
+        if isinstance(team_id, str):
+            return team_id.strip() or None
+        return None
+
+    def _log_slack_signal(
+        self,
+        message: Dict[str, Any],
+        channel_cfg: Dict[str, Any],
+        component_ids: List[str],
+        ts_dt: datetime,
+    ) -> None:
+        if not component_ids:
+            return
+        labels: List[str] = []
+        is_complaint = self._is_complaint(message, channel_cfg)
+        if is_complaint:
+            labels.append("complaint")
+        channel_id = channel_cfg.get("id")
+        permalink = self._build_permalink(channel_id, message.get("ts", ""))
+        text_value = (message.get("text") or "").strip()
+        record = {
+            "source": "slack",
+            "component_ids": component_ids,
+            "properties": {
+                "timestamp": ts_dt.isoformat(),
+                "channel_id": channel_id,
+                "channel_name": channel_cfg.get("name"),
+                "labels": labels,
+                "permalink": permalink or None,
+                "text": text_value or None,
+                "user": message.get("user") or message.get("username"),
+                "sentiment": "negative" if is_complaint else "neutral",
+            },
+        }
+        self.signal_logger.write(record)
+
+    def _is_complaint(self, message: Dict[str, Any], channel_cfg: Dict[str, Any]) -> bool:
+        keywords = [
+            kw.lower() for kw in channel_cfg.get("dissatisfaction_keywords", self.default_keywords)
+        ]
+        text = (message.get("text") or "").lower()
+        if any(keyword and keyword in text for keyword in keywords):
+            return True
+        reactions = message.get("reactions", []) or []
+        for reaction in reactions:
+            if reaction.get("name") in self.negative_reactions:
+                return True
+        return False
 
     @staticmethod
     def _primary_component(channel_cfg: Dict[str, Any]) -> Optional[str]:
         components: Iterable[str] = channel_cfg.get("components") or []
         for comp in components:
-            if comp:
-                return comp
+            if not comp:
+                continue
+            canonical = resolve_component_id(comp)
+            if canonical:
+                return canonical
         return None
 
     def _find_channel_config(

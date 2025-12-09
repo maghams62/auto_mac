@@ -5,15 +5,22 @@ Connects to the existing AutomationAgent orchestrator.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import csv
+import io
 import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from collections import deque
+from urllib.parse import urlparse
+from uuid import uuid4
 from datetime import datetime, timezone
 from threading import Event, Lock
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ValidationError, Field
 import os
 import tempfile
 import httpx
@@ -21,6 +28,7 @@ import httpx
 from pathlib import Path
 from dotenv import load_dotenv
 import sys
+from dataclasses import asdict
 
 # Load .env file explicitly before importing anything that needs config
 project_root = Path(__file__).resolve().parent
@@ -37,27 +45,70 @@ if str(project_root) not in sys.path:
 
 from src.agent.agent import AutomationAgent
 from src.agent.agent_registry import AgentRegistry
+from src.agent.multi_source_reasoner import MultiSourceReasoner
+from src.agent.evidence import (
+    slack_thread_evidence_id,
+    slack_message_evidence_id,
+    git_pr_evidence_id,
+    git_commit_evidence_id,
+    doc_fragment_evidence_id,
+)
+from src.cerebros.graph_reasoner import run_cerebros_reasoner
 from src.memory import SessionManager
 from src.memory.local_chat_cache import LocalChatCache
+from src.services.git_metadata import GitMetadataService
+from src.ingestion.status_report import build_ingest_status
+from src.services.slack_metadata import SlackMetadataService
+from src.traceability import TraceabilityStore
+from src.traceability.neo4j import TraceabilityNeo4jIngestor
+from src.traceability.incidents import (
+    STRUCTURED_INCIDENT_FIELDS,
+    build_incident_candidate,
+    record_query_trace_from_evidence,
+    summarize_incident_entities,
+)
 from src.utils import load_config, save_config
 from src.workflow import WorkflowOrchestrator
 from src.services.feedback_logger import get_feedback_logger
 from src.services.context_resolution_service import ContextResolutionService
 from src.services.chat_storage import MongoChatStorage
+from src.services.youtube_context_service import YouTubeContextService
 from src.utils.performance_monitor import get_performance_monitor
 from src.utils.startup_profiler import get_startup_profiler
 from src.utils.trajectory_logger import get_trajectory_logger
 from src.utils.error_logger import log_error_with_context
 from src.utils.api_logging import log_api_request, log_websocket_event, sanitize_payload
-from src.graph import ActivityService, GraphAnalyticsService, GraphService
+from src.graph import ActivityService, GraphAnalyticsService, GraphDashboardService, GraphService
+from src.activity_graph.models import TimeWindow
+from src.activity_graph.metrics import activity_graph_metrics
+from src.activity_graph.service import ActivityGraphService
 from src.graph.validation import GraphValidator
-from telemetry.config import get_tracer, sanitize_value, set_span_error
+from src.config.context import ConfigContext
+from src.config_validator import ConfigAccessor
+from src.impact.models import GitFileChange
+from src.impact.service import ImpactService, SlackComplaintInput
+from src.impact.webhooks import ImpactWebhookHandlers
+from src.services.github_pr_service import GitHubAPIError
+from telemetry.config import get_tracer, sanitize_value, set_span_error, log_structured
 from src.automation.background_jobs import ChatPersistenceWorker
 from src.vector.service_factory import validate_vectordb_config, VectorServiceConfigError
+from src.search.query_trace import QueryTraceStore
+from src.youtube import (
+    VideoContext,
+    YouTubeHistoryStore,
+    YouTubeTranscriptService,
+    YouTubeVectorIndexer,
+    chunk_transcript_segments,
+    TranscriptProviderError,
+)
 import time
 
 # Initialize telemetry
 from telemetry import init_telemetry
+
+if TYPE_CHECKING:
+    from src.activity_graph.models import ComponentActivity
+    from src.cerebros.graph_reasoner import CerebrosReasonerResult
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -108,10 +159,16 @@ except ImportError:
 default_allowed_origins = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:3100",
+    "http://localhost:3300",
     "https://localhost:3000",
     "https://localhost:3001",
+    "https://localhost:3100",
+    "https://localhost:3300",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
+    "http://127.0.0.1:3100",
+    "http://127.0.0.1:3300",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
@@ -136,10 +193,33 @@ app.add_middleware(
 
 # Import global ConfigManager
 from src.config_manager import get_global_config_manager, set_global_config_manager, ConfigManager
+from src.settings import get_global_settings_manager
+from src.settings.runtime_mode import build_runtime_flags, apply_runtime_env_overrides
 from src.cache import StartupCacheManager
 
-# Initialize global config manager
+# Initialize global config + runtime settings
 config_manager = get_global_config_manager()
+_app_config_snapshot = config_manager.get_config()
+
+# Derive runtime mode + feature flags and apply env defaults BEFORE constructing
+# downstream services that read these env vars (Neo4j, slash-git, impact, etc.).
+_runtime_flags = build_runtime_flags(_app_config_snapshot)
+apply_runtime_env_overrides(_runtime_flags)
+startup_profiler.mark(
+    "runtime_mode_ready",
+    {
+        "mode": _runtime_flags.mode.value,
+        "enable_live_git": _runtime_flags.enable_live_git,
+        "enable_live_slack": _runtime_flags.enable_live_slack,
+        "enable_live_graph": _runtime_flags.enable_live_graph,
+        "enable_fixtures": _runtime_flags.enable_fixtures,
+        "enable_heavy_workers": _runtime_flags.enable_heavy_workers,
+    },
+)
+
+settings_manager = get_global_settings_manager(config_manager)
+slack_metadata_service = SlackMetadataService(config=_app_config_snapshot)
+git_metadata_service = GitMetadataService(_app_config_snapshot)
 startup_profiler.mark("config_manager_ready")
 
 # Startup cache hydrates heavy artifacts (prompts, manifests) between launches
@@ -172,6 +252,8 @@ agent = AutomationAgent(
 )
 startup_profiler.mark("automation_agent_ready", {"from_cache": bool(preloaded_prompts)})
 
+TEST_FIXTURE_ENDPOINTS_ENABLED = os.getenv("ENABLE_TEST_FIXTURE_ENDPOINTS", "0").lower() in {"1", "true", "yes"}
+
 # Persist prompt bundle if cache miss (write once per invalidation)
 if not automation_bootstrap or not automation_bootstrap.get("prompts"):
     startup_cache_manager.save_section(
@@ -186,6 +268,20 @@ if not automation_bootstrap or not automation_bootstrap.get("prompts"):
 else:
     startup_profiler.mark("startup_cache_populated", {"cache_written": False})
 
+# YouTube workflow services shared across API + slash commands
+_youtube_cfg = config_manager.get_config().get("youtube") or {}
+_youtube_history_store = YouTubeHistoryStore(
+    Path(_youtube_cfg.get("history_path", "data/state/youtube_history.json")),
+    max_entries=int(_youtube_cfg.get("max_recent", 8)),
+    clipboard_enabled=bool((_youtube_cfg.get("clipboard") or {}).get("enabled", True)),
+)
+youtube_context_service = YouTubeContextService(session_manager, _youtube_history_store, config_manager.get_config())
+youtube_transcript_service = YouTubeTranscriptService(config_manager.get_config())
+youtube_vector_indexer = YouTubeVectorIndexer(config_manager.get_config())
+_youtube_vectordb_cfg = _youtube_cfg.get("vectordb") or {}
+YOUTUBE_CHUNK_CHAR_LIMIT = int(_youtube_vectordb_cfg.get("max_chunk_chars", 1200))
+YOUTUBE_CHUNK_OVERLAP = float(_youtube_vectordb_cfg.get("chunk_overlap_seconds", 2.0))
+
 # Conversation persistence
 _mongo_cfg = config_manager.get_config().get("mongo", {})
 _cache_cfg = _mongo_cfg.get("cache", {})
@@ -196,6 +292,79 @@ chat_cache = LocalChatCache(
     flush_enabled=chat_storage.enabled,
 )
 chat_worker = ChatPersistenceWorker(chat_cache, chat_storage)
+query_trace_store = QueryTraceStore()
+
+# Traceability store (optional)
+_traceability_cfg = _app_config_snapshot.get("traceability", {}) or {}
+_traceability_flag_env = os.getenv("TRACEABILITY_ENABLED", "true").lower()
+_traceability_env_enabled = _traceability_flag_env not in {"0", "false", "off", "no"}
+traceability_store: Optional[TraceabilityStore] = None
+traceability_tenant_id = _app_config_snapshot.get("tenant_id") or "default"
+
+
+class TraceabilityHealthTracker:
+    def __init__(self, window_seconds: int = 3600, threshold: int = 5):
+        self.window_seconds = max(1, window_seconds)
+        self.threshold = max(1, threshold)
+        self._events: deque[float] = deque()
+        self._lock = Lock()
+
+    def record_missing_evidence(self) -> None:
+        now = datetime.now(timezone.utc).timestamp()
+        with self._lock:
+            self._events.append(now)
+            self._prune(now)
+
+    def _prune(self, now: Optional[float] = None) -> None:
+        if now is None:
+            now = datetime.now(timezone.utc).timestamp()
+        cutoff = now - self.window_seconds
+        while self._events and self._events[0] < cutoff:
+            self._events.popleft()
+
+    def describe(self) -> Dict[str, Any]:
+        with self._lock:
+            self._prune()
+            count = len(self._events)
+        return {
+            "window_seconds": self.window_seconds,
+            "count": count,
+            "threshold": self.threshold,
+            "status": "degraded" if count >= self.threshold else "ok",
+        }
+
+    def is_degraded(self) -> bool:
+        with self._lock:
+            self._prune()
+            return len(self._events) >= self.threshold
+if _traceability_cfg.get("investigations_path"):
+    try:
+        traceability_store = TraceabilityStore(
+            Path(_traceability_cfg.get("investigations_path")),
+            max_entries=int(_traceability_cfg.get("max_entries", 500)),
+            retention_days=int(_traceability_cfg.get("retention_days", 30)),
+            max_bytes=int(_traceability_cfg.get("max_file_bytes", 5 * 1024 * 1024)),
+        )
+        logger.info(
+            "[TRACEABILITY] Traceability store enabled at %s (max_entries=%s, retention_days=%s)",
+            _traceability_cfg.get("investigations_path"),
+            int(_traceability_cfg.get("max_entries", 500)),
+            int(_traceability_cfg.get("retention_days", 30)),
+        )
+    except Exception as exc:
+        traceability_store = None
+        logger.warning("[TRACEABILITY] Failed to initialize store: %s", exc)
+else:
+    logger.info("[TRACEABILITY] Traceability store disabled (path not configured)")
+
+traceability_health_tracker = TraceabilityHealthTracker(
+    window_seconds=int(_traceability_cfg.get("missing_evidence_window_seconds", 3600)),
+    threshold=int(_traceability_cfg.get("missing_evidence_threshold", 5)),
+)
+
+# Enable fast startup mode (skip awaiting background services) when requested.
+FAST_STARTUP_MODE = os.getenv("CEREBROS_FAST_STARTUP", "0").lower() in {"1", "true", "yes", "on"}
+_background_services_task: Optional[asyncio.Task] = None
 
 # Lazy-load workflow orchestrator for indexing (only initialize when needed)
 _orchestrator = None
@@ -281,6 +450,540 @@ def _history_sort_key(entry: Dict[str, Any]) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _traceability_enabled() -> bool:
+    cfg_enabled = bool(_traceability_cfg.get("enabled", True))
+    return (
+        bool(traceability_store and traceability_store.enabled)
+        and cfg_enabled
+        and _traceability_env_enabled
+    )
+
+
+def _find_youtube_context(session_id: str, video_id: str) -> Optional[VideoContext]:
+    contexts = youtube_context_service.list_contexts(session_id)
+    for ctx in contexts:
+        if ctx.video_id == video_id:
+            return ctx
+    return None
+
+
+def _refresh_youtube_transcript(session_id: str, video_id: str) -> VideoContext:
+    context = _find_youtube_context(session_id, video_id)
+    if not context:
+        raise HTTPException(status_code=404, detail="Video context not found for this session")
+
+    context.transcript_status.mark_pending()
+    youtube_context_service.save_context(session_id, context, make_active=False)
+
+    try:
+        transcript = youtube_transcript_service.fetch_transcript(video_id)
+    except TranscriptProviderError as exc:
+        context.transcript_status.mark_failed(exc.code, exc.message)
+        youtube_context_service.save_context(session_id, context, make_active=False)
+        raise HTTPException(status_code=502, detail=exc.message) from exc
+
+    chunks = chunk_transcript_segments(
+        video_id,
+        transcript.get("segments") or [],
+        max_chars=YOUTUBE_CHUNK_CHAR_LIMIT,
+        overlap_seconds=YOUTUBE_CHUNK_OVERLAP,
+    )
+    context.with_chunks(chunks)
+    context.transcript_status.mark_ready(language=transcript.get("language"))
+    youtube_vector_indexer.index_transcript(
+        context,
+        chunks,
+        session_id=session_id,
+        workspace_id=youtube_context_service.get_workspace_id(),
+    )
+    youtube_context_service.save_context(session_id, context, make_active=False)
+    return context
+
+
+def _coerce_id_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
+
+
+def _resolve_project_id(component_ids: List[str]) -> Optional[str]:
+    catalog = getattr(activity_graph_service, "catalog", None)
+    if not catalog:
+        return None
+    for component_id in component_ids:
+        component = catalog.get_component(component_id)
+        if component:
+            project_id = getattr(component, "project_id", None)
+            if project_id:
+                return project_id
+    return None
+
+
+def _parse_slack_permalink(url: str) -> Optional[Dict[str, str]]:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "archives":
+        return None
+    channel_id = parts[1]
+    message_part = parts[2]
+    if not message_part.startswith("p"):
+        return None
+    ts_digits = message_part[1:]
+    if not ts_digits.isdigit():
+        return None
+    seconds = ts_digits[:-6] or "0"
+    micros = ts_digits[-6:]
+    timestamp = f"{int(seconds)}.{micros}"
+    return {
+        "workspace": parsed.netloc or "slack",
+        "channel": channel_id,
+        "timestamp": timestamp,
+    }
+
+
+def _canonical_id_from_url(source: str, url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    host = parsed.netloc or ""
+    path_parts = parsed.path.strip("/").split("/")
+
+    lowered = source.lower()
+    if lowered in {"slack", "slack_thread"} or "slack.com" in host:
+        info = _parse_slack_permalink(url)
+        if info:
+            return slack_thread_evidence_id(
+                info["workspace"],
+                info["channel"],
+                info["timestamp"],
+            )
+
+    if lowered in {"git", "github"} or "github.com" in host:
+        if len(path_parts) >= 4:
+            owner = path_parts[0]
+            repo = path_parts[1]
+            repo_key = f"{owner}/{repo}"
+            if path_parts[2] == "pull":
+                pr_number = path_parts[3]
+                return git_pr_evidence_id(repo_key, pr_number)
+            if path_parts[2] == "commit":
+                sha = path_parts[3]
+                return git_commit_evidence_id(repo_key, sha)
+    return None
+
+
+def _build_cerebros_app_url(investigation_id: Optional[str]) -> Optional[str]:
+    if not investigation_id:
+        return None
+    base = os.getenv("CEREBROS_APP_BASE") or os.getenv("NEXT_PUBLIC_CEREBROS_APP_BASE")
+    if not base:
+        return None
+    return f"{base.rstrip('/')}/investigations/{investigation_id}"
+
+
+def _reasoner_evidence_to_traceability_entries(
+    entries: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    if not entries:
+        return normalized
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        source_type = entry.get("source_type") or "graph_reasoner"
+        url = entry.get("url")
+        evidence_id = (
+            entry.get("entity_id")
+            or _canonical_id_from_url(source_type, url)
+            or url
+            or entry.get("source_name")
+            or f"{source_type}:{len(normalized)}"
+        )
+        normalized.append(
+            {
+                "evidence_id": evidence_id,
+                "source": source_type,
+                "title": entry.get("source_name") or entry.get("content") or "graph_reasoner_evidence",
+                "url": url,
+                "metadata": {
+                    "content": entry.get("content"),
+                    "metadata": entry.get("metadata"),
+                    "confidence": entry.get("confidence"),
+                    "timestamp": entry.get("timestamp"),
+                },
+            }
+        )
+    return normalized
+
+
+def _doc_priorities_to_evidence(doc_priorities: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    if not doc_priorities:
+        return evidence
+    for idx, priority in enumerate(doc_priorities):
+        if not isinstance(priority, dict):
+            continue
+        evidence_id = priority.get("doc_id") or priority.get("doc_url") or f"doc_priority:{idx}"
+        evidence.append(
+            {
+                "evidence_id": evidence_id,
+                "source": "doc",
+                "title": priority.get("doc_title") or priority.get("doc_id") or "Doc priority",
+                "url": priority.get("doc_url"),
+                "metadata": {
+                    "reason": priority.get("reason"),
+                    "component_id": priority.get("component_id"),
+                    "priority_score": priority.get("score"),
+                },
+            }
+        )
+    return evidence
+
+
+def _component_activity_to_evidence(component_activity: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    if not isinstance(component_activity, dict):
+        return evidence
+    events = component_activity.get("recent_slack_events")
+    if not isinstance(events, list):
+        return evidence
+    for idx, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        permalink = event.get("permalink")
+        channel = event.get("channel_name") or event.get("channel_id")
+        timestamp = event.get("timestamp") or event.get("ts")
+        evidence_id = permalink or (channel and timestamp and f"{channel}:{timestamp}") or f"slack_event:{idx}"
+        evidence.append(
+            {
+                "evidence_id": evidence_id,
+                "source": "slack",
+                "title": event.get("text") or "Slack discussion",
+                "url": permalink,
+                "metadata": {
+                    "channel": channel,
+                    "timestamp": timestamp,
+                    "sentiment": event.get("sentiment"),
+                },
+            }
+        )
+    return evidence
+
+
+def _merge_additional_evidence(
+    existing: List[Dict[str, Any]], extras: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    if not extras:
+        return existing
+    seen_ids: set[str] = {
+        str(entry.get("evidence_id"))
+        for entry in existing
+        if isinstance(entry, dict) and entry.get("evidence_id")
+    }
+    for entry in extras:
+        if not isinstance(entry, dict):
+            continue
+        evidence_id = str(entry.get("evidence_id") or "")
+        if evidence_id and evidence_id in seen_ids:
+            continue
+        if evidence_id:
+            seen_ids.add(evidence_id)
+        existing.append(entry)
+    return existing
+
+
+def _build_incident_candidate(
+    *,
+    query: str,
+    summary_text: str,
+    reasoner_result: "CerebrosReasonerResult",
+    traceability_evidence: List[Dict[str, Any]],
+    investigation_id: Optional[str],
+    raw_trace_id: Optional[str],
+    source_command: str,
+) -> Dict[str, Any]:
+    cerebros_answer = reasoner_result.cerebros_answer or {}
+    components = list(
+        {*(reasoner_result.component_ids or []), *((cerebros_answer.get("components") or []) or [])}
+    )
+    doc_priorities = list(cerebros_answer.get("doc_priorities") or [])
+    scope_summary, timestamps = _summarize_incident_scope(
+        components=components,
+        doc_priorities=doc_priorities,
+        traceability_evidence=traceability_evidence,
+    )
+    evidence_sources = [str(entry.get("source") or "").lower() for entry in traceability_evidence]
+    severity, blast_radius_score, recency_info = _calculate_incident_scores(
+        scope_summary=scope_summary,
+        timestamps=timestamps,
+        evidence_sources=evidence_sources,
+    )
+
+_EVIDENCE_SENSITIVE_KEYS = {"text", "body", "content", "details", "raw", "message", "payload"}
+_EVIDENCE_CORE_KEYS = {
+    "source",
+    "source_type",
+    "kind",
+    "title",
+    "statement",
+    "summary",
+    "url",
+    "permalink",
+    "evidence_id",
+    "id",
+}
+
+
+def _sanitize_evidence_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for key, value in item.items():
+        if key in _EVIDENCE_SENSITIVE_KEYS or key in _EVIDENCE_CORE_KEYS:
+            continue
+        if isinstance(value, str) and len(value) > 500:
+            metadata[key] = value[:500] + "..."
+        else:
+            metadata[key] = value
+    return metadata
+
+
+def _extract_tool_runs(step_results: Any) -> List[Dict[str, Any]]:
+    runs: List[Dict[str, Any]] = []
+    if not isinstance(step_results, dict):
+        return runs
+    for step_id, payload in step_results.items():
+        if not isinstance(payload, dict):
+            continue
+        tool_name = payload.get("tool")
+        if not tool_name:
+            continue
+        if payload.get("type") == "reply":
+            continue
+        runs.append(
+            {
+                "step_id": step_id,
+                "tool": str(tool_name),
+                "status": payload.get("status")
+                or ("error" if payload.get("error") else "completed"),
+                "output_preview": payload.get("output_preview")
+                or payload.get("message")
+                or payload.get("summary"),
+            }
+        )
+    return runs
+
+
+def _normalize_evidence_entries(raw_evidence: Any) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    if not isinstance(raw_evidence, list):
+        return normalized
+    for item in raw_evidence:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source") or item.get("source_type") or item.get("kind") or "unknown"
+        url = item.get("url") or item.get("permalink")
+        evidence_id = item.get("evidence_id") or item.get("id")
+        if not evidence_id:
+            evidence_id = _canonical_id_from_url(str(source), url) or url or item.get("ts")
+        entry = {
+            "evidence_id": evidence_id,
+            "source": source,
+            "title": item.get("title") or item.get("statement") or item.get("summary"),
+            "url": url,
+            "metadata": _sanitize_evidence_metadata(item),
+        }
+        if not entry["evidence_id"]:
+            log_structured(
+                "warning",
+                "Traceability evidence missing canonical id",
+                metric="traceability.missing_evidence_ids",
+                source=source,
+                url=url,
+            )
+            traceability_health_tracker.record_missing_evidence()
+        normalized.append(entry)
+    return normalized
+
+
+def _extract_references_evidence(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    references: List[Dict[str, Any]] = []
+    if not isinstance(payload, dict):
+        return references
+
+    candidates: List[Dict[str, Any]] = []
+    if isinstance(payload.get("references"), list):
+        candidates.extend(payload["references"])
+    sections = payload.get("sections")
+    if isinstance(sections, dict) and isinstance(sections.get("references"), list):
+        candidates.extend(sections["references"])
+
+    for ref in candidates:
+        if not isinstance(ref, dict):
+            continue
+        source = ref.get("kind") or "reference"
+        url = ref.get("url")
+        evidence_id = ref.get("evidence_id") or _canonical_id_from_url(str(source), url) or url
+        references.append(
+            {
+                "evidence_id": evidence_id,
+                "source": source,
+                "title": ref.get("title") or url,
+                "url": url,
+                "metadata": {
+                    k: v for k, v in ref.items() if k not in {"title", "url", "kind"}
+                },
+            }
+        )
+    return references
+
+
+def _files_to_evidence(files_array: Any) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    if not isinstance(files_array, list):
+        return evidence
+    for entry in files_array:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path") or entry.get("name")
+        if not path:
+            continue
+        meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+        line_range = meta.get("line_range")
+        evidence_id = entry.get("evidence_id")
+        if not evidence_id and line_range:
+            evidence_id = doc_fragment_evidence_id("docs", path, str(line_range))
+        elif not evidence_id:
+            evidence_id = f"doc:{path}"
+        evidence.append(
+            {
+                "evidence_id": evidence_id,
+                "source": entry.get("result_type") or "docs",
+                "title": entry.get("name") or path,
+                "url": entry.get("preview_url") or entry.get("thumbnail_url"),
+                "metadata": {k: v for k, v in entry.items() if k not in {"files"}},
+            }
+        )
+    return evidence
+
+
+def _append_evidence_unique(
+    bucket: List[Dict[str, Any]], entry: Dict[str, Any], seen: set
+) -> None:
+    if not entry:
+        return
+    key = entry.get("evidence_id") or (entry.get("source"), entry.get("title"), entry.get("url"))
+    if not key:
+        key = str(len(bucket))
+    if key in seen:
+        return
+    seen.add(key)
+    bucket.append(entry)
+
+
+def _collect_all_evidence(
+    result_dict: Dict[str, Any],
+    result_payload: Optional[Dict[str, Any]],
+    files_array: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    bucket: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    payloads: List[Dict[str, Any]] = []
+    for candidate in (
+        result_dict,
+        result_dict.get("result") if isinstance(result_dict, dict) else None,
+        result_dict.get("final_result") if isinstance(result_dict, dict) else None,
+        result_payload,
+    ):
+        if isinstance(candidate, dict):
+            payloads.append(candidate)
+
+    for payload in payloads:
+        for entry in _normalize_evidence_entries(payload.get("evidence")):
+            _append_evidence_unique(bucket, entry, seen)
+        for entry in _extract_references_evidence(payload):
+            _append_evidence_unique(bucket, entry, seen)
+
+    for entry in _files_to_evidence(files_array):
+        _append_evidence_unique(bucket, entry, seen)
+
+    return bucket
+
+
+def _maybe_record_investigation(
+    *,
+    session_id: str,
+    user_message: str,
+    response_message: str,
+    result_dict: Dict[str, Any],
+    result_status: str,
+    evidence: List[Dict[str, Any]],
+    tool_runs: List[Dict[str, Any]],
+    files_attached: bool,
+    completion_event: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    if not _traceability_enabled():
+        return None
+    if not tool_runs:
+        return None
+
+    investigation_id = str(uuid4())
+    component_ids = _coerce_id_list(result_dict.get("component_ids"))
+    api_ids = _coerce_id_list(result_dict.get("api_ids"))
+    project_id = _resolve_project_id(component_ids)
+
+    record = {
+        "id": investigation_id,
+        "session_id": session_id,
+        "question": (user_message or "").strip(),
+        "answer": response_message,
+        "status": result_status,
+        "goal": result_dict.get("goal"),
+        "plan_id": result_dict.get("plan_id") or result_dict.get("planId"),
+        "component_ids": component_ids,
+        "api_ids": api_ids,
+        "project_id": project_id,
+        "tenant_id": traceability_tenant_id,
+        "tool_runs": tool_runs,
+        "evidence": evidence,
+        "created_at": _now_iso(),
+        "metadata": {
+            "files_attached": files_attached,
+            "completion_event": bool(completion_event),
+        },
+    }
+    summary_hint = result_dict.get("summary") or result_dict.get("message") or response_message
+    if summary_hint:
+        record["summary"] = str(summary_hint).strip()[:240]
+    record["source_command"] = result_dict.get("source_command") or result_dict.get("type") or "agent_chat"
+    record["raw_trace_id"] = (
+        result_dict.get("raw_trace_id")
+        or result_dict.get("query_id")
+        or result_dict.get("queryId")
+    )
+    record["type"] = result_dict.get("record_type") or "investigation"
+    try:
+        traceability_store.append(record)  # type: ignore[union-attr]
+        log_structured(
+            "info",
+            "Traceability investigation recorded",
+            metric="traceability.investigations_written",
+            investigation_id=investigation_id,
+            session_id=session_id,
+            evidence_count=len(evidence),
+        )
+        logger.info("[TRACEABILITY] Recorded investigation %s", investigation_id)
+        if traceability_neo4j_ingestor.enabled:
+            traceability_neo4j_ingestor.upsert_investigation(record)
+    except Exception as exc:
+        logger.warning("[TRACEABILITY] Failed to record investigation: %s", exc)
+        return None
+    return investigation_id
+
 async def _build_chat_history_payload(session_id: str, limit: int) -> Dict[str, Any]:
     cache_entries = chat_cache.list_recent(session_id, limit)
     mongo_entries: List[Dict[str, Any]] = []
@@ -343,7 +1046,91 @@ config_manager.update_components(agent_registry, agent, None)  # Will be set whe
 _graph_config = config_manager.get_config()
 graph_service = GraphService(_graph_config)
 graph_analytics_service = GraphAnalyticsService(graph_service)
+graph_dashboard_service = GraphDashboardService(_graph_config, graph_service=graph_service)
 activity_service = ActivityService(_graph_config, graph_service=graph_service)
+activity_graph_service = ActivityGraphService(config_manager.get_config())
+traceability_neo4j_enabled = bool((_traceability_cfg.get("neo4j", {}) or {}).get("enabled"))
+traceability_neo4j_ingestor = TraceabilityNeo4jIngestor(graph_service, traceability_neo4j_enabled)
+
+def _component_catalog_context(component_id: str) -> Optional[Dict[str, str]]:
+    """Return display metadata for a component from the slash-git catalog."""
+    catalog = getattr(activity_graph_service, "catalog", None)
+    if not catalog:
+        return None
+    component = catalog.get_component(component_id)
+    if not component:
+        return None
+    repo = catalog.get_repo(component.repo_id)
+    repo_name = repo.name if repo else component.repo_id or "unknown_repo"
+    return {
+        "component_id": component.id,
+        "component_name": component.name or component.id,
+        "repo_id": component.repo_id,
+        "repo_name": repo_name,
+    }
+
+
+def _build_snapshot_git_event(activity: "ComponentActivity", context: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    git_count = getattr(activity, "git_events", 0) or 0
+    if git_count <= 0:
+        return None
+    return {
+        "repo": context["repo_name"],
+        "type": "commit",
+        "id": f"activity-git-{activity.component_id}",
+        "title": f"{git_count} git events",
+        "message": f"Cerebros aggregated {git_count} git events touching {context['component_name']}.",
+        "url": "",
+        "author": "cerebros-activity",
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def _build_snapshot_slack_thread(activity: "ComponentActivity", context: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    slack_total = getattr(activity, "slack_conversations", 0) or 0
+    doc_issues = getattr(activity, "open_doc_issues", 0) or 0
+    complaints = getattr(activity, "slack_complaints", 0) or 0
+    if slack_total <= 0 and doc_issues <= 0:
+        return None
+    sentiment = "negative" if complaints > 0 or doc_issues > 0 else "neutral"
+    recent_events = getattr(activity, "recent_slack_events", None) or []
+    sample_event = None
+    for event in recent_events:
+        sample_event = event
+        if event.get("permalink"):
+            break
+    last_ts = sample_event.get("timestamp") if sample_event else None
+    channel_name = (sample_event or {}).get("channel_name") or "cerebros-activity"
+    channel_id = (sample_event or {}).get("channel_id") or context.get("repo_id")
+    permalink = (sample_event or {}).get("permalink")
+    text = (sample_event or {}).get("text") or f"Cerebros observed {doc_issues} doc issues and {slack_total} Slack events for {context['component_name']}."
+    return {
+        "channel": channel_id or "cerebros-activity",
+        "ts": f"activity-slack-{activity.component_id}",
+        "user": "cerebros",
+        "text": text,
+        "permalink": permalink,
+        "lastActivityTs": last_ts or datetime.now(tz=timezone.utc).isoformat(),
+        "sentiment": sentiment,
+        "matchedComponents": [context["component_name"]],
+        "channelName": channel_name,
+    }
+
+
+def _hydrate_snapshot_components(activities) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    git_events: List[Dict[str, Any]] = []
+    slack_threads: List[Dict[str, Any]] = []
+    for activity in activities or []:
+        context = _component_catalog_context(activity.component_id)
+        if not context:
+            continue
+        git_entry = _build_snapshot_git_event(activity, context)
+        if git_entry:
+            git_events.append(git_entry)
+        slack_entry = _build_snapshot_slack_thread(activity, context)
+        if slack_entry:
+            slack_threads.append(slack_entry)
+    return git_events, slack_threads
 context_resolution_cfg = _graph_config.get("context_resolution", {}) or {}
 impact_settings = context_resolution_cfg.get("impact", {}) or {}
 context_resolution_service = ContextResolutionService(
@@ -352,6 +1139,15 @@ context_resolution_service = ContextResolutionService(
     context_config=context_resolution_cfg,
 )
 graph_validator = GraphValidator(graph_service)
+impact_config_context = ConfigContext(
+    data=config_manager.get_config(),
+    accessor=ConfigAccessor(config_manager.get_config()),
+)
+impact_service = ImpactService(
+    impact_config_context,
+    graph_service=graph_service,
+)
+impact_webhooks = ImpactWebhookHandlers(impact_service)
 
 
 def _require_graph_analytics() -> None:
@@ -359,6 +1155,14 @@ def _require_graph_analytics() -> None:
         raise HTTPException(
             status_code=503,
             detail="Graph analytics service is not available. Enable Neo4j in config.yaml.",
+        )
+
+
+def _require_graph_dashboard() -> None:
+    if not graph_dashboard_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Graph dashboard service is not available. Enable Neo4j in config.yaml.",
         )
 
 
@@ -709,6 +1513,28 @@ class ChatHistoryResponse(BaseModel):
     counts: Dict[str, int]
     last_persisted_at: Optional[str]
 
+
+class TraceabilityDocIssueLink(BaseModel):
+    type: Optional[str] = None
+    label: Optional[str] = None
+    url: Optional[str] = None
+
+
+class TraceabilityDocIssueRequest(BaseModel):
+    title: str
+    summary: str
+    severity: str
+    doc_path: str
+    component_ids: List[str]
+    repo_id: Optional[str] = None
+    doc_url: Optional[str] = None
+    doc_id: Optional[str] = None
+    status: Optional[str] = "open"
+    source: Optional[str] = "traceability"
+    origin_investigation_id: Optional[str] = None
+    evidence_ids: Optional[List[str]] = None
+    links: Optional[List[TraceabilityDocIssueLink]] = None
+
 class SystemStats(BaseModel):
     indexed_documents: int
     total_chunks: int
@@ -811,6 +1637,28 @@ def format_result_message(result: Dict[str, Any]) -> str:
     # Format as JSON if it's a complex dict
     import json
     return json.dumps(result, indent=2)
+
+
+def _extract_result_payload(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract the structured payload (if any) that should be forwarded to the frontend.
+    """
+    if not isinstance(result, dict):
+        return None
+
+    final_result = result.get("final_result")
+    nested_result = result.get("result") if isinstance(result.get("result"), dict) else None
+
+    if isinstance(final_result, dict):
+        return final_result
+    if isinstance(nested_result, dict):
+        return nested_result
+
+    structured_types = {"slash_slack_summary", "slash_git_summary", "slash_cerebros_summary", "youtube_summary"}
+    if result.get("type") in structured_types:
+        return result
+
+    return None
 
 
 async def process_agent_request(
@@ -1030,13 +1878,24 @@ async def process_agent_request(
             original_message = result_dict.get("original_message", user_message)
             retry_message = result_dict.get("content", "Retrying via main assistant...")
             context = result_dict.get("context", None)
+            fallback_agent = result_dict.get("agent")
+            reason = result_dict.get("reason") or result_dict.get("error")
 
-            # Send retry notification
+            if fallback_agent and not retry_message:
+                retry_message = f"Retrying /{fallback_agent} request via main assistant..."
+            if reason:
+                retry_message = f"{retry_message}\nReason: {reason}" if retry_message else f"Reason: {reason}"
+
+            # Send retry notification with context so the UI knows why the slash card disappeared
             await manager.send_message({
                 "type": "status",
                 "status": "processing",
                 "message": retry_message,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "metadata": {
+                    "fallback_agent": fallback_agent,
+                    "reason": reason,
+                },
             }, websocket)
 
             # Log context if present (for debugging)
@@ -1475,18 +2334,24 @@ async def process_agent_request(
 
         # Extract completion_event from reply results if present
         completion_event = None
-        if "step_results" in result_dict and result_dict["step_results"]:
-            for step_result in result_dict["step_results"].values():
+        step_results_source = result_dict.get("step_results")
+        if isinstance(step_results_source, dict) and step_results_source:
+            for step_result in step_results_source.values():
                 if isinstance(step_result, dict) and step_result.get("type") == "reply" and "completion_event" in step_result:
                     completion_event = step_result["completion_event"]
                     break
-        elif "results" in result_dict and result_dict["results"]:
-            for step_result in result_dict["results"].values():
-                if isinstance(step_result, dict) and step_result.get("type") == "reply" and "completion_event" in step_result:
-                    completion_event = step_result["completion_event"]
-                    break
-        elif result_dict.get("type") == "reply" and "completion_event" in result_dict:
-            completion_event = result_dict["completion_event"]
+        else:
+            step_results_source = result_dict.get("results") if isinstance(result_dict.get("results"), dict) else {}
+            if step_results_source:
+                for step_result in step_results_source.values():
+                    if isinstance(step_result, dict) and step_result.get("type") == "reply" and "completion_event" in step_result:
+                        completion_event = step_result["completion_event"]
+                        break
+            elif result_dict.get("type") == "reply" and "completion_event" in result_dict:
+                completion_event = result_dict["completion_event"]
+
+        tool_runs = _extract_tool_runs(step_results_source)
+        normalized_evidence = _normalize_evidence_entries(result_dict.get("evidence"))
 
         # Check for special response types that need custom handling
         # API Docs Drift (Oqoqo pattern) - send as apidocs_drift type for frontend drift card
@@ -1539,21 +2404,14 @@ async def process_agent_request(
                 "interaction_count": len(session_memory.interactions),
                 "timestamp": datetime.now().isoformat()
             }
-            result_payload = None
-            if isinstance(result_dict, dict):
-                final_result = result_dict.get("final_result")
-                nested_result = result_dict.get("result") if isinstance(result_dict.get("result"), dict) else None
-                if isinstance(final_result, dict):
-                    result_payload = final_result
-                elif isinstance(nested_result, dict):
-                    result_payload = nested_result
-                elif result_dict.get("type") in {"slash_slack_summary", "slash_git_summary"}:
-                    result_payload = result_dict
+            result_payload = _extract_result_payload(result_dict) if isinstance(result_dict, dict) else None
 
             if result_payload:
                 response_payload["result"] = result_payload
                 if result_payload.get("type") == "slash_slack_summary":
                     logger.info("[API SERVER] Included slash_slack_summary payload in response for frontend consumption")
+                elif result_payload.get("type") == "youtube_summary":
+                    logger.info("[API SERVER] Included youtube_summary payload in response for frontend consumption")
         
         # Add files array if present
         if files_array is not None:
@@ -1575,6 +2433,29 @@ async def process_agent_request(
         if completion_event is not None:
             response_payload["completion_event"] = completion_event
             logger.info(f"[API SERVER] Including completion_event: {completion_event.get('action_type')}")
+
+        component_ids_payload = result_dict.get("component_ids")
+        if component_ids_payload:
+            response_payload["component_ids"] = component_ids_payload
+
+        if normalized_evidence:
+            response_payload["evidence"] = normalized_evidence
+        if tool_runs:
+            response_payload["tool_runs"] = tool_runs
+
+        investigation_id = _maybe_record_investigation(
+            session_id=session_id,
+            user_message=user_message,
+            response_message=formatted_message,
+            result_dict=result_dict if isinstance(result_dict, dict) else {},
+            result_status=result_status,
+            evidence=normalized_evidence,
+            tool_runs=tool_runs,
+            files_attached=bool(files_array),
+            completion_event=completion_event,
+        )
+        if investigation_id:
+            response_payload["investigation_id"] = investigation_id
 
         record_chat_event(
             session_id,
@@ -1826,11 +2707,25 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Electron launcher"""
-    return {
+    payload = {
         "status": "ok",
         "service": "Cerebro OS API",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "runtime_mode": _runtime_flags.mode.value,
     }
+    traceability_summary: Dict[str, Any]
+    if traceability_store:
+        traceability_summary = traceability_store.describe()
+    else:
+        traceability_summary = {"enabled": False}
+    traceability_summary["feature_enabled"] = _traceability_enabled()
+    missing_summary = traceability_health_tracker.describe()
+    traceability_summary["missing_evidence"] = missing_summary
+    traceability_summary["status"] = missing_summary["status"]
+    payload["traceability"] = traceability_summary
+    if traceability_summary["feature_enabled"] and missing_summary["status"] == "degraded":
+        payload["status"] = "degraded"
+    return payload
 
 @app.get("/api/stats", response_model=SystemStats)
 async def get_stats():
@@ -1870,6 +2765,16 @@ async def storage_status():
         "cache": cache_status,
         "startup_cache": startup_cache_status,
     }
+
+
+@app.get("/api/ingest/status", tags=["ingest"])
+async def ingest_status():
+    """
+    Return last-ingest metadata for Slack, Git, and doc-issues pipelines so the dashboard can
+    show whether the current dataset is fresh (live) or fixture-based (demo).
+    """
+    snapshot = build_ingest_status(config_manager.get_config(), _runtime_flags)
+    return snapshot
 
 
 @app.get("/api/vector/health")
@@ -1992,6 +2897,518 @@ async def get_activity_top_components(limit: int = 5, window_days: int = 14):
     }
 
 
+@app.get("/activity/snapshot")
+async def get_activity_snapshot(limit: int = 15, window: str = "7d"):
+    """
+    Return a lightweight snapshot of Git + Slack signals for dashboard visualizations.
+    """
+    limit_value = max(1, min(int(limit), 50))
+    time_window = TimeWindow.from_label(window)
+    components = activity_graph_service.top_dissatisfied_components(limit=limit_value, time_window=time_window)
+    used_activity_fallback = False
+    if not components:
+        components = activity_graph_service.top_active_components(limit=limit_value, time_window=time_window)
+        used_activity_fallback = True
+
+    git_events, slack_threads = _hydrate_snapshot_components(components)
+
+    if not git_events and not slack_threads and not used_activity_fallback:
+        components = activity_graph_service.top_active_components(limit=limit_value, time_window=time_window)
+        git_events, slack_threads = _hydrate_snapshot_components(components)
+        used_activity_fallback = True
+
+    return {
+        "git": git_events,
+        "slack": slack_threads,
+        "generatedAt": datetime.now(tz=timezone.utc).isoformat(),
+        "timeWindow": time_window.label,
+    }
+
+
+@app.get("/activity/quadrant")
+async def get_activity_quadrant(limit: int = 25, window: str = "7d"):
+    """
+    Return component points for the activity vs dissatisfaction quadrant.
+    """
+    limit_value = max(1, min(int(limit), 100))
+    time_window = TimeWindow.from_label(window)
+    points = activity_graph_service.compute_quadrant(limit=limit_value, time_window=time_window)
+    if not points:
+        raise HTTPException(status_code=503, detail="Quadrant data unavailable.")
+    return {
+        "timeWindow": time_window.label,
+        "points": points,
+    }
+
+
+@app.get("/activity-graph/component")
+async def get_component_activity_graph(component_id: str, window: str = "7d", debug: Optional[str] = None):
+    """
+    Return the combined Git/Slack/doc activity snapshot for a component.
+    """
+    if not component_id:
+        raise HTTPException(status_code=400, detail="component_id is required")
+    time_window = TimeWindow.from_label(window)
+    include_debug = (debug or "").lower() in {"1", "true", "yes"}
+    start = time.perf_counter()
+    try:
+        activity = activity_graph_service.compute_component_activity(component_id, time_window, include_debug=include_debug)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        duration_ms = (time.perf_counter() - start) * 1000
+        activity_graph_metrics.record_request("component", duration_ms)
+    logger.info("[ACTIVITY GRAPH] component=%s window=%s", component_id, window)
+    return asdict(activity)
+
+
+@app.get("/activity-graph/top-dissatisfied")
+async def get_top_dissatisfied_components(limit: int = 5, window: str = "7d", n: Optional[int] = None, debug: Optional[str] = None):
+    """
+    Return the most dissatisfied components based on Slack complaints + doc issues.
+    """
+    limit_value = limit or n or 5
+    limit_value = max(1, min(int(limit_value), 25))
+    time_window = TimeWindow.from_label(window)
+    include_debug = (debug or "").lower() in {"1", "true", "yes"}
+    start = time.perf_counter()
+    results = activity_graph_service.top_dissatisfied_components(limit=limit_value, time_window=time_window)
+    if include_debug:
+        results = [
+            activity_graph_service.compute_component_activity(result.component_id, time_window, include_debug=True)
+            for result in results
+        ]
+    duration_ms = (time.perf_counter() - start) * 1000
+    activity_graph_metrics.record_request("top_dissatisfied", duration_ms)
+    logger.info("[ACTIVITY GRAPH] top_dissatisfied limit=%s window=%s", limit_value, window)
+    return {
+        "time_window": time_window.label,
+        "limit": limit_value,
+        "results": [asdict(row) for row in results],
+    }
+
+
+@app.get("/activity-graph/metrics")
+async def get_activity_graph_metrics():
+    """
+    Return in-memory counters for activity graph requests/cache behaviour.
+    """
+    return activity_graph_service.metrics_snapshot()
+
+
+@app.get("/api/graph/snapshot")
+async def get_graph_snapshot(
+    project_id: Optional[str] = Query(None, alias="projectId"),
+    window_hours: int = 168,
+    limit: int = 150,
+):
+    """
+    Return the dashboard-ready graph snapshot (components, issues, signals, dependencies).
+    """
+    _require_graph_dashboard()
+    safe_window = max(0, window_hours)
+    safe_limit = max(1, min(limit, 300))
+    snapshot = graph_dashboard_service.get_snapshot(
+        project_id=project_id,
+        window_hours=safe_window,
+        component_limit=safe_limit,
+    )
+    return snapshot
+
+
+@app.get("/api/graph/metrics")
+async def get_graph_metrics(
+    project_id: Optional[str] = Query(None, alias="projectId"),
+    window_hours: int = 168,
+    limit: int = 200,
+    timeline_days: int = 14,
+):
+    """
+    Return top-level KPIs, distribution charts, and health indicators for the dashboard.
+    """
+    _require_graph_dashboard()
+    safe_window = max(0, window_hours)
+    safe_limit = max(1, min(limit, 500))
+    safe_timeline = max(7, min(timeline_days, 90))
+    metrics = graph_dashboard_service.get_metrics(
+        project_id=project_id,
+        window_hours=safe_window,
+        component_limit=safe_limit,
+        timeline_days=safe_timeline,
+    )
+    return metrics
+
+
+@app.get("/api/graph/stream")
+async def stream_graph_updates(
+    window_hours: int = 168,
+    limit: int = 150,
+    timeline_days: int = 14,
+    interval_seconds: int = 30,
+):
+    """
+    Stream snapshot + metric updates via Server-Sent Events so the dashboard stays live.
+    """
+    _require_graph_dashboard()
+    safe_window = max(0, window_hours)
+    safe_limit = max(1, min(limit, 300))
+    safe_timeline = max(7, min(timeline_days, 90))
+    safe_interval = max(5, min(interval_seconds, 120))
+
+    async def event_generator():
+        try:
+            while True:
+                snapshot = graph_dashboard_service.get_snapshot(
+                    window_hours=safe_window,
+                    component_limit=safe_limit,
+                )
+                metrics = graph_dashboard_service.get_metrics(
+                    window_hours=safe_window,
+                    component_limit=safe_limit,
+                    timeline_days=safe_timeline,
+                )
+                yield f"data: {json.dumps({'type': 'snapshot', 'payload': snapshot})}\n\n"
+                yield f"data: {json.dumps({'type': 'metrics', 'payload': metrics})}\n\n"
+                await asyncio.sleep(safe_interval)
+        except asyncio.CancelledError:
+            logger.info("[GRAPH STREAM] client disconnected")
+            raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/brain/trace/{query_id}")
+def get_brain_trace(query_id: str):
+    trace = query_trace_store.get(query_id)
+    if not trace:
+        raise HTTPException(status_code=404, detail="Query trace not found")
+    chunk_ids = [ref.chunk_id for ref in trace.retrieved_chunks if ref.chunk_id]
+    graph_data = graph_dashboard_service.get_trace_graph(chunk_ids)
+    query_node_id = f"query:{trace.query_id}"
+    graph_data["nodes"].insert(
+        0,
+        {
+            "id": query_node_id,
+            "type": "query",
+            "question": trace.question,
+            "created_at": trace.created_at,
+        },
+    )
+    for chunk_id in chunk_ids:
+        graph_data["edges"].append(
+            {
+                "id": f"edge:{query_node_id}->{chunk_id}",
+                "from": query_node_id,
+                "to": chunk_id,
+                "type": "RETRIEVED",
+            }
+        )
+    return {
+        "query_id": trace.query_id,
+        "question": trace.question,
+        "created_at": trace.created_at,
+        "modalities_used": trace.modalities_used,
+        "retrieved_chunks": [ref.to_dict() for ref in trace.retrieved_chunks],
+        "chosen_chunks": [ref.to_dict() for ref in trace.chosen_chunks],
+        "graph": graph_data,
+    }
+
+
+@app.get("/api/brain/universe")
+def get_brain_universe(
+    modalities: Optional[List[str]] = Query(None),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    snapshot_at: Optional[str] = Query(None, alias="snapshotAt"),
+    mode: str = Query("universe"),
+    root_id: Optional[str] = Query(None, alias="rootId"),
+    depth: int = Query(2, ge=1, le=4),
+    limit: int = Query(400, ge=25, le=1200),
+    project_id: Optional[str] = Query(None, alias="projectId"),
+):
+    """
+    Return Neo4j-backed graph snapshots for the Brain Explorer UI.
+    """
+
+    data = graph_dashboard_service.get_graph_explorer_snapshot(
+        mode=mode,
+        root_id=root_id,
+        depth=depth,
+        modalities=modalities,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        snapshot_at=snapshot_at,
+        limit=limit,
+        project_id=project_id,
+    )
+    return data
+
+
+@app.get("/api/brain/universe/default")
+def get_brain_universe_default(
+    modalities: Optional[List[str]] = Query(None),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    snapshot_at: Optional[str] = Query(None, alias="snapshotAt"),
+    root_id: Optional[str] = Query(None, alias="rootId"),
+    depth: int = Query(2, ge=1, le=4),
+    limit: int = Query(200, ge=25, le=1200),
+    project_id: Optional[str] = Query(None, alias="projectId"),
+):
+    """
+    Convenience wrapper that always returns the richer `neo4j_default` snapshot.
+    Frontends that want the Neo4j Browser parity graph can hit this endpoint
+    without having to specify the mode parameter manually.
+    """
+
+    data = graph_dashboard_service.get_graph_explorer_snapshot(
+        mode="neo4j_default",
+        root_id=root_id,
+        depth=depth,
+        modalities=modalities,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        snapshot_at=snapshot_at,
+        limit=limit,
+        project_id=project_id,
+    )
+    return data
+
+
+@app.get("/api/graph/relationships/about-component")
+def get_about_component_relationships(
+    component_ids: Optional[List[str]] = Query(None, alias="componentId"),
+    modalities: Optional[List[str]] = Query(None),
+    limit: int = Query(600, ge=25, le=1200),
+    project_id: Optional[str] = Query(None, alias="projectId"),
+):
+    """
+    Lightweight ABOUT_COMPONENT neighborhood for a fast, stationary relationships view.
+
+    This intentionally returns a tiny slice: Components plus Slack/Git events that
+    point at them via ABOUT_COMPONENT edges, mapped into the standard
+    GraphExplorerResponse payload.
+    """
+    data = graph_dashboard_service.get_about_component_relationships(
+        component_ids=component_ids,
+        modalities=modalities,
+        limit=limit,
+        project_id=project_id,
+    )
+    return data
+
+
+class GraphFixtureToggleRequest(BaseModel):
+    mode: str
+
+
+@app.get("/api/test/graph-fixture")
+def get_graph_fixture_mode():
+    if not TEST_FIXTURE_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not available")
+    mode = os.getenv("BRAIN_GRAPH_FIXTURE") or "live"
+    return {"mode": mode}
+
+
+@app.post("/api/test/graph-fixture")
+def set_graph_fixture_mode(payload: GraphFixtureToggleRequest):
+    if not TEST_FIXTURE_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=403, detail="Fixture toggles disabled")
+    normalized = (payload.mode or "").strip().lower()
+    if normalized not in {"deterministic", "empty", "live"}:
+        raise HTTPException(status_code=400, detail="Unsupported fixture mode")
+    if normalized == "live":
+        os.environ.pop("BRAIN_GRAPH_FIXTURE", None)
+    else:
+        os.environ["BRAIN_GRAPH_FIXTURE"] = normalized
+    return {"mode": normalized}
+
+
+class GraphQueryRequest(BaseModel):
+    query: str
+    graphParams: Optional[Dict[str, Any]] = None
+    projectId: Optional[str] = None
+    componentId: Optional[str] = None
+    issueId: Optional[str] = None
+    sources: Optional[List[str]] = None
+
+
+class IncidentCreateRequest(BaseModel):
+    incident_candidate: Optional[Dict[str, Any]] = None
+    investigation_id: Optional[str] = None
+    raw_trace_id: Optional[str] = None
+    summary: Optional[str] = None
+    severity: Optional[str] = None
+    status: Optional[str] = None
+    blast_radius_score: Optional[int] = None
+    source_command: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/graph/query")
+async def run_graph_reasoner_query(payload: GraphQueryRequest = Body(..., embed=False)):
+    """
+    Execute a Cerebros graph reasoning query and return summary + investigation metadata.
+    """
+    query = (payload.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    graph_params = payload.graphParams or {}
+    project_id = payload.projectId or graph_params.get("projectId")
+    component_id = payload.componentId or graph_params.get("componentId")
+    issue_id = payload.issueId or graph_params.get("issueId")
+    sources = payload.sources
+
+    config_snapshot = config_manager.get_config()
+    invoke_graph_params = dict(graph_params)
+    if component_id and not invoke_graph_params.get("componentId"):
+        invoke_graph_params["componentId"] = component_id
+    if project_id and not invoke_graph_params.get("projectId"):
+        invoke_graph_params["projectId"] = project_id
+    if issue_id and not invoke_graph_params.get("issueId"):
+        invoke_graph_params["issueId"] = issue_id
+
+    try:
+        reasoner_result = run_cerebros_reasoner(
+            config=config_snapshot,
+            query=query,
+            graph_params=invoke_graph_params,
+            sources=sources,
+        )
+    except Exception as exc:  # pragma: no cover - upstream failures logged
+        logger.exception("[GRAPH REASONER] Query failed")
+        raise HTTPException(status_code=502, detail="Graph reasoner request failed") from exc
+
+    evidence_payload = reasoner_result.evidence_payload
+    if isinstance(evidence_payload, dict):
+        traceability_evidence = _reasoner_evidence_to_traceability_entries(
+            evidence_payload.get("evidence")
+        )
+    else:
+        traceability_evidence = _reasoner_evidence_to_traceability_entries(evidence_payload)
+    supplemental_evidence: List[Dict[str, Any]] = []
+    cerebros_doc_insights = reasoner_result.doc_insights or {}
+    supplemental_evidence.extend(_doc_priorities_to_evidence(cerebros_doc_insights.get("doc_priorities")))
+    supplemental_evidence.extend(
+        _component_activity_to_evidence(cerebros_doc_insights.get("component_activity"))
+    )
+    if supplemental_evidence:
+        traceability_evidence = _merge_additional_evidence(traceability_evidence, supplemental_evidence)
+
+    recorded_modalities = {
+        str(entry.get("source") or "").lower()
+        for entry in traceability_evidence
+        if isinstance(entry, dict) and entry.get("source")
+    }
+    expected_modalities = {str(src or "").lower() for src in reasoner_result.sources_queried or []}
+    missing_modalities = sorted(
+        src for src in expected_modalities if src and src not in recorded_modalities
+    )
+    if missing_modalities:
+        logger.info(
+            "[GRAPH REASONER] No evidence captured for sources=%s (query=%s)",
+            missing_modalities,
+            query,
+        )
+
+    summary = reasoner_result.summary
+
+    raw_trace_id = str(uuid4())
+    record_query_trace_from_evidence(
+        query_trace_store,
+        query_id=raw_trace_id,
+        question=query,
+        modalities_used=reasoner_result.sources_queried,
+        traceability_evidence=traceability_evidence,
+    )
+
+    result_payload: Dict[str, Any] = {
+        "query": query,
+        "summary": summary,
+        "graph_params": graph_params,
+        "sources_queried": reasoner_result.sources_queried,
+    }
+
+    if reasoner_result.doc_insights:
+        result_payload["doc_insights"] = reasoner_result.doc_insights
+
+    if reasoner_result.component_ids:
+        result_payload["component_ids"] = reasoner_result.component_ids
+    if reasoner_result.issue_id:
+        result_payload["issue_id"] = reasoner_result.issue_id
+    if reasoner_result.project_id:
+        result_payload["project_id"] = reasoner_result.project_id
+
+    session_identifier = str(graph_params.get("sessionId") or f"dashboard::{project_id or 'atlas'}").strip() or "dashboard::atlas"
+    tool_runs = [
+        {
+            "step_id": "graph_reasoner",
+            "tool": "graph_reasoner",
+            "status": "completed",
+            "output_preview": summary[:280],
+        }
+    ]
+
+    investigation_id = _maybe_record_investigation(
+        session_id=session_identifier,
+        user_message=query,
+        response_message=summary,
+        result_dict=result_payload,
+        result_status="completed",
+        evidence=traceability_evidence,
+        tool_runs=tool_runs,
+        files_attached=False,
+        completion_event=None,
+    )
+
+    response_payload = dict(reasoner_result.response_payload)
+    response_payload["investigation_id"] = investigation_id
+    response_payload["raw_trace_id"] = raw_trace_id
+    brain_trace_url = f"/brain/trace/{raw_trace_id}"
+    brain_universe_url = "/brain/universe"
+    cerebros_answer = reasoner_result.cerebros_answer or {}
+    candidate_components = list(
+        {*(reasoner_result.component_ids or []), *((cerebros_answer.get("components") or []) or [])}
+    )
+    doc_priorities = list(cerebros_answer.get("doc_priorities") or [])
+    structured_fields = {
+        field: value
+        for field in STRUCTURED_INCIDENT_FIELDS
+        if (value := cerebros_answer.get(field)) not in (None, [], {}, "")
+    }
+    response_payload["incident_candidate"] = build_incident_candidate(
+        query=query,
+        summary_text=summary,
+        components=candidate_components,
+        doc_priorities=doc_priorities,
+        sources_queried=reasoner_result.sources_queried,
+        traceability_evidence=traceability_evidence,
+        investigation_id=investigation_id,
+        raw_trace_id=raw_trace_id,
+        source_command="api_graph_query",
+        llm_explanation=cerebros_answer.get("answer"),
+        project_id=reasoner_result.project_id,
+        issue_id=reasoner_result.issue_id,
+        structured_fields=structured_fields or None,
+        brain_trace_url=brain_trace_url,
+        brain_universe_url=brain_universe_url,
+    )
+
+    cerebros_url = _build_cerebros_app_url(investigation_id)
+    if cerebros_url:
+        response_payload["url"] = cerebros_url
+    response_payload["brainTraceUrl"] = brain_trace_url
+    response_payload["brainUniverseUrl"] = brain_universe_url
+
+    logger.info(
+        "[GRAPH REASONER] query completed (%s sources, investigation=%s)",
+        len(reasoner_result.sources_queried or []),
+        investigation_id,
+    )
+    return response_payload
+
+
 @app.get("/api/context-resolution/impacts")
 async def get_context_resolution_impacts(
     api_id: Optional[str] = None,
@@ -2048,6 +3465,543 @@ async def post_context_resolution_changes(request: ContextChangeRequest):
     )
     return result
 
+
+class ImpactFileChangeInput(BaseModel):
+    path: str
+    change_type: str = "modified"
+
+
+class ImpactGitChangeRequest(BaseModel):
+    repo: str
+    commits: Optional[List[str]] = None
+    files: Optional[List[ImpactFileChangeInput]] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ImpactGitPRRequest(BaseModel):
+    repo: str
+    pr_number: int
+
+
+class SlackComplaintContextPayload(BaseModel):
+    component_ids: Optional[List[str]] = None
+    api_ids: Optional[List[str]] = None
+    repo: Optional[str] = None
+    commit_shas: Optional[List[str]] = None
+    permalink: Optional[str] = None
+
+
+class SlackComplaintImpactRequest(BaseModel):
+    channel: str
+    message: str
+    timestamp: str
+    context: SlackComplaintContextPayload = SlackComplaintContextPayload()
+
+
+@app.post("/impact/git-pr")
+async def run_impact_git_pr(payload: ImpactGitPRRequest = Body(...)):
+    try:
+        report = impact_service.analyze_git_pr(payload.repo, payload.pr_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except GitHubAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return report.to_dict()
+
+
+@app.post("/impact/git-change")
+async def run_impact_git_change(payload: ImpactGitChangeRequest = Body(...)):
+    manual_files: Optional[List[GitFileChange]] = None
+    if payload.files:
+        manual_files = [
+            GitFileChange(path=file_input.path, change_type=file_input.change_type)
+            for file_input in payload.files
+        ]
+    try:
+        report = impact_service.analyze_git_change(
+            payload.repo,
+            commits=payload.commits,
+            files=manual_files,
+            title=payload.title,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except GitHubAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return report.to_dict()
+
+
+@app.post("/impact/slack-complaint")
+async def run_impact_slack_complaint(request: SlackComplaintImpactRequest):
+    complaint = SlackComplaintInput(
+        channel=request.channel,
+        message=request.message,
+        timestamp=request.timestamp,
+        component_ids=request.context.component_ids,
+        api_ids=request.context.api_ids,
+        repo=request.context.repo,
+        commit_shas=request.context.commit_shas,
+        permalink=request.context.permalink,
+    )
+    try:
+        report = impact_service.analyze_slack_complaint(complaint)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return report.to_dict()
+
+
+@app.get("/impact/doc-issues")
+async def list_impact_doc_issues(
+    source: Optional[str] = Query("impact-report", description="Filter by issue source"),
+    component_id: Optional[str] = Query(None, description="Filter by component ID"),
+    service_id: Optional[str] = Query(None, description="Filter by service ID"),
+    repo_id: Optional[str] = Query(None, description="Filter by repo identifier"),
+):
+    issues = impact_service.list_doc_issues(
+        source=source,
+        component_id=component_id,
+        service_id=service_id,
+        repo_id=repo_id,
+    )
+    return {"doc_issues": issues}
+
+
+@app.get("/health/impact")
+async def get_impact_health(limit: int = Query(10, ge=1, le=100)):
+    return impact_service.get_impact_health(max_events=limit)
+
+
+@app.get("/traceability/investigations")
+async def list_traceability_investigations(
+    limit: int = Query(25, ge=1, le=200),
+    component_id: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    project_id: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+):
+    if not _traceability_enabled():
+        return {"investigations": []}
+    records = traceability_store.list(limit=min(limit * 4, traceability_store.max_entries))  # type: ignore[attr-defined]
+    records = [record for record in records if (record.get("tenant_id") or traceability_tenant_id) == traceability_tenant_id]
+    if component_id:
+        component_lower = component_id.lower()
+        records = [
+            record
+            for record in records
+            if any(str(cid).lower() == component_lower for cid in record.get("component_ids", []))
+        ]
+    if session_id:
+        records = [record for record in records if record.get("session_id") == session_id]
+    if project_id:
+        records = [record for record in records if record.get("project_id") == project_id]
+    if since:
+        try:
+            cutoff = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="since must be ISO-8601 timestamp")
+        records = [
+            record
+            for record in records
+            if record.get("created_at")
+            and datetime.fromisoformat(str(record["created_at"]).replace("Z", "+00:00")) >= cutoff
+        ]
+    return {"investigations": records[:limit]}
+
+
+@app.get("/traceability/investigations/{investigation_id}")
+async def get_traceability_investigation(investigation_id: str):
+    if not _traceability_enabled():
+        raise HTTPException(status_code=404, detail="Traceability store disabled")
+    record = traceability_store.get(investigation_id)  # type: ignore[union-attr]
+    if not record:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    return record
+
+
+@app.get("/api/incidents")
+async def list_incidents(
+    limit: int = Query(25, ge=1, le=200),
+    project_id: Optional[str] = Query(None),
+    component_id: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+):
+    if not _traceability_enabled():
+        return {"incidents": []}
+    records = traceability_store.list(limit=min(limit * 4, traceability_store.max_entries))  # type: ignore[attr-defined]
+    incidents = [record for record in records if (record.get("type") or "investigation") == "incident"]
+    if project_id:
+        incidents = [record for record in incidents if record.get("project_id") == project_id]
+    if component_id:
+        lowered = component_id.lower()
+        incidents = [
+            record
+            for record in incidents
+            if any(str(cid).lower() == lowered for cid in record.get("component_ids", []) or [])
+        ]
+    if severity:
+        severity_lower = severity.lower()
+        incidents = [record for record in incidents if (record.get("severity") or "").lower() == severity_lower]
+    if status:
+        status_lower = status.lower()
+        incidents = [record for record in incidents if (record.get("status") or "").lower() == status_lower]
+    if since:
+        try:
+            cutoff = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="since must be ISO-8601 timestamp")
+        incidents = [
+            record
+            for record in incidents
+            if record.get("created_at")
+            and datetime.fromisoformat(str(record["created_at"]).replace("Z", "+00:00")) >= cutoff
+        ]
+    return {"incidents": incidents[:limit]}
+
+
+@app.get("/api/incidents/{incident_id}")
+async def get_incident(incident_id: str):
+    if not _traceability_enabled():
+        raise HTTPException(status_code=404, detail="Traceability store disabled")
+    record = traceability_store.get(incident_id)  # type: ignore[union-attr]
+    if not record or (record.get("type") or "investigation") != "incident":
+        raise HTTPException(status_code=404, detail="Incident not found")
+    response_record = dict(record)
+    raw_trace_id = response_record.get("raw_trace_id")
+    response_record["brainTraceUrl"] = f"/brain/trace/{raw_trace_id}" if raw_trace_id else None
+    response_record["brainUniverseUrl"] = "/brain/universe"
+    if raw_trace_id:
+        trace = query_trace_store.get(raw_trace_id)
+        if trace:
+            response_record["query_trace"] = trace.to_dict()
+    return response_record
+
+
+@app.post("/api/incidents")
+async def create_incident(request: IncidentCreateRequest):
+    if not _traceability_enabled():
+        raise HTTPException(status_code=503, detail="Traceability store disabled")
+    if traceability_store is None:
+        raise HTTPException(status_code=503, detail="Traceability store unavailable")
+
+    candidate = dict(request.incident_candidate or {})
+    base_record = None
+    if request.investigation_id:
+        base_record = traceability_store.get(request.investigation_id)  # type: ignore[union-attr]
+        if not base_record:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+
+    severity = (request.severity or candidate.get("severity") or "medium").lower()
+    if severity not in {"low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=400, detail="severity must be one of: low, medium, high, critical")
+    status = (request.status or candidate.get("status") or "open").lower()
+    if status not in {"open", "monitoring", "resolved"}:
+        raise HTTPException(status_code=400, detail="status must be one of: open, monitoring, resolved")
+
+    incident_id = str(uuid4())
+    summary = request.summary or candidate.get("summary") or (base_record.get("summary") if base_record else None)
+    raw_trace_id = (
+        request.raw_trace_id
+        or candidate.get("raw_trace_id")
+        or (base_record.get("raw_trace_id") if base_record else None)
+    )
+    source_command = (
+        request.source_command
+        or candidate.get("source_command")
+        or (base_record.get("source_command") if base_record else None)
+        or "incident"
+    )
+    blast_radius_score = request.blast_radius_score or candidate.get("blast_radius_score")
+    component_ids = (
+        list(base_record.get("component_ids") or []) if base_record else list(candidate.get("components") or [])
+    )
+    project_id = candidate.get("project_id") or (base_record.get("project_id") if base_record else None)
+    evidence = (
+        list(base_record.get("evidence") or []) if base_record else list(candidate.get("evidence") or [])
+    )
+    tool_runs = (
+        list(base_record.get("tool_runs") or []) if base_record else list(candidate.get("tool_runs") or [])
+    )
+
+    metadata = dict(base_record.get("metadata") or {}) if base_record else {}
+    metadata["origin_investigation_id"] = request.investigation_id or candidate.get("investigation_id")
+    if request.metadata:
+        metadata.update(request.metadata)
+    if candidate:
+        metadata["incident_candidate_snapshot"] = candidate
+
+    structured_fields = {}
+    if candidate:
+        structured_fields = {
+            key: candidate.get(key)
+            for key in STRUCTURED_INCIDENT_FIELDS
+            if candidate.get(key) not in (None, [], {}, "")
+        }
+
+    brain_trace_url = candidate.get("brainTraceUrl") or (raw_trace_id and f"/brain/trace/{raw_trace_id}")
+    brain_universe_url = candidate.get("brainUniverseUrl") or "/brain/universe"
+
+    question_value = base_record.get("question") if base_record else None
+    answer_value = base_record.get("answer") if base_record else None
+
+    record = {
+        "id": incident_id,
+        "type": "incident",
+        "question": question_value or candidate.get("query") or summary or "Incident",
+        "answer": answer_value or candidate.get("llm_explanation"),
+        "summary": summary,
+        "status": status,
+        "severity": severity,
+        "blast_radius_score": blast_radius_score,
+        "source_command": source_command,
+        "raw_trace_id": raw_trace_id,
+        "project_id": project_id,
+        "component_ids": component_ids,
+        "api_ids": base_record.get("api_ids") if base_record else [],
+        "tenant_id": traceability_tenant_id,
+        "tool_runs": tool_runs,
+        "evidence": evidence,
+        "metadata": metadata,
+        "incident_context": {
+            "counts": candidate.get("counts"),
+            "impacted_nodes": candidate.get("impacted_nodes"),
+            "recency_info": candidate.get("recency_info"),
+        },
+        "doc_priorities": candidate.get("doc_priorities"),
+        "created_at": _now_iso(),
+        "brainTraceUrl": brain_trace_url,
+        "brainUniverseUrl": brain_universe_url,
+    }
+    incident_entities = candidate.get("incident_entities")
+    if not incident_entities:
+        incident_entities = summarize_incident_entities(
+            candidate.get("impacted_nodes") or {},
+            candidate.get("doc_priorities") or [],
+            candidate.get("dependency_impact"),
+            candidate.get("evidence") or [],
+            candidate.get("activity_signals"),
+            candidate.get("dissatisfaction_signals"),
+        )
+    if incident_entities:
+        record["incident_entities"] = incident_entities
+    record.update(structured_fields)
+
+    severity_payload = candidate.get("severity_payload")
+    if severity_payload:
+        _apply_severity_payload(record, severity_payload)
+
+    try:
+        traceability_store.append(record)  # type: ignore[union-attr]
+        if traceability_neo4j_ingestor.enabled:
+            traceability_neo4j_ingestor.upsert_investigation(record)
+    except Exception as exc:
+        logger.warning("[TRACEABILITY] Failed to persist incident: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to persist incident") from exc
+    return record
+
+
+def _serialize_for_logging(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, set):
+        return sorted(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    return value
+
+
+def _apply_severity_payload(record: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    try:
+        logger.info(
+            "[SEVERITY_DEBUG] incident=%s severity_payload=%s",
+            record.get("id"),
+            json.dumps(payload, default=_serialize_for_logging),
+        )
+    except Exception:
+        logger.info(
+            "[SEVERITY_DEBUG] incident=%s severity_keys=%s",
+            record.get("id"),
+            sorted(payload.keys()),
+        )
+    record["severity_payload"] = payload
+    if payload.get("score_0_10") is not None:
+        record["severity_score"] = payload.get("score_0_10")
+    if payload.get("score") is not None:
+        record["severity_score_100"] = payload.get("score")
+    if payload.get("label"):
+        record["severity_label"] = payload.get("label")
+    if payload.get("breakdown"):
+        record["severity_breakdown"] = payload.get("breakdown")
+    if payload.get("details"):
+        record["severity_details"] = payload.get("details")
+    if payload.get("contributions"):
+        record["severity_contributions"] = payload.get("contributions")
+    if payload.get("weights"):
+        record["severity_weights"] = payload.get("weights")
+    if payload.get("semantic_pairs"):
+        record["severity_semantic_pairs"] = payload.get("semantic_pairs")
+    if payload.get("explanation"):
+        record["severity_explanation"] = payload.get("explanation")
+
+
+@app.post("/traceability/doc-issues")
+async def create_traceability_doc_issue(request: TraceabilityDocIssueRequest):
+    if not _traceability_enabled():
+        raise HTTPException(status_code=503, detail="Traceability store disabled")
+    doc_issue_service = getattr(impact_service, "doc_issue_service", None)
+    if not doc_issue_service:
+        raise HTTPException(status_code=503, detail="DocIssue service unavailable")
+
+    component_ids = [comp for comp in request.component_ids if comp]
+    if not component_ids:
+        raise HTTPException(status_code=400, detail="component_ids cannot be empty.")
+
+    severity = (request.severity or "medium").lower()
+    if severity not in {"critical", "high", "medium", "low"}:
+        raise HTTPException(status_code=400, detail="severity must be one of: critical, high, medium, low.")
+
+    status = (request.status or "open").lower()
+    graph = getattr(impact_service, "graph", None)
+    service_ids: List[str] = []
+    if graph:
+        for component_id in component_ids:
+            service_id = graph.service_for_component(component_id)
+            if service_id:
+                service_ids.append(service_id)
+
+    links: List[Dict[str, str]] = []
+    for link in request.links or []:
+        if not link.url:
+            continue
+        links.append(
+            {
+                "type": link.type,
+                "label": link.label or link.url,
+                "url": link.url,
+            }
+        )
+
+    change_context = {
+        "source_kind": request.source or "traceability",
+        "identifier": request.origin_investigation_id,
+    }
+
+    try:
+        issue_record = doc_issue_service.create_manual_issue(
+            title=request.title,
+            summary=request.summary,
+            severity=severity,
+            status=status,
+            doc_path=request.doc_path,
+            component_ids=component_ids,
+            service_ids=service_ids,
+            repo_id=request.repo_id,
+            doc_url=request.doc_url,
+            doc_id=request.doc_id,
+            source=request.source or "traceability",
+            origin_investigation_id=request.origin_investigation_id,
+            evidence_ids=request.evidence_ids or [],
+            links=links,
+            change_context=change_context,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    log_structured(
+        "info",
+        "Traceability doc issue linked",
+        metric="traceability.doc_issues_linked",
+        issue_id=issue_record.get("id"),
+        investigation_id=request.origin_investigation_id,
+    )
+    if traceability_neo4j_ingestor.enabled:
+        traceability_neo4j_ingestor.link_doc_issue(issue_record)
+
+    return issue_record
+
+
+@app.get("/traceability/investigations/export")
+async def export_traceability_investigations(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    project_id: Optional[str] = Query(None),
+    component_id: Optional[str] = Query(None),
+):
+    if not _traceability_enabled():
+        raise HTTPException(status_code=404, detail="Traceability store disabled")
+    records = traceability_store.list(limit=traceability_store.max_entries)  # type: ignore[attr-defined]
+    records = [record for record in records if (record.get("tenant_id") or traceability_tenant_id) == traceability_tenant_id]
+    if project_id:
+        records = [record for record in records if record.get("project_id") == project_id]
+    if component_id:
+        component_lower = component_id.lower()
+        records = [
+            record
+            for record in records
+            if any(str(cid).lower() == component_lower for cid in record.get("component_ids", []))
+        ]
+    if format == "csv":
+        buffer = io.StringIO()
+        fieldnames = ["id", "question", "answer", "status", "project_id", "component_ids", "created_at"]
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in records:
+            writer.writerow(
+                {
+                    "id": record.get("id"),
+                    "question": record.get("question"),
+                    "answer": record.get("answer"),
+                    "status": record.get("status"),
+                    "project_id": record.get("project_id"),
+                    "component_ids": ",".join(record.get("component_ids", [])),
+                    "created_at": record.get("created_at"),
+                }
+            )
+        buffer.seek(0)
+        return StreamingResponse(
+            iter([buffer.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=traceability.csv"},
+        )
+    return {"investigations": records}
+
+
+@app.get("/traceability/graph-trace")
+async def traceability_graph_trace(
+    component_id: str = Query(..., description="Component id to trace"),
+    limit: int = Query(3, ge=1, le=10),
+):
+    if not (traceability_neo4j_ingestor.enabled and graph_service.is_available()):
+        return {"traces": []}
+    query = """
+    MATCH (c:Component {id: $component_id})<-[:AFFECTS_COMPONENT]-(issue:DocIssue)<-[:SUPPORTS]-(inv:Investigation)
+    OPTIONAL MATCH (inv)-[:EMITTED]->(evidence:Evidence)
+    WITH inv, issue, collect(DISTINCT {id: evidence.id, title: evidence.title, source: evidence.source, url: evidence.url}) AS evidence_items
+    RETURN inv.id AS investigation_id,
+           inv.question AS question,
+           inv.created_at AS created_at,
+           issue.id AS issue_id,
+           issue.title AS issue_title,
+           issue.summary AS issue_summary,
+           evidence_items AS evidence
+    ORDER BY inv.created_at DESC
+    LIMIT $limit
+    """
+    rows = graph_service.run_query(query, {"component_id": component_id, "limit": limit})
+    traces = [
+        {
+            "investigation_id": row.get("investigation_id"),
+            "question": row.get("question"),
+            "created_at": row.get("created_at"),
+            "doc_issue_id": row.get("issue_id"),
+            "doc_issue_title": row.get("issue_title") or row.get("issue_summary"),
+            "evidence": [ev for ev in (row.get("evidence") or []) if ev.get("id")],
+        }
+        for row in rows
+    ]
+    return {"traces": traces}
 
 @app.get("/api/graph/validation")
 async def get_graph_validation():
@@ -2139,7 +4093,6 @@ class ContextChangeRequest(BaseModel):
     include_activity: bool = True
     include_cross_repo: Optional[bool] = None
     activity_window_hours: Optional[int] = None
-
 
 @app.post("/api/logs")
 async def receive_frontend_log(log_entry: FrontendLogEntry):
@@ -2292,6 +4245,14 @@ async def github_webhook(request: Request):
                 logger.info(f"[GITHUB WEBHOOK] Sent system notification")
             except Exception as e:
                 logger.warning(f"[GITHUB WEBHOOK] Failed to send system notification: {e}")
+
+        # Run impact analysis when applicable
+        try:
+            impact_result = impact_webhooks.handle_github_event(event_type, payload)
+            if impact_result:
+                logger.info("[GITHUB WEBHOOK] Impact report generated for %s", event_type)
+        except Exception as exc:
+            logger.warning(f"[GITHUB WEBHOOK] Impact handler failed: {exc}")
 
         logger.info(f"[GITHUB WEBHOOK] Successfully processed {event_type} event")
         return {
@@ -2664,7 +4625,14 @@ async def search_help(q: str, limit: int = 10):
 
 
 @app.get("/api/universal-search")
-async def universal_search(q: str, limit: int = 10, types: str = "document,image"):
+async def universal_search(
+    q: str,
+    limit: int = 10,
+    types: str = "document,image",
+    scope: Optional[str] = None,
+    folders: Optional[str] = None,
+    intent: Optional[str] = None,
+):
     """Universal semantic search across indexed documents and images with highlighting"""
     import time
     from telemetry.config import get_tracer
@@ -2681,7 +4649,10 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
         logger.info(f"[UNIVERSAL_SEARCH] Starting search", {
             "query": q[:100],  # Log first 100 chars
             "limit": limit,
-            "types": types
+            "types": types,
+            "scope": scope or "default",
+            "intent": intent or "unspecified",
+            "folders": folders or "",
         })
         
         # Validate input
@@ -2701,6 +4672,66 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
         requested_types = set(t.strip().lower() for t in types.split(',') if t.strip())
         if not requested_types:
             requested_types = {"document", "image"}
+
+        config = config_manager.get_config()
+        documents_cfg = config.get("documents", {}) or {}
+        configured_folders = documents_cfg.get("folders", []) or []
+        allowed_folder_paths: List[Path] = []
+        for folder in configured_folders:
+            try:
+                allowed_folder_paths.append(Path(os.path.expanduser(folder)).resolve())
+            except Exception as exc:
+                logger.warning("[UNIVERSAL_SEARCH] Failed to normalize configured folder", {
+                    "folder": folder,
+                    "error": str(exc)
+                })
+
+        requested_folder_filters: List[Path] = []
+        if folders:
+            requested_tokens = [token.strip() for token in folders.split(",") if token.strip()]
+            for token in requested_tokens:
+                lower_token = token.lower()
+                matched = False
+                for allowed in allowed_folder_paths:
+                    allowed_str = str(allowed).lower()
+                    allowed_name = allowed.name.lower()
+                    if lower_token == allowed_name or lower_token in allowed_str:
+                        requested_folder_filters.append(allowed)
+                        matched = True
+                        break
+                if not matched:
+                    logger.warning("[UNIVERSAL_SEARCH] Requested folder filter not recognized", {"folder": token})
+
+        active_folder_filters = requested_folder_filters or allowed_folder_paths
+
+        def _match_folder(file_path: str) -> Optional[Path]:
+            if not file_path or not active_folder_filters:
+                return None
+            try:
+                candidate = Path(os.path.expanduser(file_path)).resolve()
+            except Exception:
+                return None
+
+            for root in active_folder_filters:
+                try:
+                    candidate.relative_to(root)
+                    return root
+                except ValueError:
+                    continue
+            return None
+
+        def _format_indexed_at(mtime: Optional[float]) -> Optional[str]:
+            if mtime in (None, "", 0):
+                return None
+            try:
+                timestamp = float(mtime)
+                return datetime.fromtimestamp(timestamp).isoformat()
+            except (TypeError, ValueError):
+                return None
+
+        span.set_attribute("search_scope", scope or "default")
+        span.set_attribute("search_intent", intent or "unspecified")
+        span.set_attribute("folder_filters_count", len(active_folder_filters))
 
         # Search results from different sources
         all_results = []
@@ -2725,6 +4756,10 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                 span.set_attribute("document_search_time_ms", round(doc_search_time * 1000, 2))
 
                 for result in grouped_results[:doc_limit]:
+                    matched_folder = _match_folder(result['file_path'])
+                    if active_folder_filters and not matched_folder:
+                        continue
+
                     # Get the best chunk for snippet generation
                     best_chunk = max(result['chunks'], key=lambda x: x['similarity'])
 
@@ -2746,6 +4781,9 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                         "snippet": snippet,
                         "highlight_offsets": highlight_offsets,
                         "breadcrumb": _generate_breadcrumb(result['file_path']),
+                        "folder_label": matched_folder.name if matched_folder else None,
+                        "indexed_at": _format_indexed_at(best_chunk.get('file_mtime')),
+                        "ingest_scope": scope or "default",
                         "metadata": {
                             "width": None,
                             "height": None
@@ -2776,6 +4814,10 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                 span.set_attribute("image_search_time_ms", round(image_search_time * 1000, 2))
 
                 for result in image_results:
+                    matched_folder = _match_folder(result['file_path'])
+                    if active_folder_filters and not matched_folder:
+                        continue
+
                     all_results.append({
                         "result_type": "image",
                         "file_path": result['file_path'],
@@ -2785,6 +4827,9 @@ async def universal_search(q: str, limit: int = 10, types: str = "document,image
                         "snippet": result['caption'],  # Caption serves as snippet for images
                         "highlight_offsets": [],  # No highlighting for images
                         "breadcrumb": result['breadcrumb'],
+                        "folder_label": matched_folder.name if matched_folder else None,
+                        "indexed_at": result.get('indexed_at'),
+                        "ingest_scope": scope or "default",
                         "thumbnail_url": f"/api/files/thumbnail?path={result['file_path']}&max_size=256",
                         "preview_url": f"/api/files/preview?path={result['file_path']}",
                         "metadata": {
@@ -2922,6 +4967,75 @@ def _generate_breadcrumb(file_path: str) -> str:
 
     # Fallback: return just the filename
     return Path(file_path).name
+
+
+@app.get("/api/conversation/history/{session_id}")
+async def get_conversation_history(session_id: str):
+    """Return stored conversation history for a given session."""
+    try:
+        memory = session_manager.get_session(session_id)
+        if not memory:
+            return {
+                "session_id": session_id,
+                "total_messages": 0,
+                "messages": [],
+                "last_active_at": None,
+            }
+
+        interactions = [interaction.to_dict() for interaction in memory.interactions]
+        return {
+            "session_id": session_id,
+            "total_messages": len(interactions),
+            "messages": interactions,
+            "last_active_at": memory.last_active_at,
+        }
+    except Exception as exc:
+        logger.error(f"Error loading conversation history for session {session_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load conversation history")
+
+
+@app.get("/api/youtube/videos/{session_id}")
+async def list_youtube_videos(session_id: str):
+    """Return YouTube video contexts for a session."""
+    contexts = youtube_context_service.list_contexts(session_id)
+    active = youtube_context_service.get_active_video(session_id)
+    return {
+        "session_id": session_id,
+        "videos": [ctx.to_dict() for ctx in contexts],
+        "active_video_id": active.video_id if active else None,
+    }
+
+
+@app.get("/api/youtube/suggestions")
+async def get_youtube_suggestions(session_id: Optional[str] = Query(None)):
+    """Return MRU + clipboard-aware video suggestions."""
+    data = youtube_context_service.get_suggestions(
+        session_id,
+        limit=int(_youtube_cfg.get("max_recent", 8)),
+        include_clipboard=True,
+    )
+    return {"session_id": session_id, "suggestions": data}
+
+
+@app.get("/api/youtube/history/search")
+async def search_youtube_history(
+    query: Optional[str] = Query(None),
+    limit: int = Query(8, ge=1, le=25),
+):
+    """Return stored YouTube videos matching a partial title or channel."""
+    entries = _youtube_history_store.search(query, limit)
+    return {
+        "query": query or "",
+        "limit": limit,
+        "results": [entry.to_dict() for entry in entries],
+    }
+
+
+@app.post("/api/youtube/videos/{video_id}/refresh")
+async def refresh_youtube_video(video_id: str, session_id: str = Query(...)):
+    """Force transcript re-ingestion for a session video."""
+    context = _refresh_youtube_transcript(session_id, video_id)
+    return {"video": context.to_dict()}
 
 
 @app.get("/api/help/categories")
@@ -3101,6 +5215,36 @@ async def reload_config_endpoint():
         logger.error(f"Error reloading config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return settings defaults, overrides, and effective payload."""
+    try:
+        return {
+            "defaults": settings_manager.get_defaults(),
+            "overrides": settings_manager.get_overrides(),
+            "effective": settings_manager.get_effective_settings(),
+        }
+    except Exception as exc:
+        logger.error(f"Error loading settings: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.patch("/api/settings")
+async def patch_settings(payload: Dict[str, Any] = Body(...)):
+    """Update settings overrides and return the new effective payload."""
+    try:
+        effective = settings_manager.update_settings(payload)
+        return {
+            "effective": effective,
+            "overrides": settings_manager.get_overrides(),
+        }
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=json.loads(exc.json()))
+    except Exception as exc:
+        logger.error(f"Error updating settings: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 # WebSocket endpoint for real-time chat
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None):
@@ -3141,6 +5285,8 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
             "interactions": len(memory.interactions),
             "timestamp": datetime.now().isoformat()
         }, websocket)
+        if is_new_session:
+            memory.mark_session_initialized()
         logger.info(f"Welcome message sent to session {session_id}")
     except Exception as e:
         logger.error(f"Error sending welcome message: {e}", exc_info=True)
@@ -3198,144 +5344,6 @@ async def websocket_chat(websocket: WebSocket, session_id: Optional[str] = None)
                 }, websocket)
                 continue
 
-            # Handle /index command - index documents from configured folders
-            normalized_message = stripped_message.lower().strip() if stripped_message else ""
-            is_index_command = (
-                normalized_message == "/index" or 
-                normalized_message == "index" or
-                command == "index" or
-                (stripped_message and stripped_message.lower().strip() == "/index") or
-                (stripped_message and stripped_message.lower().strip() == "index")
-            )
-            
-            if is_index_command:
-                logger.info(f"Detected /index command for session {session_id}")
-                await manager.send_message({
-                    "type": "status",
-                    "status": "processing",
-                    "message": "📚 Indexing documents from configured folders... This may take a while.",
-                    "timestamp": datetime.now().isoformat()
-                }, websocket)
-                
-                try:
-                    # Create cancel event for indexing
-                    indexing_cancel_event = asyncio.Event()
-                    
-                    # Run indexing in a background task
-                    async def run_indexing():
-                        try:
-                            # Check for cancellation before starting
-                            if indexing_cancel_event.is_set():
-                                await manager.send_message({
-                                    "type": "status",
-                                    "status": "idle",
-                                    "message": "Indexing cancelled before starting.",
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                                return
-                            
-                            # Run indexing in thread pool with cancel event
-                            result = await asyncio.to_thread(
-                                get_orchestrator().reindex_documents,
-                                cancel_event=indexing_cancel_event
-                            )
-                            
-                            # Check if cancelled during execution
-                            if indexing_cancel_event.is_set():
-                                await manager.send_message({
-                                    "type": "status",
-                                    "status": "idle",
-                                    "message": "Indexing cancelled.",
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                                return
-                            
-                            if result.get('success'):
-                                indexed_count = result.get('indexed_documents', 0)
-                                stats = result.get('stats', {})
-                                total_chunks = stats.get('total_chunks', 0)
-                                unique_files = stats.get('unique_files', 0)
-                                
-                                folders = config_manager.get_config().get('documents', {}).get('folders', [])
-                                folders_str = ', '.join([Path(f).name for f in folders])
-                                
-                                # Show total documents in index (not just newly indexed)
-                                # If no new documents were indexed but index exists, show total count
-                                if indexed_count == 0 and unique_files > 0:
-                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- Total documents in index: {unique_files}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
-                                elif indexed_count > 0:
-                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- New documents indexed: {indexed_count}\n- Total documents in index: {unique_files}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
-                                else:
-                                    message = f"✅ Indexing complete!\n\n📊 **Results:**\n- Documents indexed: {indexed_count}\n- Total chunks: {total_chunks}\n- Folders: {folders_str}\n\nYour documents are now searchable and the agent can use them as context."
-                                
-                                await manager.send_message({
-                                    "type": "response",
-                                    "message": message,
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                                
-                                await manager.send_message({
-                                    "type": "status",
-                                    "status": "idle",
-                                    "message": "",
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                            else:
-                                error_msg = result.get('error', 'Unknown error')
-                                await manager.send_message({
-                                    "type": "error",
-                                    "message": f"❌ Indexing failed: {error_msg}",
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                                
-                                await manager.send_message({
-                                    "type": "status",
-                                    "status": "idle",
-                                    "message": "",
-                                    "timestamp": datetime.now().isoformat()
-                                }, websocket)
-                        except asyncio.CancelledError:
-                            logger.info("Indexing task cancelled")
-                            await manager.send_message({
-                                "type": "status",
-                                "status": "idle",
-                                "message": "Indexing cancelled.",
-                                "timestamp": datetime.now().isoformat()
-                            }, websocket)
-                        except Exception as e:
-                            logger.error(f"Error during indexing: {e}", exc_info=True)
-                            await manager.send_message({
-                                "type": "error",
-                                "message": f"❌ Indexing error: {str(e)}",
-                                "timestamp": datetime.now().isoformat()
-                            }, websocket)
-                            
-                            await manager.send_message({
-                                "type": "status",
-                                "status": "idle",
-                                "message": "",
-                                "timestamp": datetime.now().isoformat()
-                            }, websocket)
-                        finally:
-                            # Clean up task tracking
-                            async with _session_tasks_lock:
-                                session_tasks.pop(session_id, None)
-                                session_cancel_events.pop(session_id, None)
-                    
-                    # Create and store the indexing task
-                    indexing_task = asyncio.create_task(run_indexing())
-                    async with _session_tasks_lock:
-                        session_tasks[session_id] = indexing_task
-                        session_cancel_events[session_id] = indexing_cancel_event
-                except Exception as e:
-                    logger.error(f"Error starting indexing: {e}", exc_info=True)
-                    await manager.send_message({
-                        "type": "error",
-                        "message": f"❌ Failed to start indexing: {str(e)}",
-                        "timestamp": datetime.now().isoformat()
-                    }, websocket)
-                continue
-            
             # Handle /clear command FIRST - before any other processing
             # Check multiple variations to be robust (case-insensitive, with/without slash)
             normalized_message = stripped_message.lower().strip() if stripped_message else ""
@@ -3820,6 +5828,111 @@ async def get_file_metadata(path: str):
         raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
 
 
+def _resolve_query_value(query: str = "", legacy: str = "") -> str:
+    value = query or legacy or ""
+    return value.strip()
+
+
+@app.get("/api/metadata/slack/channels")
+async def list_slack_channels(
+    query: str = Query("", max_length=120),
+    legacy_prefix: str = Query("", alias="prefix", max_length=120),
+    limit: int = Query(10, ge=1, le=100),
+):
+    search = _resolve_query_value(query, legacy_prefix)
+    channels = slack_metadata_service.suggest_channels(prefix=search, limit=limit)
+    return {
+        "count": len(channels),
+        "channels": [
+            {
+                "id": channel.id,
+                "name": channel.name,
+                "is_private": channel.is_private,
+                "is_archived": channel.is_archived,
+                "num_members": channel.num_members,
+            }
+            for channel in channels
+        ],
+    }
+
+
+@app.get("/api/metadata/slack/users")
+async def list_slack_users(
+    query: str = Query("", max_length=120),
+    legacy_prefix: str = Query("", alias="prefix", max_length=120),
+    limit: int = Query(10, ge=1, le=100),
+):
+    search = _resolve_query_value(query, legacy_prefix)
+    users = slack_metadata_service.suggest_users(prefix=search, limit=limit)
+    return {
+        "count": len(users),
+        "users": [
+            {
+                "id": user.id,
+                "name": user.name,
+                "real_name": user.real_name,
+                "display_name": user.display_name,
+            }
+            for user in users
+        ],
+    }
+
+
+@app.get("/api/metadata/git/repos")
+async def list_git_repos(
+    query: str = Query("", max_length=120),
+    legacy_prefix: str = Query("", alias="prefix", max_length=120),
+    limit: int = Query(10, ge=1, le=100),
+):
+    search = _resolve_query_value(query, legacy_prefix)
+    repos = git_metadata_service.list_repos(prefix=search, limit=limit)
+    return {
+        "count": len(repos),
+        "repos": [
+            {
+                "id": repo.id,
+                "owner": repo.owner,
+                "name": repo.name,
+                "full_name": repo.full_name,
+                "default_branch": repo.default_branch,
+                "description": repo.description,
+                "topics": list(repo.topics),
+            }
+            for repo in repos
+        ],
+    }
+
+
+@app.get("/api/metadata/git/repos/{repo_id}/branches")
+async def list_git_branches(
+    repo_id: str,
+    query: str = Query("", max_length=120),
+    legacy_prefix: str = Query("", alias="prefix", max_length=120),
+    limit: int = Query(25, ge=1, le=200),
+):
+    search = _resolve_query_value(query, legacy_prefix)
+    branches = git_metadata_service.list_branches(repo_id, prefix=search, limit=limit)
+    return {
+        "repo_id": repo_id,
+        "count": len(branches),
+        "branches": [
+            {
+                "name": branch.name,
+                "is_default": branch.is_default,
+                "protected": branch.protected,
+            }
+            for branch in branches
+        ],
+    }
+
+
+@app.get("/api/metadata/sources")
+async def suggest_sources(query: str = Query(..., min_length=1, max_length=500)):
+    reasoner = MultiSourceReasoner(config_manager.get_config())
+    sources = reasoner.infer_sources(query)
+    return {"query": query, "sources": sources}
+
+
 @app.get("/api/files/thumbnail")
 async def get_thumbnail(path: str, max_size: int = 256):
     """
@@ -4102,16 +6215,14 @@ async def text_to_speech_api(
 
 
 # Startup and shutdown handlers for recurring scheduler
-@app.on_event("startup")
-async def startup_event():
-    """Start background services on app startup."""
-    startup_profiler.mark("fastapi_startup_event")
+async def _start_backend_services() -> None:
+    """Shared helper that boots all long-running background services."""
     logger.info("Starting recurring task scheduler...")
     await recurring_scheduler.start()
 
     logger.info("Starting Bluesky notification service...")
     await bluesky_notifications.start()
-    
+
     if branch_watcher_enabled:
         logger.info("Scheduling Branch Watcher service (Oqoqo API docs)...")
         schedule_branch_watcher_start()
@@ -4120,7 +6231,7 @@ async def startup_event():
 
     logger.info("Starting chat persistence worker...")
     await chat_worker.start()
-    
+
     # Background warm-up: Initialize heavy components after server is ready
     async def warm_up_orchestrator():
         # Small delay to ensure server is fully ready to accept requests
@@ -4132,17 +6243,60 @@ async def startup_event():
             logger.info("[PERF] Background: WorkflowOrchestrator warmed up")
         except Exception as e:
             logger.warning(f"[PERF] Background warm-up failed (non-critical): {e}")
-    
+
     # Start background task (fire and forget)
     asyncio.create_task(warm_up_orchestrator())
 
-    startup_profiler.mark("fastapi_startup_complete")
-    logger.info("[STARTUP] Backend timeline", {"events": startup_profiler.summary()})
+
+def _attach_background_service_logger(task: asyncio.Task) -> None:
+    """Ensure exceptions from deferred startup tasks are logged."""
+    def _log_result(completed: asyncio.Task) -> None:
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            logger.info("[FAST-STARTUP] Deferred backend services cancelled")
+        except Exception:  # noqa: BLE001
+            logger.exception("[FAST-STARTUP] Deferred backend services failed to start")
+
+    task.add_done_callback(_log_result)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background services on app startup."""
+    global _background_services_task
+
+    startup_profiler.mark("fastapi_startup_event")
+
+    if FAST_STARTUP_MODE:
+        logger.info("[FAST-STARTUP] Enabled – deferring heavy service startup to background task")
+        if _background_services_task and not _background_services_task.done():
+            _background_services_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _background_services_task
+        _background_services_task = asyncio.create_task(_start_backend_services())
+        _attach_background_service_logger(_background_services_task)
+    else:
+        await _start_backend_services()
+
+    startup_profiler.mark("fastapi_startup_complete", {"fast_startup": FAST_STARTUP_MODE})
+    logger.info(
+        "[STARTUP] Backend timeline",
+        {"events": startup_profiler.summary(), "fast_startup": FAST_STARTUP_MODE},
+    )
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop background services on app shutdown."""
+    global _background_services_task
+
+    if FAST_STARTUP_MODE and _background_services_task and not _background_services_task.done():
+        logger.info("[FAST-STARTUP] Awaiting deferred backend services before shutdown")
+        with contextlib.suppress(asyncio.CancelledError, Exception):  # noqa: BLE001
+            await _background_services_task
+    _background_services_task = None
+
     logger.info("Stopping recurring task scheduler...")
     await recurring_scheduler.stop()
 
@@ -4410,6 +6564,24 @@ web_player_device_id: Optional[str] = None
 class SpotifyDeviceRegistration(BaseModel):
     """Request model for registering Spotify web player device."""
     device_id: str
+
+
+class SpotifyVolumeRequest(BaseModel):
+    """Request model for updating Spotify volume."""
+    volume_percent: int = Field(..., ge=0, le=100)
+    device_id: Optional[str] = None
+
+
+class SpotifySeekRequest(BaseModel):
+    """Request model for seeking within a Spotify track."""
+    position_ms: int = Field(..., ge=0)
+    device_id: Optional[str] = None
+
+
+class SpotifyShuffleRequest(BaseModel):
+    """Request model for toggling Spotify shuffle."""
+    state: bool
+    device_id: Optional[str] = None
 
 
 @app.get("/api/spotify/auth-status")
@@ -4773,6 +6945,133 @@ async def spotify_previous():
         raise
     except Exception as e:
         logger.error(f"Error skipping to previous track: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/spotify/volume")
+async def spotify_volume(request: SpotifyVolumeRequest):
+    """Set Spotify playback volume."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        global web_player_device_id
+        device_id = request.device_id or web_player_device_id
+
+        client.set_volume(request.volume_percent, device_id=device_id)
+
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "volume",
+            "volume_percent": request.volume_percent,
+            "device_id": device_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        return {"success": True, "message": "Volume updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting Spotify volume: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/spotify/seek")
+async def spotify_seek(request: SpotifySeekRequest):
+    """Seek within the current Spotify track."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        global web_player_device_id
+        device_id = request.device_id or web_player_device_id
+
+        client.seek_position(request.position_ms, device_id=device_id)
+
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "seek",
+            "position_ms": request.position_ms,
+            "device_id": device_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        return {"success": True, "message": "Seek completed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error seeking Spotify playback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/spotify/shuffle")
+async def spotify_shuffle(request: SpotifyShuffleRequest):
+    """Toggle Spotify shuffle state."""
+    try:
+        from src.integrations.spotify_api import SpotifyAPIClient
+        from src.config_validator import get_config_accessor
+
+        config = config_manager.get_config()
+        accessor = get_config_accessor(config)
+        api_config = accessor.get_spotify_api_config()
+
+        client = SpotifyAPIClient(
+            client_id=api_config.client_id,
+            client_secret=api_config.client_secret,
+            redirect_uri=api_config.redirect_uri,
+            token_storage_path=api_config.token_storage_path,
+        )
+
+        if not client.is_authenticated():
+            raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+        global web_player_device_id
+        device_id = request.device_id or web_player_device_id
+
+        client.set_shuffle(request.state, device_id=device_id)
+
+        await manager.broadcast({
+            "type": "spotify_playback_update",
+            "action": "shuffle",
+            "state": request.state,
+            "device_id": device_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        state_label = "enabled" if request.state else "disabled"
+        return {"success": True, "message": f"Shuffle {state_label}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling Spotify shuffle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

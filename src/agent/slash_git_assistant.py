@@ -2,10 +2,23 @@ import json
 import logging
 import os
 import re
+import difflib
+from collections import Counter
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
+
 from ..reasoners import DocDriftAnswer, DocDriftReasoner
+from ..services.git_metadata import GitMetadataService
+from ..services.slash_query_plan import SlashQueryIntent, SlashQueryPlan
+from ..slash_git.formatter import SlashGitLLMFormatter
+from ..slash_git.models import GitQueryPlan
+from ..slash_git.pipeline import SlashGitPipeline, SlashGitPipelineResult
+from src.agent.evidence import git_commit_evidence_id, git_pr_evidence_id
+from src.settings.automation import allows_auto_suggestions
+from src.settings.git import resolve_repo_branch
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +49,20 @@ class SlashGitAssistant:
         "template_version",
         "receipt",
     }
+    GRAPH_ONLY_BLOCKED_TOOLS = {
+        "list_recent_prs",
+        "get_pr_details",
+        "get_repo_overview",
+        "list_repository_branches",
+        "list_branch_commits",
+        "search_branch_commits",
+        "get_commit_details",
+        "list_file_history",
+        "compare_git_refs",
+        "list_repository_tags",
+        "get_latest_repo_tag",
+        "list_branch_pull_requests",
+    }
 
     def __init__(
         self,
@@ -43,6 +70,10 @@ class SlashGitAssistant:
         session_manager=None,
         config: Optional[Dict[str, Any]] = None,
         reasoner: Optional[DocDriftReasoner] = None,
+        *,
+        git_pipeline: Optional[SlashGitPipeline] = None,
+        git_formatter: Optional[SlashGitLLMFormatter] = None,
+        metadata_service: Optional[GitMetadataService] = None,
     ):
         self.registry = agent_registry
         self.session_manager = session_manager
@@ -60,6 +91,18 @@ class SlashGitAssistant:
         if not self.github_token_configured:
             logger.warning("[SLASH GIT] GITHUB_TOKEN missing; API calls will use anonymous rate limits.")
         self._last_tool_source: Optional[str] = None
+        self._active_query_plan: Optional[Dict[str, Any]] = None
+        self._plan_obj: Optional["SlashQueryPlan"] = None
+        self.metadata_service = metadata_service or GitMetadataService(self.config)
+        owner = github_cfg.get("repo_owner")
+        repo_name = github_cfg.get("repo_name")
+        self._repo_identifier = f"{owner}/{repo_name}" if owner and repo_name else None
+
+        impact_cfg = self.config.get("impact") or {}
+        self.impact_auto_enabled = allows_auto_suggestions("api_params")
+        self.impact_endpoint_base = impact_cfg.get("endpoint_base") or os.getenv("IMPACT_ENDPOINT_BASE")
+        graph_cfg = slash_git_cfg.get("graph_mode") or {}
+        self.graph_only_mode = bool(graph_cfg.get("require", False))
 
         if reasoner_enabled:
             if reasoner is not None:
@@ -73,83 +116,140 @@ class SlashGitAssistant:
         else:
             self.doc_drift_reasoner = None
 
+        if git_pipeline is not None:
+            self.git_pipeline = git_pipeline
+        else:
+            try:
+                self.git_pipeline = SlashGitPipeline(self.config, metadata_service=self.metadata_service)
+            except Exception as exc:
+                logger.warning("[SLASH GIT] Pipeline unavailable: %s", exc)
+                self.git_pipeline = None
+
+        if git_formatter is not None:
+            self.git_formatter = git_formatter
+        else:
+            try:
+                self.git_formatter = SlashGitLLMFormatter(self.config)
+            except Exception as exc:
+                logger.warning("[SLASH GIT] Formatter unavailable: %s", exc)
+                self.git_formatter = None
+
     # ------------------------------------------------------------------
     # Public entrypoint
     # ------------------------------------------------------------------
-    def handle(self, task: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def handle(
+        self,
+        task: str,
+        session_id: Optional[str] = None,
+        plan: Optional["SlashQueryPlan"] = None,
+    ) -> Dict[str, Any]:
         """Main entrypoint invoked by the slash command handler."""
         task = (task or "").strip()
         if not task:
             return self._error_response("Please provide a Git question.")
 
-        lower = task.lower()
+        plan_dict = plan.to_dict() if plan else None
+        self._active_query_plan = plan_dict
+        self._plan_obj = plan
+        try:
+            if plan:
+                task = self._apply_plan_to_task(task, plan)
+            lower = task.lower()
 
-        reasoned = self._maybe_handle_doc_drift(task)
-        if reasoned is not None:
-            return reasoned
+            reasoned = self._maybe_handle_doc_drift(task)
+            if reasoned is not None:
+                if plan_dict:
+                    metadata = reasoned.setdefault("metadata", {})
+                    metadata["query_plan"] = plan_dict
+                return reasoned
 
-        if self._looks_like_branch_switch(task):
-            return self._handle_branch_switch(task, session_id)
+            pipeline_response = self._maybe_run_git_pipeline(task, lower, plan=self._plan_obj)
+            if pipeline_response:
+                return pipeline_response
 
-        if self._looks_like_branch_query(lower):
-            return self._handle_show_branch(session_id)
+            if self._looks_like_branch_switch(task):
+                return self._handle_branch_switch(task, session_id)
 
-        if "repo" in lower and any(kw in lower for kw in ["info", "about", "what"]):
+            if self._looks_like_branch_query(lower):
+                return self._handle_show_branch(session_id)
+
+            if "repo" in lower and any(kw in lower for kw in ["info", "about", "what"]):
+                return self._handle_repo_info(session_id)
+
+            if "branches" in lower and ("list" in lower or "show" in lower or lower.strip() == "branches"):
+                return self._handle_list_branches(session_id)
+
+            if "pr" in lower or "pull request" in lower:
+                return self._handle_branch_prs(task, session_id)
+
+            if "tag" in lower:
+                if "latest" in lower or "recent" in lower or "current" in lower:
+                    return self._handle_latest_tag(session_id)
+                return self._handle_list_tags(session_id)
+
+            ref_pair = self._extract_ref_pair(task)
+            if ref_pair:
+                return self._handle_compare_refs(ref_pair[0], ref_pair[1], session_id)
+
+            sha = self._extract_sha(task)
+            if sha and ("commit" in lower or lower.startswith(sha)):
+                include_files = any(kw in lower for kw in ["file", "summary", "changed", "diff", "what changed"])
+                return self._handle_commit_details(sha, include_files=include_files, session_id=session_id)
+
+            if ("files changed" in lower or "files touched" in lower) and "last commit" in lower:
+                return self._handle_last_commit_files(session_id)
+            if ("files changed" in lower or "files touched" in lower) and sha:
+                return self._handle_commit_files(sha, session_id)
+
+            file_path = self._extract_file_path(task)
+            if file_path and any(kw in lower for kw in ["history", "last changed", "last change", "changes to"]):
+                return self._handle_file_history(file_path, session_id)
+
+            if "search commits" in lower or "commits mentioning" in lower:
+                keyword = self._extract_search_keyword(task)
+                return self._handle_commit_search(keyword, session_id)
+
+            author = self._extract_author(task)
+            if author:
+                return self._handle_recent_commits(session_id, author=author)
+
+            since_iso = self._extract_since_timestamp(task)
+            if since_iso:
+                return self._handle_recent_commits(session_id, since=since_iso)
+
+            limit = self._extract_limit(task)
+            if limit:
+                return self._handle_recent_commits(session_id, limit=limit)
+
+            if any(kw in lower for kw in ["last commit", "latest commit", "head commit"]):
+                return self._handle_last_commit(session_id)
+
+            if "commits" in lower:
+                return self._handle_recent_commits(session_id)
+
+            # Fallback to repo info if intent is unclear
             return self._handle_repo_info(session_id)
+        finally:
+            self._active_query_plan = None
+            self._plan_obj = None
 
-        if "branches" in lower and ("list" in lower or "show" in lower or lower.strip() == "branches"):
-            return self._handle_list_branches(session_id)
-
-        if "pr" in lower or "pull request" in lower:
-            return self._handle_branch_prs(task, session_id)
-
-        if "tag" in lower:
-            if "latest" in lower or "recent" in lower or "current" in lower:
-                return self._handle_latest_tag(session_id)
-            return self._handle_list_tags(session_id)
-
-        ref_pair = self._extract_ref_pair(task)
-        if ref_pair:
-            return self._handle_compare_refs(ref_pair[0], ref_pair[1], session_id)
-
-        sha = self._extract_sha(task)
-        if sha and ("commit" in lower or lower.startswith(sha)):
-            include_files = any(kw in lower for kw in ["file", "summary", "changed", "diff", "what changed"])
-            return self._handle_commit_details(sha, include_files=include_files, session_id=session_id)
-
-        if ("files changed" in lower or "files touched" in lower) and "last commit" in lower:
-            return self._handle_last_commit_files(session_id)
-        if ("files changed" in lower or "files touched" in lower) and sha:
-            return self._handle_commit_files(sha, session_id)
-
-        file_path = self._extract_file_path(task)
-        if file_path and any(kw in lower for kw in ["history", "last changed", "last change", "changes to"]):
-            return self._handle_file_history(file_path, session_id)
-
-        if "search commits" in lower or "commits mentioning" in lower:
-            keyword = self._extract_search_keyword(task)
-            return self._handle_commit_search(keyword, session_id)
-
-        author = self._extract_author(task)
-        if author:
-            return self._handle_recent_commits(session_id, author=author)
-
-        since_iso = self._extract_since_timestamp(task)
-        if since_iso:
-            return self._handle_recent_commits(session_id, since=since_iso)
-
-        limit = self._extract_limit(task)
-        if limit:
-            return self._handle_recent_commits(session_id, limit=limit)
-
-        if any(kw in lower for kw in ["last commit", "latest commit", "head commit"]):
-            return self._handle_last_commit(session_id)
-
-        if "commits" in lower:
-            return self._handle_recent_commits(session_id)
-
-        # Fallback to repo info if intent is unclear
-        return self._handle_repo_info(session_id)
+    def _apply_plan_to_task(self, task: str, plan: "SlashQueryPlan") -> str:
+        if not plan or not plan.targets:
+            return task
+        extras: List[str] = []
+        for target in plan.targets:
+            if target.target_type not in {"repository", "component"}:
+                continue
+            token = target.identifier or target.label or target.raw
+            if token:
+                extras.append(str(token))
+        if not extras:
+            return task
+        suffix = " ".join(extras)
+        base_text = task or ""
+        if suffix.lower() in base_text.lower():
+            return base_text
+        return f"{base_text} {suffix}".strip()
 
     def _maybe_handle_doc_drift(self, task: str) -> Optional[Dict[str, Any]]:
         if not self.doc_drift_reasoner:
@@ -192,10 +292,12 @@ class SlashGitAssistant:
         if answer.error:
             data["reasoner_error"] = answer.error
         return {
+            "type": "slash_git_summary",
             "status": status,
             "message": summary,
             "details": details,
             "data": data,
+            "sources": answer.sources,
         }
 
     # ------------------------------------------------------------------
@@ -206,8 +308,13 @@ class SlashGitAssistant:
         if not branch:
             return self._error_response("Could not determine which branch to use. Try `/git use develop`.")
 
-        if not self._branch_exists(branch, session_id):
-            return self._error_response(f"Branch `{branch}` does not exist in this repository.")
+        exists, suggestions = self._validate_branch(branch, session_id)
+        if not exists:
+            message = f"Branch `{branch}` does not exist in this repository."
+            if suggestions:
+                formatted = ", ".join(f"`{candidate}`" for candidate in suggestions)
+                message += f" Did you mean: {formatted}?"
+            return self._error_response(message)
 
         self._set_active_branch(branch, session_id)
         summary = f"Now tracking branch `{branch}` for upcoming /git queries."
@@ -495,19 +602,31 @@ class SlashGitAssistant:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _format_response(self, summary: str, details: str, data: Dict[str, Any], status: str = "success") -> Dict[str, Any]:
+    def _format_response(
+        self,
+        summary: str,
+        details: str,
+        data: Dict[str, Any],
+        status: str = "success",
+        *,
+        response_type: str = "git_response",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         payload = dict(data or {})
         if self._last_tool_source and "source" not in payload:
             payload["source"] = self._last_tool_source
         payload.setdefault("token_configured", self.github_token_configured)
         self._last_tool_source = None
         response = {
-            "type": "git_response",
+            "type": response_type,
             "status": status,
             "message": summary,
             "details": details,
             "data": payload,
         }
+        if extra:
+            response.update({k: v for k, v in extra.items() if v is not None})
+        self._attach_plan_metadata(response)
         self._maybe_attach_debug_block(response)
         return response
 
@@ -521,6 +640,7 @@ class SlashGitAssistant:
             "data": payload,
             "error": True,
         }
+        self._attach_plan_metadata(response)
         self._maybe_attach_debug_block(response)
         return response
 
@@ -532,6 +652,20 @@ class SlashGitAssistant:
         return self._git_agent
 
     def _execute_git_tool(self, tool_name: str, params: Dict[str, Any], session_id: Optional[str]) -> Dict[str, Any]:
+        if self.graph_only_mode and self._tool_requires_live_github(tool_name):
+            logger.info(
+                "[SLASH GIT] Blocked live Git tool '%s' in graph-only mode (params=%s)",
+                tool_name,
+                params,
+            )
+            return {
+                "error": True,
+                "error_type": "LiveGitDisabled",
+                "error_message": (
+                    "Live GitHub tools are disabled in graph-only mode. "
+                    "Run the ingest workflow to refresh the graph cache."
+                ),
+            }
         try:
             logger.info("[SLASH GIT] Executing %s with params=%s", tool_name, params)
             result = self.registry.execute_tool(tool_name, params, session_id=session_id)
@@ -542,6 +676,15 @@ class SlashGitAssistant:
                     "[SLASH GIT] Tool %s missing from registry; attempting direct GitAgent fallback",
                     tool_name,
                 )
+                if self.graph_only_mode:
+                    return {
+                        "error": True,
+                        "error_type": "LiveGitDisabled",
+                        "error_message": (
+                            "Live GitHub fallback disabled in graph-only mode. "
+                            "Please run ingest to refresh the graph before retrying."
+                        ),
+                    }
                 fallback_agent = self._get_git_agent()
                 result = fallback_agent.execute(tool_name, params)
             self._last_tool_source = result.get("source")
@@ -555,6 +698,9 @@ class SlashGitAssistant:
                 "error_type": "ExecutionError",
                 "error_message": str(exc),
             }
+
+    def _tool_requires_live_github(self, tool_name: str) -> bool:
+        return tool_name in self.GRAPH_ONLY_BLOCKED_TOOLS
 
     def _log_tool_result(self, tool_name: str, result: Dict[str, Any]) -> None:
         source = result.get("source") or "unknown"
@@ -597,22 +743,45 @@ class SlashGitAssistant:
         if config_branch:
             self._default_branch_cache = config_branch
 
+        if self._repo_identifier:
+            resolved = resolve_repo_branch(
+                self._repo_identifier,
+                fallback_branch=self._default_branch_cache or "main",
+            )
+            if resolved:
+                self._default_branch_cache = resolved
+
         result = self._execute_git_tool("get_repo_overview", {}, session_id)
         if not result.get("error"):
             repo = result.get("repo") or {}
             self._default_branch_cache = repo.get("default_branch") or self._default_branch_cache or "main"
         return self._default_branch_cache or "main"
 
-    def _branch_exists(self, branch: str, session_id: Optional[str]) -> bool:
+    def _validate_branch(self, branch: str, session_id: Optional[str]) -> Tuple[bool, List[str]]:
+        suggestions: List[str] = []
+        repo_id = self._repo_identifier
+        if self.metadata_service and repo_id:
+            candidates = self.metadata_service.list_branches(repo_id, prefix=branch, limit=50)
+            for candidate in candidates:
+                if candidate.name.lower() == branch.lower():
+                    return True, []
+            suggestions = self.metadata_service.suggest_branches(repo_id, branch, limit=5)
+
         result = self._execute_git_tool(
             "list_repository_branches",
             {"limit": 200, "names_only": True},
             session_id,
         )
         if result.get("error"):
-            return False
+            return False, suggestions
         branches = result.get("branches", [])
-        return branch in branches
+        for candidate in branches:
+            if isinstance(candidate, str) and candidate.lower() == branch.lower():
+                return True, []
+        if not suggestions and branches:
+            close = difflib.get_close_matches(branch, branches, n=5, cutoff=0.55)
+            suggestions = close
+        return False, suggestions
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -725,10 +894,15 @@ class SlashGitAssistant:
     def _format_commit_lines(self, commits: List[Dict[str, Any]]) -> List[str]:
         lines = []
         for commit in commits:
-            lines.append(
-                f"- `{commit.get('short_sha') or commit.get('sha')}` "
-                f"by {commit.get('author')} ({commit.get('date')}) → {self._first_line(commit.get('message'))}"
-            )
+            sha = commit.get("short_sha") or commit.get("sha")
+            author = commit.get("author") or "unknown"
+            timestamp = commit.get("timestamp") or commit.get("date") or "unknown time"
+            headline = self._first_line(commit.get("message"))
+            link = commit.get("url") or self._build_commit_url(commit, commit.get("repo_url"), commit.get("sha"))
+            if link:
+                lines.append(f"- `{sha}` by {author} ({timestamp}) → {headline} · {link}")
+            else:
+                lines.append(f"- `{sha}` by {author} ({timestamp}) → {headline}")
         return lines
 
     def _format_file_lines(self, files: List[Dict[str, Any]]) -> List[str]:
@@ -748,6 +922,485 @@ class SlashGitAssistant:
     def _clean_ref(self, ref: str) -> str:
         return ref.strip().strip('`"\'').rstrip(",.")
 
+    def _repo_html_url(self, plan: GitQueryPlan) -> Optional[str]:
+        repo = plan.repo
+        if repo and repo.repo_owner and repo.repo_name:
+            return f"https://github.com/{repo.repo_owner}/{repo.repo_name}"
+        return None
+
+    def _build_commit_url(self, commit: Dict[str, Any], repo_url: Optional[str], sha: Optional[str]) -> Optional[str]:
+        if commit.get("url"):
+            return commit["url"]
+        base = commit.get("repo_url") or repo_url
+        if base and sha:
+            return f"{base.rstrip('/')}/commit/{sha}"
+        return base
+
+    def _build_pr_url(self, pr: Dict[str, Any], repo_url: Optional[str], number: Optional[Any]) -> Optional[str]:
+        if pr.get("url"):
+            return pr["url"]
+        base = pr.get("repo_url") or repo_url
+        if base and number:
+            return f"{base.rstrip('/')}/pull/{number}"
+        return base
+
+    # ------------------------------------------------------------------
+    # Pipeline helpers
+    # ------------------------------------------------------------------
+    def _maybe_run_git_pipeline(
+        self,
+        task: str,
+        lower: str,
+        *,
+        plan: Optional[SlashQueryPlan] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.git_pipeline:
+            return None
+        if self._looks_like_branch_switch(task) or self._looks_like_branch_query(lower):
+            return None
+        if not self._should_use_pipeline(lower, plan):
+            return None
+        try:
+            result = self.git_pipeline.run(task)
+        except Exception as exc:
+            logger.warning("[SLASH GIT] Pipeline execution failed: %s", exc)
+            return None
+        if not result:
+            return None
+        return self._format_pipeline_response(result)
+
+    def _should_use_pipeline(self, lower: str, plan: Optional[SlashQueryPlan] = None) -> bool:
+        control_keywords = (
+            "list ",
+            "show ",
+            "compare",
+            "diff",
+            "tag",
+            "tags",
+        )
+        if lower.startswith(control_keywords):
+            return False
+
+        recent_commit_keywords = (
+            "last commit",
+            "latest commit",
+            "recent commit",
+        )
+        if any(keyword in lower for keyword in recent_commit_keywords):
+            return False
+
+        trigger_keywords = (
+            "what",
+            "changed",
+            "happened",
+            "summarize",
+            "summary",
+            "bug",
+            "issue",
+            "fix",
+            "last ",
+            "this week",
+            "component",
+            "activity",
+        )
+        if any(keyword in lower for keyword in trigger_keywords):
+            return True
+        if not plan:
+            return False
+        if plan.targets:
+            return True
+        if plan.intent in {
+            SlashQueryIntent.SUMMARIZE,
+            SlashQueryIntent.STATUS,
+            SlashQueryIntent.INVESTIGATE,
+        }:
+            return True
+        return False
+
+    def _format_pipeline_response(self, result: SlashGitPipelineResult) -> Dict[str, Any]:
+        plan = result.plan
+        snapshot = result.snapshot
+        commits = snapshot.get("commits", [])
+        prs = snapshot.get("prs", [])
+        summary = self._build_pipeline_summary(plan, commits, prs)
+
+        graph_context = self._build_pipeline_graph_context(plan, snapshot)
+        analysis_payload = None
+        if self.git_formatter:
+            analysis_payload, error = self.git_formatter.generate(plan, snapshot, graph=graph_context)
+            if error:
+                logger.warning("[SLASH GIT] Formatter failed, falling back to basic summary: %s", error)
+        detail_lines: List[str]
+        if analysis_payload:
+            detail_lines = self._format_analysis_sections(analysis_payload)
+            summary = analysis_payload.get("summary") or summary
+        else:
+            detail_lines = self._fallback_snapshot_details(commits, prs)
+
+        plan_payload = {
+            "mode": plan.mode.value,
+            "repo_id": plan.repo_id,
+            "component_id": plan.component_id,
+            "time_window": plan.time_window.to_dict() if plan.time_window else None,
+            "authors": plan.authors,
+            "labels": plan.labels,
+            "topic": plan.topic,
+        }
+
+        context = self._build_git_context(plan, graph_context)
+        sources = self._build_git_sources(plan, commits, prs)
+
+        data = {
+            "plan": plan_payload,
+            "snapshot": snapshot,
+            "graph_context": graph_context,
+            "analysis": analysis_payload,
+        }
+        self._last_tool_source = "slash_git_pipeline"
+        self._enqueue_impact_job(plan, snapshot, analysis_payload)
+        extra_fields: Dict[str, Any] = {
+            "context": context,
+            "sources": sources,
+        }
+        if analysis_payload:
+            extra_fields.update(
+                {
+                    "analysis": analysis_payload,
+                    "sections": analysis_payload.get("sections"),
+                    "notable_prs": analysis_payload.get("notable_prs"),
+                    "breaking_changes": analysis_payload.get("breaking_changes"),
+                    "next_actions": analysis_payload.get("next_actions"),
+                    "references": analysis_payload.get("references"),
+                }
+            )
+        return self._format_response(
+            summary,
+            "\n".join(detail_lines),
+            data,
+            response_type="slash_git_summary",
+            extra=extra_fields,
+        )
+
+    def _format_analysis_sections(self, analysis: Dict[str, Any]) -> List[str]:
+        lines: List[str] = []
+        for section in analysis.get("sections", []):
+            title = section.get("title") or "Insights"
+            lines.append(f"{title}:")
+            for insight in section.get("insights", []):
+                lines.append(f"- {insight}")
+        if not lines:
+            lines.append("No structured insights were produced.")
+        return lines
+
+    def _fallback_snapshot_details(self, commits: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> List[str]:
+        detail_lines: List[str] = []
+        if commits:
+            detail_lines.append("Commits:")
+            detail_lines.extend(self._format_commit_lines(commits[:5]))
+        if prs:
+            detail_lines.append("PRs:")
+            detail_lines.extend(self._format_pr_lines(prs[:5]))
+        if not detail_lines:
+            detail_lines.append("No relevant activity in the selected window.")
+        return detail_lines
+
+    def _build_git_context(self, plan: GitQueryPlan, graph_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        repo_label = plan.repo.name if plan.repo else (plan.repo_id or self._repo_identifier or "repository")
+        component_label = plan.component.name if plan.component else None
+        time_window_label = plan.time_window.label if plan.time_window else "recent activity"
+        mode = plan.mode.value if plan.mode else None
+        scope = repo_label
+        if component_label:
+            scope = f"{repo_label} · {component_label}"
+
+        context: Dict[str, Any] = {
+            "repo_label": repo_label,
+            "component_label": component_label,
+            "scope_label": scope,
+            "time_window_label": time_window_label,
+            "mode": mode,
+        }
+        if graph_context:
+            context["graph_counts"] = graph_context.get("activity_counts")
+            context["authors"] = graph_context.get("authors")
+            context["top_files"] = graph_context.get("top_files")
+        return context
+
+    def _build_git_sources(
+        self,
+        plan: GitQueryPlan,
+        commits: List[Dict[str, Any]],
+        prs: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        sources: List[Dict[str, Any]] = []
+        repo_label = plan.repo.name if plan.repo else (plan.repo_id or self._repo_identifier or "repository")
+        repo_url = self._repo_html_url(plan)
+        repo_id = plan.repo_id or self._repo_identifier
+        component_label = plan.component.name if plan.component else None
+
+        for idx, commit in enumerate(commits):
+            sha = commit.get("sha") or commit.get("commit_sha") or commit.get("id")
+            short_sha = commit.get("short_sha") or self._short_sha(sha)
+            commit_url = commit.get("url") or self._build_commit_url(commit, repo_url, sha)
+            evidence_id = git_commit_evidence_id(repo_id, sha) if repo_id and sha else None
+            sources.append(
+                {
+                    "id": evidence_id or sha or f"commit-{idx}",
+                    "type": "commit",
+                    "rank": idx + 1,
+                    "repo": repo_id,
+                    "repo_label": repo_label,
+                    "component_label": component_label,
+                    "short_sha": short_sha,
+                    "author": commit.get("author"),
+                    "timestamp": commit.get("timestamp") or commit.get("date"),
+                    "message": commit.get("message"),
+                    "url": commit_url,
+                    "files_changed": commit.get("files_changed"),
+                    "labels": commit.get("labels"),
+                    "service_ids": commit.get("service_ids"),
+                    "component_ids": commit.get("component_ids") or ([plan.component_id] if plan.component_id else None),
+                }
+            )
+
+        for idx, pr in enumerate(prs):
+            number = pr.get("number") or pr.get("pr_number")
+            pr_url = pr.get("url") or self._build_pr_url(pr, repo_url, number)
+            evidence_id = git_pr_evidence_id(repo_id, number) if repo_id and number else None
+            sources.append(
+                {
+                    "id": evidence_id or number or f"pr-{idx}",
+                    "type": "pr",
+                    "rank": len(commits) + idx + 1,
+                    "repo": repo_id,
+                    "repo_label": repo_label,
+                    "component_label": component_label,
+                    "pr_number": number,
+                    "title": pr.get("title"),
+                    "author": pr.get("author"),
+                    "timestamp": pr.get("timestamp") or pr.get("merged_at") or pr.get("updated_at"),
+                    "url": pr_url,
+                    "state": pr.get("state"),
+                    "merged": pr.get("merged"),
+                    "head_branch": pr.get("head_branch"),
+                    "base_branch": pr.get("base_branch"),
+                    "labels": pr.get("labels"),
+                    "files_changed": pr.get("files_changed"),
+                    "component_ids": pr.get("component_ids") or ([plan.component_id] if plan.component_id else None),
+                }
+            )
+
+        return sources
+
+    def _build_pipeline_summary(self, plan: GitQueryPlan, commits: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> str:
+        repo_label = plan.repo.name if plan.repo else (plan.repo_id or "repository")
+        component_label = plan.component.name if plan.component else None
+        window_label = plan.time_window.label if plan.time_window else "recently"
+        commit_count = len(commits)
+        pr_count = len(prs)
+        scope = f"{repo_label}"
+        if component_label:
+            scope = f"{repo_label} · {component_label}"
+
+        if commit_count == 0 and pr_count == 0:
+            return f"No matching activity for {scope} {window_label}."
+
+        parts = [f"{scope} saw"]
+        if commit_count:
+            parts.append(f"{commit_count} commit{'s' if commit_count != 1 else ''}")
+        if pr_count:
+            if commit_count:
+                parts.append("and")
+            parts.append(f"{pr_count} PR{'s' if pr_count != 1 else ''}")
+        parts.append(f"{window_label}.")
+        return " ".join(parts)
+
+    def _build_pipeline_graph_context(self, plan: GitQueryPlan, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        commits = snapshot.get("commits") or []
+        prs = snapshot.get("prs") or []
+        events = commits + prs
+        if not events:
+            context = {}
+        else:
+            def _collect(key: str) -> List[str]:
+                values = set()
+                for item in events:
+                    for value in item.get(key) or []:
+                        if value:
+                            values.add(value)
+                return sorted(values)
+
+            services = _collect("service_ids")
+            components = _collect("component_ids")
+            apis = _collect("changed_apis")
+            labels = _collect("labels")
+            authors = sorted({item.get("author") for item in events if item.get("author")})
+
+            file_counter: Counter[str] = Counter()
+            for item in events:
+                for file_path in item.get("files_changed") or []:
+                    if file_path:
+                        file_counter[file_path] += 1
+            top_files = [
+                {"path": path, "touches": count}
+                for path, count in file_counter.most_common(5)
+            ]
+
+            incident_signals: List[Dict[str, str]] = []
+            incident_keywords = ("incident", "sev", "pager", "rollback", "hotfix")
+            for item in events:
+                source = "pr" if item.get("pr_number") is not None else "commit"
+                reference = str(
+                    item.get("pr_number")
+                    or item.get("commit_sha")
+                    or item.get("sha")
+                    or item.get("id")
+                    or ""
+                )
+                normalized_labels = [label.lower() for label in item.get("labels", []) if isinstance(label, str)]
+                label_hit = next(
+                    (label for label in normalized_labels if label.startswith("incident") or label.startswith("sev")),
+                    None,
+                )
+                message_blob = (item.get("message") or item.get("title") or "").lower()
+                if label_hit:
+                    incident_signals.append({"source": source, "reference": reference, "reason": f"label:{label_hit}"})
+                elif any(keyword in message_blob for keyword in incident_keywords):
+                    incident_signals.append({"source": source, "reference": reference, "reason": "message"})
+                if len(incident_signals) >= 5:
+                    break
+
+            context = {
+                "services": services,
+                "components": components,
+                "apis": apis,
+                "labels": labels,
+                "authors": authors,
+                "top_files": top_files,
+                "incident_signals": incident_signals,
+            }
+
+        activity_counts = {"commits": len(commits), "prs": len(prs)}
+        branch = plan.repo.default_branch if plan.repo else None
+        time_window_label = plan.time_window.label if plan.time_window else None
+
+        graph_context = {
+            "repo_id": plan.repo_id,
+            "component_id": plan.component_id,
+            "activity_counts": activity_counts,
+            "branch": branch,
+            "time_window": time_window_label,
+        }
+        graph_context.update(context)
+        return {key: value for key, value in graph_context.items() if value not in (None, [], {})}
+
+    def _format_pr_lines(self, prs: List[Dict[str, Any]]) -> List[str]:
+        lines = []
+        for pr in prs:
+            number = pr.get("number")
+            title = pr.get("title") or ""
+            author = pr.get("author") or "unknown"
+            link = pr.get("url") or self._build_pr_url(pr, pr.get("repo_url"), number)
+            if link:
+                lines.append(f"- PR #{number} by {author} → {title} · {link}")
+            else:
+                lines.append(f"- PR #{number} by {author} → {title}")
+        return lines
+
+    def _enqueue_impact_job(
+        self,
+        plan: GitQueryPlan,
+        snapshot: Dict[str, Any],
+        analysis_payload: Optional[Dict[str, Any]],
+    ) -> None:
+        if not self.impact_auto_enabled or not self.impact_endpoint_base:
+            return
+        payload = self._build_impact_payload(plan, snapshot, analysis_payload)
+        if not payload:
+            return
+        logger.info(
+            "[SLASH GIT] Enqueuing auto-impact job for %s (commits=%s)",
+            payload.get("repo"),
+            ", ".join(payload.get("commits") or []) or "files",
+        )
+        thread = threading.Thread(
+            target=self._post_impact_payload,
+            args=(payload,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _build_impact_payload(
+        self,
+        plan: GitQueryPlan,
+        snapshot: Dict[str, Any],
+        analysis_payload: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        repo_full = None
+        if plan.repo and getattr(plan.repo, "repo_owner", None) and getattr(plan.repo, "repo_name", None):
+            repo_full = f"{plan.repo.repo_owner}/{plan.repo.repo_name}"
+        repo_full = repo_full or plan.repo_id or self._repo_identifier
+        if not repo_full:
+            return None
+
+        commits = snapshot.get("commits") or []
+        prs = snapshot.get("prs") or []
+        commit_shas = [
+            entry.get("sha") or entry.get("commit_sha")
+            for entry in commits
+            if entry.get("sha") or entry.get("commit_sha")
+        ]
+        commit_shas = [sha for sha in commit_shas if sha][:5]
+
+        file_changes: List[Dict[str, str]] = []
+        if not commit_shas:
+            for entry in commits:
+                for path in entry.get("files_changed") or []:
+                    file_changes.append({"path": path, "change_type": "modified"})
+            if not file_changes:
+                for pr in prs:
+                    for path in pr.get("files_changed") or []:
+                        file_changes.append({"path": path, "change_type": "modified"})
+            file_changes = file_changes[:20]
+
+        if not commit_shas and not file_changes:
+            return None
+
+        title_component = plan.component.name if plan.component else plan.repo.name if plan.repo else plan.repo_id
+        title = f"/git auto-impact · {title_component or repo_full}"
+        description = analysis_payload.get("summary") if analysis_payload else None
+
+        payload: Dict[str, Any] = {
+            "repo": repo_full,
+            "title": title,
+            "description": description,
+        }
+        if commit_shas:
+            payload["commits"] = commit_shas
+        else:
+            payload["files"] = file_changes
+        return payload
+
+    def _post_impact_payload(self, payload: Dict[str, Any]) -> None:
+        try:
+            endpoint = f"{self.impact_endpoint_base.rstrip('/')}/impact/git-change"
+            response = httpx.post(endpoint, json=payload, timeout=2.5)
+            if response.status_code >= 400:
+                logger.debug(
+                    "[SLASH GIT] Auto impact request failed (status=%s): %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+            else:
+                logger.info(
+                    "[SLASH GIT] Auto-impact git-change recorded (repo=%s, commits=%d, files=%d)",
+                    payload.get("repo"),
+                    len(payload.get("commits") or []),
+                    len(payload.get("files") or []),
+                )
+        except Exception as exc:
+            logger.debug("[SLASH GIT] Auto impact request error: %s", exc)
+
     # ------------------------------------------------------------------
     # Debug block helpers
     # ------------------------------------------------------------------
@@ -761,7 +1414,14 @@ class SlashGitAssistant:
         if not debug_block:
             return
         response["debug"] = debug_block
-        response["message"] = self._append_json_block(response.get("message"), debug_block)
+        if response.get("type") != "slash_git_summary":
+            response["message"] = self._append_json_block(response.get("message"), debug_block)
+
+    def _attach_plan_metadata(self, response: Dict[str, Any]) -> None:
+        if not self._active_query_plan:
+            return
+        metadata = response.setdefault("metadata", {})
+        metadata["query_plan"] = self._active_query_plan
 
     def _build_debug_block(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         data = response.get("data") or {}

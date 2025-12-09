@@ -12,6 +12,35 @@ from ..graph import GraphService
 
 logger = logging.getLogger(__name__)
 
+CONTEXT_IMPACTS_CYPHER_TEMPLATE = """
+CALL {
+    WITH $api_id AS api_id, $component_id AS component_id
+    MATCH (target:Component)
+    WHERE
+        (api_id IS NOT NULL AND EXISTS {
+            MATCH (target)-[:EXPOSES_ENDPOINT]->(:APIEndpoint {id: api_id})
+        })
+        OR (component_id IS NOT NULL AND target.id = component_id)
+    RETURN DISTINCT target
+}
+OPTIONAL MATCH (target)-[:EXPOSES_ENDPOINT]->(api:APIEndpoint)
+OPTIONAL MATCH (dependentArtifact:CodeArtifact)-[:DEPENDS_ON*1..__DEPTH__]->(:CodeArtifact)<-[:OWNS_CODE]-(target)
+OPTIONAL MATCH (dependentComponent:Component)-[:OWNS_CODE]->(dependentArtifact)
+OPTIONAL MATCH (dependentDoc:Doc)-[:DESCRIBES_COMPONENT]->(dependentComponent)
+OPTIONAL MATCH (targetDoc:Doc)-[:DESCRIBES_COMPONENT|DESCRIBES_ENDPOINT]->(target)
+OPTIONAL MATCH (service:Service)-[:CALLS_ENDPOINT]->(api)
+WITH target,
+     collect(DISTINCT dependentComponent.id) AS impacted_components,
+     collect(DISTINCT dependentDoc.id) + collect(DISTINCT targetDoc.id) AS docs,
+     collect(DISTINCT service.id) AS services,
+     collect(DISTINCT api.id) AS apis
+RETURN target.id AS component_id,
+       apis AS exposed_apis,
+       impacted_components AS dependents,
+       docs AS docs,
+       services AS services
+"""
+
 
 class ContextResolutionService:
     """
@@ -51,38 +80,11 @@ class ContextResolutionService:
         params = {
             "api_id": api_id,
             "component_id": component_id,
-            "depth": depth,
         }
-
-        query = """
-        CALL {
-            WITH $api_id AS api_id, $component_id AS component_id
-            MATCH (target:Component)
-            WHERE
-                (api_id IS NOT NULL AND EXISTS {
-                    MATCH (target)-[:EXPOSES_ENDPOINT]->(:APIEndpoint {id: api_id})
-                })
-                OR (component_id IS NOT NULL AND target.id = component_id)
-            RETURN DISTINCT target
-        }
-        OPTIONAL MATCH (target)-[:EXPOSES_ENDPOINT]->(api:APIEndpoint)
-        OPTIONAL MATCH (dependentArtifact:CodeArtifact)-[:DEPENDS_ON*1..$depth]->(:CodeArtifact)<-[:OWNS_CODE]-(target)
-        OPTIONAL MATCH (dependentComponent:Component)-[:OWNS_CODE]->(dependentArtifact)
-        OPTIONAL MATCH (doc:Doc)-[:DESCRIBES_COMPONENT|DESCRIBES_ENDPOINT]->(target)
-        OPTIONAL MATCH (service:Service)-[:CALLS_ENDPOINT]->(api)
-        WITH target,
-             collect(DISTINCT dependentComponent.id) AS impacted_components,
-             collect(DISTINCT doc.id) AS docs,
-             collect(DISTINCT service.id) AS services,
-             collect(DISTINCT api.id) AS apis
-        RETURN target.id AS component_id,
-               apis AS exposed_apis,
-               impacted_components AS dependents,
-               docs AS docs,
-               services AS services
-        """
+        query = CONTEXT_IMPACTS_CYPHER_TEMPLATE.replace("__DEPTH__", str(depth))
 
         rows = self.graph_service.run_query(query, params)
+        graph_query_payload = self._graph_query_payload("context_impacts", query=query, params=params)
         results = []
         for row in rows:
             entry = {
@@ -101,6 +103,7 @@ class ContextResolutionService:
             "component_id": component_id,
             "max_depth": depth,
             "impacts": results,
+            "graph_query": graph_query_payload,
         }
 
     def resolve_change_impacts(
@@ -129,7 +132,7 @@ class ContextResolutionService:
         cutoff = self._cutoff_iso(window_hours)
         artifact_ids = artifact_ids or []
 
-        query = """
+        query_template = """
         CALL {
             WITH $component_id AS component_id, $artifact_ids AS artifact_ids
             WITH coalesce(artifact_ids, []) AS explicit_ids, component_id
@@ -142,7 +145,7 @@ class ContextResolutionService:
         }
         UNWIND roots AS root
         OPTIONAL MATCH (root_owner:Component)-[:OWNS_CODE]->(root)
-        OPTIONAL MATCH path=(root)<-[:DEPENDS_ON*0..$depth]-(dependentArtifact:CodeArtifact)<-[:OWNS_CODE]-(dependent:Component)
+        OPTIONAL MATCH path=(root)<-[:DEPENDS_ON*0..__DEPTH__]-(dependentArtifact:CodeArtifact)<-[:OWNS_CODE]-(dependent:Component)
         WHERE dependent IS NOT NULL
           AND (
             $include_cross_repo
@@ -184,16 +187,16 @@ class ContextResolutionService:
             root_owner.id AS root_component_id
         """
 
-        rows = self.graph_service.run_query(
-            query,
-            {
-                "component_id": component_id,
-                "artifact_ids": artifact_ids,
-                "depth": depth,
-                "include_cross_repo": bool(include_cross),
-                "activity_cutoff": cutoff,
-            },
-        )
+        query = query_template.replace("__DEPTH__", str(depth))
+        query_params = {
+            "component_id": component_id,
+            "artifact_ids": artifact_ids,
+            "depth": depth,
+            "include_cross_repo": bool(include_cross),
+            "activity_cutoff": cutoff,
+        }
+        rows = self.graph_service.run_query(query, query_params)
+        graph_query_payload = self._graph_query_payload("change_impacts", query=query, params=query_params)
 
         impacts: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -258,6 +261,7 @@ class ContextResolutionService:
             "include_cross_repo": bool(include_cross),
             "activity_window_hours": window_hours,
             "impacts": impacts_list,
+            "graph_query": graph_query_payload,
         }
 
     @staticmethod
@@ -266,4 +270,29 @@ class ContextResolutionService:
             return None
         cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=window_hours)
         return cutoff_dt.isoformat()
+
+    def _graph_query_payload(
+        self,
+        label: str,
+        *,
+        query: str,
+        params: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        base_payload: Dict[str, Any] = {
+            "label": label,
+            "cypher": query.strip(),
+            "params": params,
+        }
+        metadata = self.graph_service.last_query_metadata()
+        if not metadata:
+            return base_payload
+        if metadata.get("database"):
+            base_payload["database"] = metadata.get("database")
+        if "rowCount" in metadata:
+            base_payload["rowCount"] = metadata["rowCount"]
+        if "row_count" in metadata and "rowCount" not in base_payload:
+            base_payload["rowCount"] = metadata["row_count"]
+        if metadata.get("error"):
+            base_payload["error"] = metadata.get("error")
+        return base_payload
 

@@ -24,6 +24,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@brain-graph-ui/*": [
+        "../shared/brain-graph-ui/*"
       ]
     }
   },

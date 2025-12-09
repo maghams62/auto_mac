@@ -8,6 +8,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+from ..config.qdrant import get_qdrant_collection_name
 from .vector_search_service import QdrantVectorSearchService, VectorSearchService
 
 logger = logging.getLogger(__name__)
@@ -103,14 +104,13 @@ def validate_vectordb_config(config: Dict[str, Any]) -> Dict[str, Any]:
             "Qdrant API key missing for non-local deployment. Set QDRANT_API_KEY."
         )
 
-    collection = _resolve_setting(
+    raw_collection = _resolve_setting(
         vectordb_config.get("collection"),
         primary_env="QDRANT_COLLECTION",
         legacy_env="VECTORDB_COLLECTION",
-        default="oqoqo_context",
+        default=None,
     )
-    if not collection:
-        raise VectorServiceConfigError("vectordb.collection must be provided.")
+    collection = get_qdrant_collection_name(raw_collection)
 
     timeout = vectordb_config.get("timeout_seconds", 6.0)
     try:
@@ -148,7 +148,11 @@ def validate_vectordb_config(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_vector_search_service(config: Dict[str, Any]) -> Optional[VectorSearchService]:
+def get_vector_search_service(
+    config: Dict[str, Any],
+    *,
+    collection_override: Optional[str] = None,
+) -> Optional[VectorSearchService]:
     """
     Return a configured vector search service or None if configuration is invalid.
     """
@@ -164,9 +168,18 @@ def get_vector_search_service(config: Dict[str, Any]) -> Optional[VectorSearchSe
         **config.get("vectordb", {}),
         **validated_vectordb,
     }
+    if collection_override:
+        merged_config["vectordb"]["collection"] = collection_override
 
     if provider == "qdrant":
-        service = QdrantVectorSearchService(merged_config)
+        try:
+            service = QdrantVectorSearchService(merged_config)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning(
+                "[VECTOR CONFIG] Qdrant service unavailable (%s). Continuing without vector search.",
+                exc,
+            )
+            return None
         if service.is_configured():
             return service
         logger.warning("[VECTOR CONFIG] Qdrant service failed internal readiness checks.")

@@ -266,6 +266,7 @@ class SessionMemory:
             "agents_used": set(),
             "tools_used": set(),
             "auto_reset_count": 0,
+            "has_connected_once": False,
         }
 
         # Reasoning trace support (opt-in, feature flag controlled)
@@ -1124,6 +1125,7 @@ class SessionMemory:
                 "tools_used": set(),
                 "cleared_at": datetime.now().isoformat(),
                 "previous_session_duration": self.metadata.get("total_requests", 0),
+                "has_connected_once": False,
             }
 
             # Update timestamp
@@ -1136,8 +1138,18 @@ class SessionMemory:
         return self.status == SessionStatus.ACTIVE
 
     def is_new_session(self) -> bool:
-        """Check if this is a brand new session (no interactions yet)."""
-        return len(self.interactions) == 0
+        """Check if this is a brand new session (no connections or interactions yet)."""
+        with self._lock:
+            if self.metadata.get("has_connected_once"):
+                return False
+            return len(self.interactions) == 0
+
+    def mark_session_initialized(self) -> None:
+        """Record that the session has completed at least one live connection."""
+        with self._lock:
+            if not self.metadata.get("has_connected_once"):
+                self.metadata["has_connected_once"] = True
+                self.metadata["initial_connection_at"] = datetime.now().isoformat()
 
     # ===== REASONING TRACE METHODS (Hybrid, opt-in) =====
 

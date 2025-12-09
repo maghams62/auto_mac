@@ -3,6 +3,7 @@
 import { useRef, useEffect, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Message, PlanState } from "@/lib/useWebSocket";
+import { cn } from "@/lib/utils";
 import BlueskyNotificationCard from "./BlueskyNotificationCard";
 import SlashSlackSummaryCard from "./SlashSlackSummaryCard";
 import TaskCompletionCard from "./TaskCompletionCard";
@@ -12,7 +13,8 @@ import StatusRow from "./StatusRow";
 import logger from "@/lib/logger";
 import { useGlobalEventBus } from "@/lib/telemetry";
 import { spotlightUi } from "@/config/ui";
-import { openExpandedWindow, isElectron } from "@/lib/electron";
+import { openExpandedWindow } from "@/lib/electron";
+import { useIsElectronRuntime } from "@/hooks/useIsElectron";
 
 interface LauncherHistoryPanelProps {
   messages: Message[];
@@ -194,6 +196,30 @@ const ConversationPairCard = memo(
                       summaryBlurb={pair.assistant.message}
                     />
                   )}
+                  {(pair.assistant?.brainTraceUrl || pair.assistant?.brainUniverseUrl) && (
+                    <div className="flex flex-wrap gap-2">
+                      {pair.assistant?.brainTraceUrl && (
+                        <a
+                          href={pair.assistant.brainTraceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs font-medium text-white/80 hover:bg-white/10"
+                        >
+                          View reasoning path
+                        </a>
+                      )}
+                      {pair.assistant?.brainUniverseUrl && (
+                        <a
+                          href={pair.assistant.brainUniverseUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs font-medium text-white/80 hover:bg-white/10"
+                        >
+                          Open Brain universe
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -229,6 +255,7 @@ export default function LauncherHistoryPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const eventBus = useGlobalEventBus();
+  const isElectronRuntime = useIsElectronRuntime();
   const timeFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, spotlightUi.historyPanel.timestampFormat),
     []
@@ -300,6 +327,7 @@ export default function LauncherHistoryPanel({
   }, [displayMessages, maxTurns]);
 
   const historyItems = useMemo(() => buildHistoryItems(trimmedMessages), [trimmedMessages]);
+  const planIsActive = Boolean(planState && (planState.status === "planning" || planState.status === "executing"));
 
   if (displayCount === 0 || trimmedMessages.length === 0) {
     return null;
@@ -335,6 +363,51 @@ export default function LauncherHistoryPanel({
             )}
           </div>
         </div>
+
+        {planIsActive && planState && (
+          <div className="px-4 py-3 border-b border-glass/20 bg-glass/15">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-text-muted">Active plan</p>
+                <p className="text-sm font-semibold text-text-primary truncate">{planState.goal || "Doc insights task"}</p>
+                <p className="text-xs text-text-muted">
+                  {planState.status === "planning" ? "Planning" : "Executing"} ·{" "}
+                  {planState.steps.filter((s) => s.status === "completed").length}/{planState.steps.length} steps
+                </p>
+              </div>
+              {isElectronRuntime && (
+                <button
+                  onClick={() => {
+                    logger.info("[HISTORY] Expand plan summary clicked");
+                    openExpandedWindow();
+                  }}
+                  className="shrink-0 rounded-full border border-accent-primary/40 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent-primary hover:bg-accent-primary/20"
+                >
+                  Expand
+                </button>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-muted">
+              {planState.steps.slice(0, 5).map((step) => (
+                <span
+                  key={step.id}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 border",
+                    step.status === "completed" && "border-green-500/40 text-green-300",
+                    step.status === "running" && "border-accent-primary/40 text-accent-primary",
+                    step.status === "failed" && "border-red-400/40 text-red-300",
+                    step.status === "pending" && "border-white/10 text-white/60"
+                  )}
+                >
+                  <span className="text-[10px]">
+                    {step.status === "completed" ? "✓" : step.status === "running" ? "⚙️" : step.status === "failed" ? "✗" : "○"}
+                  </span>
+                  <span className="truncate max-w-[120px]">{step.action}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Scrollable message list */}
         <AnimatePresence mode="sync">
@@ -380,7 +453,7 @@ export default function LauncherHistoryPanel({
       </div>
 
       {/* Active plan indicator */}
-      {planState && (planState.status === "executing" || planState.status === "planning") && (
+      {planIsActive && planState && (
         <div className="px-4 py-3 border-t border-glass/20 bg-accent-primary/5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs">
             <motion.span
@@ -398,9 +471,15 @@ export default function LauncherHistoryPanel({
               </span>
             )}
           </div>
-          {isElectron() && (
+          {isElectronRuntime && (
             <button
-              onClick={openExpandedWindow}
+              onClick={() => {
+                logger.info("[HISTORY] Expand view clicked", {
+                  planStatus: planState?.status,
+                  planGoal: planState?.goal,
+                });
+                openExpandedWindow();
+              }}
               className="text-[11px] font-semibold uppercase tracking-wide text-accent-primary border border-accent-primary/40 rounded-full px-3 py-1 hover:bg-accent-primary/20 hover:text-white transition-colors"
             >
               Expand view

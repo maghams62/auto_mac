@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from ..config.qdrant import get_qdrant_collection_name
 from .local_vector_store import LocalVectorStore
 from .qdrant_vector_store import QdrantVectorStore
 
@@ -31,7 +32,7 @@ def create_vector_store(
         cfg = (config or {}).get("vectordb", {})
         base_url = cfg.get("url") or os.getenv("QDRANT_URL")
         api_key = cfg.get("api_key") or os.getenv("QDRANT_API_KEY")
-        collection = cfg.get("collection") or os.getenv("QDRANT_COLLECTION") or "oqoqo_context"
+        collection = get_qdrant_collection_name(cfg.get("collection"))
         dimension = cfg.get("dimension", 1536)
 
         collection_name = f"{collection}_{domain}"

@@ -95,6 +95,11 @@ Always return structured state for downstream components:
 - Mark `complexity="simple"` for single-tool tasks to discourage unnecessary chaining.
 - `deliveries` records commitments (e.g., `["send_email"]`) so the executor can validate them before finishing.
 
+### Control & Cancel Inputs
+- If the user says “cancel”, “stop”, “never mind”, “/stop”, or similar short acknowledgements, immediately acknowledge and exit without planning or tool calls. Reply with concise confirmation (e.g., “Okay, stopping here.”) and mark the run `status="cancelled"`.
+- When the input is accidental (emoji-only, `/sl` with no task, random punctuation), respond with a brief clarification (“I didn’t catch that. Type `/` to open commands.”) instead of invoking tools.
+- Treat these guardrails as higher priority than task execution. Never fabricate screenshots, emails, or summaries in response to control-style inputs.
+
 ## Calendar Prep Workflows
 - Use Calendar Agent to list upcoming events and fetch event details.
 - Run `prepare_meeting_brief` for meeting prep; it performs semantic search and synthesis automatically.

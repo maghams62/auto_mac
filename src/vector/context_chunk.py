@@ -220,7 +220,7 @@ def generate_doc_entity_id(doc_path: str) -> str:
     return f"doc:{normalized}"
 
 
-def generate_issue_entity_id(issue_number: int) -> str:
+def generate_issue_entity_id(issue_number: int, repo_slug: Optional[str] = None) -> str:
     """
     Generate entity ID for a GitHub issue.
 
@@ -228,12 +228,14 @@ def generate_issue_entity_id(issue_number: int) -> str:
         issue_number: Issue number
 
     Returns:
-        Entity ID in format "issue:{number}"
+        Entity ID in format "issue:{repo_slug}:{number}" when repo slug is provided,
+        otherwise "issue:{number}".
     """
-    return f"issue:{issue_number}"
+    suffix = f"{repo_slug}:{issue_number}" if repo_slug else str(issue_number)
+    return f"issue:{suffix}"
 
 
-def generate_pr_entity_id(pr_number: int) -> str:
+def generate_pr_entity_id(pr_number: int, repo_slug: Optional[str] = None) -> str:
     """
     Generate entity ID for a pull request.
 
@@ -241,9 +243,11 @@ def generate_pr_entity_id(pr_number: int) -> str:
         pr_number: PR number
 
     Returns:
-        Entity ID in format "pr:{number}"
+        Entity ID in format "pr:{repo_slug}:{number}" when repo slug is provided,
+        otherwise "pr:{number}".
     """
-    return f"pr:{pr_number}"
+    suffix = f"{repo_slug}:{pr_number}" if repo_slug else str(pr_number)
+    return f"pr:{suffix}"
 
 
 def generate_slack_entity_id(channel_id: str, timestamp: str) -> str:
@@ -270,9 +274,8 @@ def generate_commit_entity_id(commit_hash: str) -> str:
     Returns:
         Entity ID in format "commit:{hash}"
     """
-    # Use first 7 chars of hash for readability
-    short_hash = commit_hash[:7] if len(commit_hash) > 7 else commit_hash
-    return f"commit:{short_hash}"
+    clean_hash = (commit_hash or "").strip()
+    return f"commit:{clean_hash}" if clean_hash else "commit:unknown"
 
 
 def parse_entity_id(entity_id: str) -> tuple[str, str]:

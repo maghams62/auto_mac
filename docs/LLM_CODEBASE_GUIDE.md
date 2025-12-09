@@ -72,6 +72,8 @@ Retired directories (e.g., `docs/agents/`, `tests/e2e/`) exist only in git histo
 | Area | Files | Notes |
 |------|-------|-------|
 | Slash Slack orchestration | `src/orchestrator/slash_slack/orchestrator.py` | Plans & dispatches slash commands. |
+| YouTube ingestion pipeline | `src/youtube/ingestion_pipeline.py`, `src/youtube/graph_writer.py` | Shared ingestion path for `/youtube` + `/index youtube`, writes to Qdrant + Neo4j using the same schema as Slack/Git. |
+| Slash Git pipeline | `src/slash_git/` (`models.py`, `parser.py`, `planner.py`, `executor.py`, `pipeline.py`) | Resolves `/git` queries to canonical repos/components and returns normalized snapshots + graph logs. |
 | Git storyteller | `src/agent/git_agent.py`, `scripts/generate_git_story_commit.py`, fixtures in `data/synthetic_git/`. |
 | Slack datasets | `data/synthetic_slack/`, docs in `docs/development/synthetic_slack_dataset.md`. |
 | Spotify service | `src/services/spotify_service.py` (implicit), frontend uses `/api/spotify/*` endpoints (see `api_server.py`). |
@@ -172,4 +174,28 @@ Use `scripts/check_spotify_health.sh`, `scripts/test_spotlight_features.py`, etc
 5. Prefer the provided scripts (`scripts/run_checks.py`, `scripts/detect_swagger_drift.py`) over ad-hoc tooling—they are what the ops docs describe.
 
 _Last updated: November 2025_
+
+---
+
+## 10. Doc Insights Tools (Option 1 & 2)
+
+The NL assistant now exposes the Doc Insights Agent so launcher/desktop queries can reach the same Option 1/Option 2 data as the slash flows.
+
+| Tool | Purpose | Typical NL Trigger |
+|------|---------|--------------------|
+| `resolve_component_id(name)` | Converts informal names (`"core-api"`, `"billing service"`) into canonical component IDs before calling downstream tooling. | “What’s happening with core-api?” |
+| `get_component_activity(component_id, window)` | Activity Graph snapshot (activity + dissatisfaction + doc issues + recent Slack signals). | “Activity around core-api over the last week.” |
+| `get_top_dissatisfied_components(limit, window)` | Ranks components by dissatisfaction score. | “Who is most dissatisfied right now?” |
+| `list_doc_issues(component_id \| repo_id)` | Returns persisted DocIssues from the impact pipeline. | “Which doc issues were triggered by the latest core-api change?” |
+| `get_context_impacts(component_id \| api_id, depth)` | Context resolution blast radius (docs/services/components to update). | “Who depends on the billing service docs?” |
+| `analyze_doc_drift(question)` | Reuses the slash doc-drift reasoner (Option 2) for NL drift questions. | “Do we have doc drift for the payments API?” |
+
+**Usage pattern:**  
+1. Call `resolve_component_id` whenever the user uses an informal name.  
+2. Feed the resulting `component_id` into the other tools.  
+3. Combine activity/impact/doc issues in the response so users see both Option 1 (health) and Option 2 (blast radius) views.
+
+### Prioritization weights
+- `config.yaml` now exposes an `activity_signals.weights` block so you can tune Option 1 prioritization without code changes (e.g., tilt toward support complaints vs. git churn).
+- `/api/graph/query` and slash `/cerebros` both return a `cerebros_answer` object containing the normalized summary, Option tag, deep-linked sources, and (for Option 1) `doc_priorities[]` computed with those weights.
 

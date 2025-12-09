@@ -1,225 +1,255 @@
-import { NextResponse } from "next/server";
-
+import type { LiveGraphComponent, LiveGraphSnapshot } from "@/lib/graph/live-types";
 import { fetchLiveActivity } from "@/lib/ingest";
+import { fetchSyntheticSnapshot } from "@/lib/ingest/synthetic";
+import { getIssueProvider } from "@/lib/issues/providers";
+import type { IssueProvider } from "@/lib/issues/providers/types";
+import { requestCerebrosJson } from "@/lib/clients/cerebros";
+import type { ExternalResult } from "@/lib/clients/types";
+import { fetchNeo4jSnapshot } from "@/lib/clients/neo4j";
 import { mergeLiveActivity } from "@/lib/ingest/mapper";
 import { projects as mockProjects } from "@/lib/mock-data";
-import { resolveServerModeOverride } from "@/lib/mode";
-import { getIngestionConfig } from "@/lib/config";
-import { getIssueProvider, syntheticIssueProvider } from "@/lib/issues/providers";
-import type { GitEvent, LiveActivitySnapshot, LiveMode, SlackThread } from "@/lib/types";
+import { allowSyntheticFallback, isLiveLike, parseLiveMode, resolveServerModeOverride } from "@/lib/mode";
+import { jsonOk } from "@/lib/server/api-response";
+import { logDependencyFailure } from "@/lib/server/dependency-log";
+import type {
+  ComponentNode,
+  DocIssue,
+  LiveActivitySnapshot,
+  LiveMode,
+  Project,
+  SignalBundle,
+} from "@/lib/types";
 
-const CEREBROS_API_BASE =
-  process.env.CEREBROS_API_BASE ?? process.env.NEXT_PUBLIC_CEREBROS_API_BASE ?? "";
-
-type ComponentContext = {
-  name: string;
-  repoName: string;
-};
-
-const componentRegistry = mockProjects.reduce<Record<string, ComponentContext>>((acc, project) => {
-  project.components.forEach((component) => {
-    const repoName =
-      component.repoIds
-        .map((repoId) => project.repos.find((repo) => repo.id === repoId)?.name)
-        .find(Boolean) ?? project.repos[0]?.name ?? component.id;
-    acc[component.id] = {
-      name: component.name,
-      repoName,
-    };
-  });
-  return acc;
-}, {});
-
-interface CerebrosTopComponent {
-  component_id: string;
-  git_events?: number;
-  slack_events?: number;
-  doc_drift_events?: number;
-  doc_count?: number;
-  activity_score?: number;
-}
-
-interface CerebrosComponentDetail extends CerebrosTopComponent {
-  window_days?: number;
-  last_event_at?: string | null;
-}
-
-async function fetchCerebrosTopComponents(): Promise<CerebrosTopComponent[] | null> {
-  if (!CEREBROS_API_BASE) return null;
-  try {
-    const base = CEREBROS_API_BASE.replace(/\/$/, "");
-    const response = await fetch(`${base}/api/activity/top-components?limit=15`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      console.warn("[activity] top-components request failed", response.status);
-      return null;
-    }
-    const payload = (await response.json()) as CerebrosTopComponent[];
-    return payload;
-  } catch (error) {
-    console.warn("[activity] Failed to fetch top components", error);
-    return null;
-  }
-}
-
-async function fetchCerebrosComponentDetail(componentId: string): Promise<CerebrosComponentDetail | null> {
-  if (!CEREBROS_API_BASE) return null;
-  try {
-    const base = CEREBROS_API_BASE.replace(/\/$/, "");
-    const response = await fetch(`${base}/api/activity/component/${encodeURIComponent(componentId)}`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      console.warn("[activity] component detail failed", componentId, response.status);
-      return null;
-    }
-    return (await response.json()) as CerebrosComponentDetail;
-  } catch (error) {
-    console.warn("[activity] Failed component detail fetch", componentId, error);
-    return null;
-  }
-}
-
-function createGitEvent(componentId: string, detail: CerebrosComponentDetail): GitEvent | null {
-  const context = componentRegistry[componentId];
-  if (!context) return null;
-  const gitCount = detail.git_events ?? 0;
-  if (!gitCount) return null;
-  const timestamp = detail.last_event_at ?? new Date().toISOString();
+function buildSignalBundleFromScore(score: number, summary: string): SignalBundle {
   return {
-    repo: context.repoName,
-    type: "commit",
-    id: `cerebros-git-${componentId}`,
-    title: `${gitCount} git events`,
-    message: `Cerebros aggregated ${gitCount} git events touching ${context.name}.`,
-    url: "",
-    author: "cerebros-activity",
-    timestamp,
+    score: Math.max(0, Math.min(100, Number.isFinite(score) ? score : 0)),
+    trend: "flat",
+    window: "7d",
+    summary,
+    metrics: [],
   };
 }
 
-function createSlackEvent(componentId: string, detail: CerebrosComponentDetail): SlackThread | null {
-  const context = componentRegistry[componentId];
-  if (!context) return null;
-  const slackTotal = detail.slack_events ?? 0;
-  const docDrift = detail.doc_drift_events ?? 0;
-  if (!slackTotal && !docDrift) return null;
-  const timestamp = detail.last_event_at ?? new Date().toISOString();
+function mapLiveComponentToNode(component: LiveGraphComponent, project: Project): ComponentNode {
+  const fallbackRepo = component.repoId ?? project.repos[0]?.id ?? "live_repo";
   return {
-    channel: "cerebros-activity",
-    ts: `cerebros-slack-${componentId}`,
-    user: "cerebros",
-    text: `Cerebros observed ${docDrift} doc drift signals and ${slackTotal} Slack events for ${context.name}.`,
-    lastActivityTs: timestamp,
-    sentiment: docDrift > 0 ? "negative" : "neutral",
-    matchedComponents: [context.name],
+    id: component.id,
+    projectId: project.id,
+    name: component.name ?? component.id,
+    serviceType: component.tags?.[0] ?? "Service",
+    ownerTeam: "Live ingest",
+    repoIds: [fallbackRepo],
+    docSections: [],
+    tags: component.tags ?? [],
+    defaultDocUrl: undefined,
+    graphSignals: {
+      activity: buildSignalBundleFromScore(component.activityScore ?? 0, "Live activity score"),
+      drift: buildSignalBundleFromScore(component.driftScore ?? 0, "Live drift score"),
+      dissatisfaction: buildSignalBundleFromScore(component.supportPressure ?? 0, "Live support pressure"),
+      timeline: [],
+    },
+    sourceEvents: [],
+    divergenceInsights: [],
   };
 }
 
-async function fetchCerebrosActivitySnapshot(): Promise<LiveActivitySnapshot | null> {
-  const topComponents = await fetchCerebrosTopComponents();
-  if (!topComponents?.length) {
-    return null;
-  }
-  const trackedComponents = topComponents.filter((entry) => componentRegistry[entry.component_id]);
-  if (!trackedComponents.length) {
-    return null;
-  }
-
-  const detailEntries = await Promise.all(
-    trackedComponents.map(async (entry) => {
-      const detail =
-        (await fetchCerebrosComponentDetail(entry.component_id)) ??
-        null;
-      return detail ? detail : null;
-    })
-  );
-  const gitEvents: GitEvent[] = [];
-  const slackThreads: SlackThread[] = [];
-
-  detailEntries.forEach((detail) => {
-    if (!detail) return;
-    const componentId = detail.component_id;
-    if (!componentRegistry[componentId]) return;
-    const gitEvent = createGitEvent(componentId, detail);
-    if (gitEvent) {
-      gitEvents.push(gitEvent);
-    }
-    const slackEvent = createSlackEvent(componentId, detail);
-    if (slackEvent) {
-      slackThreads.push(slackEvent);
-    }
-  });
-
-  if (!gitEvents.length && !slackThreads.length) {
-    return null;
-  }
-
-  return {
-    git: gitEvents,
-    slack: slackThreads,
-    generatedAt: new Date().toISOString(),
-  };
-}
-
-export async function GET() {
-  const componentNames = mockProjects.flatMap((project) => project.components.map((component) => component.name));
-
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const forcedMode = parseLiveMode(searchParams.get("mode"));
+  const templateComponentNames = mockProjects.flatMap((project) => project.components.map((component) => component.name));
   const envMode = resolveServerModeOverride();
-  let mode: LiveMode = envMode ?? "synthetic";
-  const issueProvider = getIssueProvider();
+  const syntheticRequested = forcedMode === "synthetic" || envMode === "synthetic";
+  const syntheticFallbackEnabled = syntheticRequested || allowSyntheticFallback();
+  let mode: LiveMode = syntheticRequested ? "synthetic" : envMode ?? "atlas";
 
-  let snapshot = await fetchCerebrosActivitySnapshot();
-  if (snapshot) {
-    mode = envMode ?? "atlas";
+  const dependencies: Record<string, ExternalResult<unknown>> = {};
+  let fallbackReason: string | undefined;
+
+  let snapshotResult: ExternalResult<LiveActivitySnapshot> | null = null;
+
+  if (syntheticRequested) {
+    snapshotResult = await wrapSyntheticSnapshot(templateComponentNames);
   } else {
-    const hasConfig = Boolean(getIngestionConfig());
-    snapshot = await fetchLiveActivity(componentNames);
-    if (snapshot) {
-      mode = envMode ?? (hasConfig ? "atlas" : "synthetic");
+    const cerebrosSnapshot = await fetchCerebrosActivitySnapshot();
+    dependencies.cerebrosActivity = cerebrosSnapshot;
+    if (cerebrosSnapshot.status === "OK" && cerebrosSnapshot.data) {
+      snapshotResult = cerebrosSnapshot;
+      mode = envMode ?? "atlas";
+    } else {
+      fallbackReason = "cerebros_unavailable";
+      const liveActivity = await fetchLiveActivity(templateComponentNames);
+      dependencies.git = liveActivity.dependencies.git;
+      dependencies.slack = liveActivity.dependencies.slack;
+      snapshotResult = liveActivity;
     }
   }
 
-  if (!snapshot) {
-    return NextResponse.json({ error: "Live activity not configured" }, { status: 503 });
+  if ((!snapshotResult || !snapshotResult.data) && syntheticFallbackEnabled) {
+    snapshotResult = await wrapSyntheticSnapshot(templateComponentNames);
+    mode = "synthetic";
+    fallbackReason = fallbackReason ?? "synthetic_fallback";
   }
 
-  const mergedProjects = mergeLiveActivity(mockProjects, snapshot).map((project) => ({
+  if (!snapshotResult?.data) {
+    return jsonOk({
+      status: "UNAVAILABLE",
+      data: null,
+      mode: "error",
+      fallbackReason,
+      dependencies,
+      error: snapshotResult?.error ?? {
+        type: "UNKNOWN",
+        message: "Live activity unavailable",
+      },
+    });
+  }
+
+  const { projects: baseProjects, dependency: graphDependency } = await hydrateProjectsForMode(mockProjects, mode);
+  if (graphDependency) {
+    dependencies.graphSnapshots = graphDependency;
+  }
+
+  const mergedProjects = mergeLiveActivity(baseProjects, snapshotResult.data).map((project) => ({
     ...project,
     mode,
   }));
 
-  const issueResults = await Promise.all(
-    mergedProjects.map(async (project) => {
-      try {
-        return await issueProvider.fetchIssues(project.id);
-      } catch (error) {
-        console.warn("[activity] issue provider failed", project.id, error);
-        if (issueProvider.name !== "synthetic") {
-          try {
-            return await syntheticIssueProvider.fetchIssues(project.id);
-          } catch (fallbackError) {
-            console.warn("[activity] synthetic issue provider failed", project.id, fallbackError);
-          }
-        }
-        return null;
-      }
-    })
-  );
+  const issueProvider = getIssueProvider(mode === "synthetic" ? "synthetic" : null);
+  const issues = await fetchIssuesForProjects(issueProvider, mergedProjects);
+  dependencies.docIssues = issues.aggregate;
 
   const projectsWithIssues = mergedProjects.map((project) => {
-    const issues = issueResults.find((result) => result?.projectId === project.id);
-    return issues ? { ...project, docIssues: issues.issues } : project;
+    const issueResult = issues.byProject[project.id];
+    if (issueResult?.status === "OK" && issueResult.data) {
+      return { ...project, docIssues: issueResult.data };
+    }
+    return project;
   });
 
-  return NextResponse.json(
-    {
-      snapshot,
+  return jsonOk({
+    status: snapshotResult.status,
+    mode,
+    fallbackReason,
+    data: {
+      snapshot: snapshotResult.data,
       projects: projectsWithIssues,
-      mode,
     },
-    { status: 200 }
+    dependencies,
+  });
+}
+
+async function wrapSyntheticSnapshot(componentNames: string[]): Promise<ExternalResult<LiveActivitySnapshot>> {
+  const snapshot = await fetchSyntheticSnapshot(componentNames);
+  return {
+    status: "OK",
+    data: snapshot,
+    meta: {
+      provider: "synthetic",
+      endpoint: "activity/snapshot",
+    },
+  };
+}
+
+async function fetchCerebrosActivitySnapshot(): Promise<ExternalResult<LiveActivitySnapshot>> {
+  const result = await requestCerebrosJson<LiveActivitySnapshot>("/activity/snapshot?limit=20");
+  return result;
+}
+
+async function hydrateProjectsForMode(projects: Project[], mode: LiveMode) {
+  if (!isLiveLike(mode)) {
+    return { projects, dependency: null };
+  }
+
+  const perProject: Record<string, ExternalResult<LiveGraphSnapshot>> = {};
+  const hydrated = await Promise.all(
+    projects.map(async (project) => {
+      const snapshot = await fetchNeo4jSnapshot(project.id);
+      perProject[project.id] = snapshot;
+      if (snapshot.status !== "OK" || !snapshot.data?.components?.length) {
+        return project;
+      }
+      const liveComponents = snapshot.data.components.map((component) => mapLiveComponentToNode(component, project));
+      return {
+        ...project,
+        components: liveComponents,
+        docIssues: [],
+      };
+    }),
   );
+
+  return {
+    projects: hydrated,
+    dependency: summarizeDependencyRecords("graph", "snapshot", perProject),
+  };
+}
+
+async function fetchIssuesForProjects(provider: IssueProvider, projects: Project[]) {
+  const result: Record<string, ExternalResult<DocIssue[]>> = {};
+  await Promise.all(
+    projects.map(async (project) => {
+      try {
+        const payload = await provider.fetchIssues(project.id);
+        result[project.id] = {
+          status: "OK",
+          data: payload.issues,
+          meta: {
+            provider: provider.name,
+            endpoint: `doc-issues:${project.id}`,
+          },
+        };
+      } catch (error) {
+        const errorInfo = {
+          type: "UNKNOWN",
+          message: error instanceof Error ? error.message : "Doc issues upstream error",
+        };
+        logDependencyFailure({ provider: provider.name, endpoint: `doc-issues:${project.id}` }, errorInfo);
+        result[project.id] = {
+          status: "UNAVAILABLE",
+          data: null,
+          error: errorInfo,
+          meta: {
+            provider: provider.name,
+            endpoint: `doc-issues:${project.id}`,
+          },
+        };
+      }
+    }),
+  );
+
+  return {
+    byProject: result,
+    aggregate: summarizeDependencyRecords("issues", "doc-issues", result),
+  };
+}
+
+function summarizeDependencyRecords<T>(
+  provider: string,
+  endpoint: string,
+  records: Record<string, ExternalResult<T>>,
+): ExternalResult<Record<string, ExternalResult<T>>> {
+  const values = Object.values(records);
+  if (values.length === 0) {
+    return {
+      status: "NOT_FOUND",
+      data: {},
+      error: {
+        type: "UNKNOWN",
+        message: "No dependency records",
+      },
+      meta: { provider, endpoint },
+    };
+  }
+  const allOk = values.every((entry) => entry.status === "OK");
+  return {
+    status: allOk ? "OK" : "UNAVAILABLE",
+    data: records,
+    error: allOk
+      ? undefined
+      : {
+          type: "UNKNOWN",
+          message: "Partial dependency failure",
+        },
+    meta: { provider, endpoint },
+  };
 }
 

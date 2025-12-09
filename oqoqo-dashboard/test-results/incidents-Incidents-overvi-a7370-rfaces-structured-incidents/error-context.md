@@ -1,0 +1,287 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: Oqoqo
+        - generic [ref=e7]: Drift Dashboard
+        - paragraph [ref=e8]: DocDrift-inspired cockpit with activity graph context.
+      - generic [ref=e10]:
+        - generic [ref=e11]: Current project
+        - combobox [ref=e12] [cursor=pointer]:
+          - generic:
+            - generic:
+              - generic:
+                - img
+                - generic: Atlas Activity Graph
+              - generic: PROD
+          - img [ref=e13]
+      - navigation [ref=e15]:
+        - generic [ref=e16]:
+          - paragraph [ref=e17]: Workspace
+          - generic [ref=e18]:
+            - link "All projects Scan doc health and pick a project to dive into." [ref=e19] [cursor=pointer]:
+              - /url: /projects
+              - generic [ref=e20]:
+                - img [ref=e21]
+                - text: All projects
+                - img [ref=e26]
+              - paragraph [ref=e29]: Scan doc health and pick a project to dive into.
+            - link "Brain Fly the 3D universe and inspect reasoning traces." [ref=e30] [cursor=pointer]:
+              - /url: /brain/universe
+              - generic [ref=e31]:
+                - img [ref=e32]
+                - text: Brain
+                - img [ref=e37]
+              - paragraph [ref=e40]: Fly the 3D universe and inspect reasoning traces.
+        - generic [ref=e41]:
+          - paragraph [ref=e42]: Projects (Today)
+          - generic [ref=e43]:
+            - link "Today Doc health pulse, top issues, recent signals." [ref=e44] [cursor=pointer]:
+              - /url: /projects/project_atlas
+              - generic [ref=e45]:
+                - img [ref=e46]
+                - text: Today
+                - img [ref=e48]
+              - paragraph [ref=e51]: Doc health pulse, top issues, recent signals.
+            - link "Issues inbox Focused DocIssue list across all signals." [ref=e52] [cursor=pointer]:
+              - /url: /projects/project_atlas/issues
+              - generic [ref=e53]:
+                - img [ref=e54]
+                - text: Issues inbox
+                - img [ref=e56]
+              - paragraph [ref=e59]: Focused DocIssue list across all signals.
+            - link "Investigations Trace Cerebros answers with linked evidence." [ref=e60] [cursor=pointer]:
+              - /url: /projects/project_atlas/investigations?mode=synthetic
+              - generic [ref=e61]:
+                - img [ref=e62]
+                - text: Investigations
+                - img [ref=e65]
+              - paragraph [ref=e68]: Trace Cerebros answers with linked evidence.
+        - generic [ref=e69]:
+          - paragraph [ref=e70]: Systems & impact
+          - generic [ref=e71]:
+            - link "Component Explorer Signals per component across code, tickets, and chat." [ref=e72] [cursor=pointer]:
+              - /url: /projects/project_atlas/components
+              - generic [ref=e73]:
+                - img [ref=e74]
+                - text: Component Explorer
+                - img [ref=e79]
+              - paragraph [ref=e82]: Signals per component across code, tickets, and chat.
+            - link "Activity Graph Visualize live nodes and dependencies." [ref=e83] [cursor=pointer]:
+              - /url: /projects/project_atlas/graph
+              - generic [ref=e84]:
+                - img [ref=e85]
+                - text: Activity Graph
+                - img [ref=e90]
+              - paragraph [ref=e93]: Visualize live nodes and dependencies.
+            - link "Activity Monitor Cerebros-ranked components by drift risk." [ref=e94] [cursor=pointer]:
+              - /url: /projects/project_atlas/activity
+              - generic [ref=e95]:
+                - img [ref=e96]
+                - text: Activity Monitor
+                - img [ref=e98]
+              - paragraph [ref=e101]: Cerebros-ranked components by drift risk.
+            - link "Cross-System Impact Dependencies and downstream documentation exposure." [ref=e102] [cursor=pointer]:
+              - /url: /projects/project_atlas/impact
+              - generic [ref=e103]:
+                - img [ref=e104]
+                - text: Cross-System Impact
+                - img [ref=e108]
+              - paragraph [ref=e111]: Dependencies and downstream documentation exposure.
+        - generic [ref=e112]:
+          - paragraph [ref=e113]: Configuration & ops
+          - generic [ref=e114]:
+            - link "Sources & Configuration Repo/branch matrix and exportable config." [ref=e115] [cursor=pointer]:
+              - /url: /projects/project_atlas/configuration
+              - generic [ref=e116]:
+                - img [ref=e117]
+                - text: Sources & Configuration
+                - img [ref=e120]
+              - paragraph [ref=e123]: Repo/branch matrix and exportable config.
+            - link "Operator Diagnostics Live ingest inspector and dataset health." [ref=e124] [cursor=pointer]:
+              - /url: /projects/project_atlas/configuration#live-inspector
+              - generic [ref=e125]:
+                - img [ref=e126]
+                - text: Operator Diagnostics
+                - img [ref=e128]
+              - paragraph [ref=e131]: Live ingest inspector and dataset health.
+      - generic [ref=e132]:
+        - generic [ref=e133]: Doc health
+        - generic [ref=e134]:
+          - generic [ref=e135]:
+            - paragraph [ref=e136]: Atlas Activity Graph
+            - paragraph [ref=e137]: prod
+          - generic [ref=e138]: "74"
+        - paragraph [ref=e139]: Updated 11:40 PM
+    - generic [ref=e140]:
+      - banner [ref=e141]:
+        - generic [ref=e143]:
+          - generic [ref=e144]: Oqoqo
+          - generic [ref=e145]: Activity Graph Intelligence
+          - generic [ref=e146]:
+            - generic [ref=e147]: Focused on Atlas Activity Graph
+            - generic [ref=e148]: prod
+        - generic [ref=e149]:
+          - tablist [ref=e151]:
+            - tab "Live data" [ref=e152] [cursor=pointer]
+            - tab "Synthetic demo" [selected] [ref=e153] [cursor=pointer]
+          - generic [ref=e154]:
+            - generic [ref=e156]: Synthetic mode
+            - generic [ref=e157]: •
+            - generic [ref=e158]: Synthetic fixtures
+          - generic [ref=e159]:
+            - generic [ref=e160]:
+              - generic [ref=e162]: Slack
+              - generic [ref=e163]: •
+              - generic [ref=e164]: Synthetic
+              - generic [ref=e165]: •
+              - generic [ref=e166]: Updated 11:13 PM
+            - generic [ref=e167]:
+              - generic [ref=e169]: Git
+              - generic [ref=e170]: •
+              - generic [ref=e171]: Synthetic
+              - generic [ref=e172]: •
+              - generic [ref=e173]: Updated 01:41 AM
+            - generic [ref=e174]:
+              - generic [ref=e176]: Doc issues
+              - generic [ref=e177]: •
+              - generic [ref=e178]: Synthetic
+              - generic [ref=e179]: •
+              - generic [ref=e180]: Updated 03:47 AM
+          - link "Configure sources" [ref=e181] [cursor=pointer]:
+            - /url: /projects
+      - main [ref=e182]:
+        - generic [ref=e183]:
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - paragraph [ref=e186]: Projects
+              - heading "Doc drift operations cockpit" [level=1] [ref=e187]
+              - paragraph [ref=e188]: Scan doc health at a glance, then open a project’s Today view to decide what to fix next.
+            - paragraph [ref=e190]: Project creation restricted in this demo.
+          - generic [ref=e191]:
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]:
+                    - heading "Atlas Activity Graph" [level=3] [ref=e196]
+                    - paragraph [ref=e197]: Payment APIs powering customer settlements and ledger visibility.
+                  - generic [ref=e199]: PROD
+                - generic [ref=e200]:
+                  - generic [ref=e201]:
+                    - paragraph [ref=e202]: Doc health
+                    - paragraph [ref=e203]: "74"
+                  - generic [ref=e204]:
+                    - generic [ref=e205]: "Critical: 1"
+                    - generic [ref=e206]: "Open issues: 3"
+              - generic [ref=e207]:
+                - generic [ref=e208]:
+                  - generic [ref=e209]: Last updated 11:40 PM
+                  - generic [ref=e210]: 3 monitored sources
+                - generic [ref=e211]:
+                  - paragraph [ref=e212]: Hot component
+                  - paragraph [ref=e213]: Core API Gateway · Critical drift
+                  - paragraph [ref=e214]: Last activity 07:00 PM
+                - generic [ref=e215]:
+                  - link "Open project" [ref=e216] [cursor=pointer]:
+                    - /url: /projects/project_atlas
+                  - link "Ask Oqoqo / Cerebros" [ref=e217] [cursor=pointer]:
+                    - /url: http://localhost:3002/projects/atlas
+            - generic [ref=e218]:
+              - generic [ref=e219]:
+                - generic [ref=e220]:
+                  - generic [ref=e221]:
+                    - heading "Nimbus Workspace Graph" [level=3] [ref=e222]
+                    - paragraph [ref=e223]: Canvas collaboration suite + cross-channel notifications.
+                  - generic [ref=e225]: STAGING
+                - generic [ref=e226]:
+                  - generic [ref=e227]:
+                    - paragraph [ref=e228]: Doc health
+                    - paragraph [ref=e229]: "81"
+                  - generic [ref=e230]:
+                    - generic [ref=e231]: "Critical: 0"
+                    - generic [ref=e232]: "Open issues: 2"
+              - generic [ref=e233]:
+                - generic [ref=e234]:
+                  - generic [ref=e235]: Last updated 11:25 PM
+                  - generic [ref=e236]: 3 monitored sources
+                - generic [ref=e237]:
+                  - paragraph [ref=e238]: Hot component
+                  - paragraph [ref=e239]: Notification Orchestrator · High drift
+                  - paragraph [ref=e240]: Last activity 06:00 PM
+                - generic [ref=e241]:
+                  - link "Open project" [ref=e242] [cursor=pointer]:
+                    - /url: /projects/project_nimbus
+                  - link "Ask Oqoqo / Cerebros" [ref=e243] [cursor=pointer]:
+                    - /url: http://localhost:3002/projects/nimbus
+          - generic [ref=e244]:
+            - generic [ref=e245]:
+              - generic [ref=e246]:
+                - paragraph [ref=e247]: Incidents
+                - heading "Latest multi-modal incidents" [level=2] [ref=e248]
+                - paragraph [ref=e249]: High-signal Cerebros runs promoted to incidents. Open each record to inspect blast radius, evidence, and linked nodes.
+              - link "View all" [ref=e250] [cursor=pointer]:
+                - /url: /incidents
+            - generic [ref=e251]:
+              - link [ref=e252] [cursor=pointer]:
+                - /url: /incidents/4521c5f1-f38e-47da-8e4e-8598f94e799c
+                - generic [ref=e253]:
+                  - generic [ref=e254]:
+                    - generic [ref=e255]:
+                      - paragraph [ref=e256]: "The evidence provided from the git source does not directly answer the query about the billing support spike. The git PR #2041 discusses the addition of a required vat_code to the payments creation process, but it does not provide information about an increase in billing support requests or issues. There is a significant information gap as we need data or reports that show the increase in billing support requests or issues to fully understand the situation. There are no conflicts between sources as only one source has been provided. There are also no cross-repo dependencies mentioned in the evidence. As for the next steps, considering the source weights, we should first look for additional evidence in the git and issues sources, followed by the support and slack sources. This could involve checking for recent commits or issues related to billing in the git source, or looking for an increase in support requests or issues in the support source."
+                      - paragraph [ref=e257]: "The evidence provided from the git source does not directly answer the query about the billing support spike. The git PR #2041 discusses the addition of a required vat_code to the payments creation process, but it does not provide information about an increase in billing support requests or issues. There is a significant information gap as we need data or reports that show the increase in billing support requests or issues to fully understand the situation."
+                    - generic [ref=e258]:
+                      - generic [ref=e259]: low
+                      - generic [ref=e260]: open
+                  - generic [ref=e261]:
+                    - generic [ref=e262]: Multi-modal signals detected
+                    - generic [ref=e263]: Detected 12/6/2025, 11:07:07 PM
+                    - generic [ref=e264]: Blast radius • 8
+              - link [ref=e265] [cursor=pointer]:
+                - /url: /incidents/8b094f80-c197-4cec-b388-b1e2dd94fa6a
+                - generic [ref=e266]:
+                  - generic [ref=e267]:
+                    - generic [ref=e268]:
+                      - paragraph [ref=e269]: "The query regarding a preflight check could not be answered based on the provided evidence. The evidence from the git source, PR #2041, pertains to the addition of a required vat_code to /v1/payments/create and does not provide any information related to a preflight check. There is a significant information gap as we need sources that provide details on preflight checks. As a next step, it is suggested to look for relevant information in higher priority sources such as code, api_spec, and docs."
+                      - paragraph [ref=e270]: "The query regarding a preflight check could not be answered based on the provided evidence. The evidence from the git source, PR #2041, pertains to the addition of a required vat_code to /v1/payments/create and does not provide any information related to a preflight check. There is a significant information gap as we need sources that provide details on preflight checks. As a next step, it is suggested to look for relevant information in higher priority sources such as code, api_spec, and docs."
+                    - generic [ref=e271]:
+                      - generic [ref=e272]: low
+                      - generic [ref=e273]: open
+                  - generic [ref=e274]:
+                    - generic [ref=e275]: Multi-modal signals detected
+                    - generic [ref=e276]: Detected 12/6/2025, 10:06:07 PM
+                    - generic [ref=e277]: Blast radius • 8
+              - link [ref=e278] [cursor=pointer]:
+                - /url: /incidents/116c72c2-b8f2-457f-b2e2-83e57cc8f5be
+                - generic [ref=e279]:
+                  - generic [ref=e280]:
+                    - generic [ref=e281]:
+                      - paragraph [ref=e282]: "Based on the evidence from git, a pull request (PR #2041) has been made by the author, Alice, to add a required vat_code to the /v1/payments/create endpoint in the core-api repository. However, the current state of this PR is unknown, indicating an information gap. We need to determine whether this PR has been merged, closed, or is still open. Additionally, the specific changes made in this PR are not detailed in the evidence provided. Given the source weights, the next steps should be to first check the git repository for updates on the status of PR #2041 and the changes it introduces. If the PR has been merged, it's crucial to understand the impact of these changes on other systems and services, especially if they depend on the /v1/payments/create endpoint. If the PR is still open or closed, further investigation is needed to understand the reasons and potential implications. In all cases, communication with the author, Alice, might be beneficial to gain more insights about the changes and their potential impact."
+                      - paragraph [ref=e283]: "Based on the evidence from git, a pull request (PR #2041) has been made by the author, Alice, to add a required vat_code to the /v1/payments/create endpoint in the core-api repository. However, the current state of this PR is unknown, indicating an information gap. We need to determine whether this PR has been merged, closed, or is still open. Additionally, the specific changes made in this PR are not detailed in the evidence provided. Given the source weights, the next steps should be to first check the git repository for updates on the status of PR #2041 and the changes it introduces. If the PR has been merged, it's crucial to understand the impact of these changes on other systems and services, especially if they depend on the /v1/payments/create endpoint. If the PR is still open or closed, further investigation is needed to understand the reasons and potential implications. In all cases, communication with the author, Alice, might be beneficial to gain more insights about the changes and their potential impact."
+                    - generic [ref=e284]:
+                      - generic [ref=e285]: low
+                      - generic [ref=e286]: open
+                  - generic [ref=e287]:
+                    - generic [ref=e288]: Multi-modal signals detected
+                    - generic [ref=e289]: Detected 12/6/2025, 9:50:12 PM
+                    - generic [ref=e290]: Blast radius • 8
+              - link [ref=e291] [cursor=pointer]:
+                - /url: /incidents/884822c0-3d69-476a-9ecc-f36d7a115275
+                - generic [ref=e292]:
+                  - generic [ref=e293]:
+                    - generic [ref=e294]:
+                      - paragraph [ref=e295]: "Based on the evidence from git, a pull request (PR #2041) has been made by the author, Alice, to add a required vat_code to the /v1/payments/create endpoint in the core-api repository. However, the current state of this PR is unknown, indicating an information gap. We need to determine whether this PR has been merged, closed, or is still open. Additionally, the specific changes made in this PR are not detailed in the evidence provided. Given the source weights, the next steps should be to first check the git repository for updates on the status of PR #2041 and the changes it introduces. If the PR has been merged, it's crucial to understand the impact of these changes on other systems and services, especially if they depend on the /v1/payments/create endpoint. If the PR is still open or closed, further investigation is needed to understand the reasons and potential implications. In all cases, communication with the author, Alice, might be beneficial to gain more insights about the changes and their potential impact."
+                      - paragraph [ref=e296]: "Based on the evidence from git, a pull request (PR #2041) has been made by the author, Alice, to add a required vat_code to the /v1/payments/create endpoint in the core-api repository. However, the current state of this PR is unknown, indicating an information gap. We need to determine whether this PR has been merged, closed, or is still open. Additionally, the specific changes made in this PR are not detailed in the evidence provided. Given the source weights, the next steps should be to first check the git repository for updates on the status of PR #2041 and the changes it introduces. If the PR has been merged, it's crucial to understand the impact of these changes on other systems and services, especially if they depend on the /v1/payments/create endpoint. If the PR is still open or closed, further investigation is needed to understand the reasons and potential implications. In all cases, communication with the author, Alice, might be beneficial to gain more insights about the changes and their potential impact."
+                    - generic [ref=e297]:
+                      - generic [ref=e298]: low
+                      - generic [ref=e299]: open
+                  - generic [ref=e300]:
+                    - generic [ref=e301]: Multi-modal signals detected
+                    - generic [ref=e302]: Detected 12/6/2025, 9:49:03 PM
+                    - generic [ref=e303]: Blast radius • 8
+  - button "Open Next.js Dev Tools" [ref=e309] [cursor=pointer]:
+    - img [ref=e310]
+  - alert [ref=e313]
+```

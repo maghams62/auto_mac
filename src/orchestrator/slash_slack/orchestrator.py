@@ -2,19 +2,29 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
-from dataclasses import dataclass, replace
+import threading
+from dataclasses import dataclass, replace, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import hashlib
+import httpx
 
 from ...integrations.slack_client import SlackAPIError
 from ...integrations.slash_slack_tooling import SlashSlackToolingAdapter
 from ...reasoners import DocDriftAnswer, DocDriftReasoner
 from .analyzer import SlackConversationAnalyzer
 from .llm_formatter import SlashSlackLLMFormatter
+from ...services.slack_context_service import SlackContextService
+from ...services.slack_metadata import SlackMetadataService
+from ...utils.slack import normalize_channel_name
+from ...settings.automation import allows_auto_suggestions
+
+if TYPE_CHECKING:
+    from ...services.slash_query_plan import SlashQueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +91,9 @@ class SlashSlackQuery:
     entity: Optional[str]
     time_range: TimeRange
     limit: int = 200
+    channel_scope_ids: List[str] = field(default_factory=list)
+    channel_scope_labels: List[str] = field(default_factory=list)
+    unresolved_channel_tokens: List[str] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------
@@ -90,6 +103,14 @@ class SlashSlackParser:
     THREAD_PATTERN = re.compile(r"https?://[^/]+/archives/(C[0-9A-Z]+)/p(\d+)")
     CHANNEL_ID_PATTERN = re.compile(r"\b(C[0-9A-Z]{8,})\b")
     CHANNEL_NAME_PATTERN = re.compile(r"#([A-Za-z0-9._-]+)")
+    CHANNEL_HINT_PATTERN = re.compile(
+        r"(?:conversation\s+in|in|from|on|within|channel)\s+([#A-Za-z0-9._\-/ ]{2,80})",
+        flags=re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _normalize_channel_token(token: Optional[str]) -> Optional[str]:
+        return normalize_channel_name(token)
 
     def __init__(self, default_channel_id: Optional[str], default_time_window_hours: int = 24):
         self.default_channel_id = default_channel_id
@@ -116,9 +137,6 @@ class SlashSlackParser:
             pass
         if not channel_id and thread_ts and not channel_name:
             channel_id = thread_info.get("channel_id")
-
-        if not channel_id and not channel_name and mode == "channel_recap":
-            channel_id = self.default_channel_id
 
         return SlashSlackQuery(
             raw=command.strip(),
@@ -160,8 +178,29 @@ class SlashSlackParser:
     def _extract_channel_name(self, text: str) -> Optional[str]:
         match = self.CHANNEL_NAME_PATTERN.search(text)
         if match:
-            return match.group(1)
+            return self._normalize_channel_token(match.group(1))
         return None
+
+    def extract_channel_hints(self, text: str) -> List[str]:
+        hints: List[str] = []
+        for match in self.CHANNEL_HINT_PATTERN.finditer(text):
+            candidate = match.group(1)
+            tokens = re.findall(r"[A-Za-z0-9._-]+", candidate)
+            if not tokens:
+                continue
+            for length in range(len(tokens), 0, -1):
+                joined = "-".join(tokens[:length])
+                normalized = self._normalize_channel_token(joined)
+                if normalized:
+                    hints.append(normalized)
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for hint in hints:
+            if hint not in seen:
+                seen.add(hint)
+                unique.append(hint)
+        return unique
 
     def _extract_keywords(self, text: str) -> List[str]:
         tokens = []
@@ -236,12 +275,25 @@ class BaseSlackExecutor:
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:  # pragma: no cover - overridden
         raise NotImplementedError
 
-    def _resolve_channel_id(self, query: SlashSlackQuery) -> Optional[str]:
+    def _resolve_channel_id(self, query: SlashSlackQuery, *, require: bool = False) -> Optional[str]:
         channel_id = query.channel_id
+        channel_requested = bool(query.channel_name or query.channel_id)
         if not channel_id and query.channel_name:
             channel_id = self.tooling.resolve_channel_id(query.channel_name)
+            if not channel_id and require:
+                channel_label = f"#{query.channel_name}"
+                suggestions = self.tooling.suggest_channels(query.channel_name, limit=5)
+                if suggestions:
+                    formatted = ", ".join(f"#{name}" for name in suggestions)
+                    raise ValueError(f"Slack channel {channel_label} was not found. Did you mean: {formatted}?")
+                raise ValueError(f"Slack channel {channel_label} was not found.")
         if not channel_id:
             channel_id = self.default_channel_id
+        if require and not channel_id:
+            raise ValueError("Specify a channel (e.g., `/slack summarize #backend`).")
+        if require and not channel_requested and channel_id == self.default_channel_id and not query.channel_name:
+            # When no explicit channel was provided, note that we're using the default silently
+            logger.debug("Using default channel_id=%s for channel recap", channel_id)
         return channel_id
 
     def _filter_by_time(self, messages: List[Dict[str, Any]], time_range: TimeRange) -> List[Dict[str, Any]]:
@@ -277,7 +329,7 @@ class BaseSlackExecutor:
 
 class ChannelRecapExecutor(BaseSlackExecutor):
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:
-        channel_id = self._resolve_channel_id(query)
+        channel_id = self._resolve_channel_id(query, require=True)
         if not channel_id:
             raise ValueError("Specify a channel (e.g., `/slack summarize #backend`).")
 
@@ -301,7 +353,7 @@ class ThreadRecapExecutor(BaseSlackExecutor):
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:
         if not query.thread_ts:
             raise ValueError("Provide a Slack thread link to summarize.")
-        channel_id = self._resolve_channel_id(query)
+        channel_id = self._resolve_channel_id(query, require=True)
         if not channel_id:
             raise ValueError("Unable to determine channel for that thread.")
 
@@ -324,8 +376,9 @@ class ThreadRecapExecutor(BaseSlackExecutor):
 class DecisionExecutor(BaseSlackExecutor):
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:
         search_terms = query.entity or " ".join(query.keywords) or query.raw
-        channel_filter = query.channel_name or query.channel_id
+        channel_filter = query.channel_id or query.channel_name
         data = self.tooling.search_messages(search_terms, channel=channel_filter, limit=query.limit)
+        warnings = list(dict.fromkeys(data.get("warnings") or []))
         messages = self._filter_by_time(data["messages"], query.time_range)
 
         context = {
@@ -338,14 +391,19 @@ class DecisionExecutor(BaseSlackExecutor):
             "time_window_label": query.time_range.label(),
             "search_terms": search_terms,
         }
-        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
+        analysis = self._build_analysis(messages=messages, context=context, keywords=query.keywords)
+        if warnings:
+            prior = analysis.get("warnings") or []
+            analysis["warnings"] = list(dict.fromkeys(prior + warnings))
+        return analysis
 
 
 class TaskExecutor(BaseSlackExecutor):
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:
         search_terms = query.entity or " ".join(query.keywords) or query.raw
-        channel_filter = query.channel_name or query.channel_id
+        channel_filter = query.channel_id or query.channel_name
         data = self.tooling.search_messages(search_terms, channel=channel_filter, limit=query.limit)
+        warnings = list(dict.fromkeys(data.get("warnings") or []))
         messages = self._filter_by_time(data["messages"], query.time_range)
 
         context = {
@@ -358,14 +416,19 @@ class TaskExecutor(BaseSlackExecutor):
             "time_window_label": query.time_range.label(),
             "search_terms": search_terms,
         }
-        return self._build_analysis(messages=messages, context=context, keywords=query.keywords)
+        analysis = self._build_analysis(messages=messages, context=context, keywords=query.keywords)
+        if warnings:
+            prior = analysis.get("warnings") or []
+            analysis["warnings"] = list(dict.fromkeys(prior + warnings))
+        return analysis
 
 
 class TopicExecutor(BaseSlackExecutor):
     def execute(self, query: SlashSlackQuery) -> Dict[str, Any]:
         entity = query.entity or " ".join(query.keywords) or query.raw
-        channel_filter = query.channel_name or query.channel_id
+        channel_filter = query.channel_id or query.channel_name
         data = self.tooling.search_messages(entity, channel=channel_filter, limit=query.limit)
+        warnings = list(dict.fromkeys(data.get("warnings") or []))
         messages = self._filter_by_time(data["messages"], query.time_range)
 
         context = {
@@ -378,12 +441,32 @@ class TopicExecutor(BaseSlackExecutor):
             "time_window": query.time_range.to_dict(),
             "time_window_label": query.time_range.label(),
         }
-        return self._build_analysis(messages=messages, context=context, keywords=[entity] + query.keywords)
+        analysis = self._build_analysis(messages=messages, context=context, keywords=[entity] + query.keywords)
+        if warnings:
+            prior = analysis.get("warnings") or []
+            analysis["warnings"] = list(dict.fromkeys(prior + warnings))
+        return analysis
 
 
 # ----------------------------------------------------------------------
 # Orchestrator
 # ----------------------------------------------------------------------
+class SlashSlackMetadataSingleton:
+    """Provide a shared metadata service instance for slash flows."""
+
+    _instance: Optional[SlackMetadataService] = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get(cls, config: Optional[Dict[str, Any]] = None) -> SlackMetadataService:
+        with cls._lock:
+            if cls._instance is None:
+                if config is None:
+                    raise ValueError("Config required to initialize Slack metadata service.")
+                cls._instance = SlackMetadataService(config=config)
+            return cls._instance
+
+
 class SlashSlackOrchestrator:
     def __init__(
         self,
@@ -391,6 +474,7 @@ class SlashSlackOrchestrator:
         tooling: Optional[SlashSlackToolingAdapter] = None,
         llm_formatter: Optional[SlashSlackLLMFormatter] = None,
         reasoner: Optional[DocDriftReasoner] = None,
+        metadata_service: Optional[SlackMetadataService] = None,
     ):
         self.config = config or {}
         slack_cfg = self.config.get("slack", {})
@@ -406,7 +490,13 @@ class SlashSlackOrchestrator:
             or "synthetic_slack"
         )
 
-        self.tooling = tooling or SlashSlackToolingAdapter(config=self.config, workspace_url=workspace_url)
+        self.metadata_service = metadata_service or SlashSlackMetadataSingleton.get(config=self.config)
+        self.tooling = tooling or SlashSlackToolingAdapter(
+            config=self.config,
+            workspace_url=workspace_url,
+            metadata_service=self.metadata_service,
+        )
+        self.context_service = SlackContextService(config=self.config)
         self.parser = SlashSlackParser(default_channel_id=default_channel_id, default_time_window_hours=default_time_window_hours)
         self.executors: Dict[str, BaseSlackExecutor] = {
             "channel_recap": ChannelRecapExecutor(self.tooling, default_channel_id),
@@ -448,25 +538,54 @@ class SlashSlackOrchestrator:
                 except Exception as exc:
                     logger.warning("[SLASH SLACK] Unable to initialize doc drift reasoner: %s", exc)
                     self.reasoner = None
-
-    def handle(self, command: str, *, session_id: Optional[str] = None) -> Dict[str, Any]:
+        impact_cfg = self.config.get("impact") or {}
+        self.impact_auto_enabled = allows_auto_suggestions("api_params")
+        self.impact_endpoint_base = impact_cfg.get("endpoint_base") or os.getenv("IMPACT_ENDPOINT_BASE")
+    def handle(
+        self,
+        command: str,
+        *,
+        session_id: Optional[str] = None,
+        plan: Optional["SlashQueryPlan"] = None,
+    ) -> Dict[str, Any]:
         reasoner_payload = self._maybe_handle_with_reasoner(command, session_id=session_id)
         if reasoner_payload is not None:
+            if plan:
+                metadata = reasoner_payload.setdefault("metadata", {})
+                metadata["query_plan"] = plan.to_dict()
             return reasoner_payload
 
         try:
             query = self.parser.parse(command)
+            query = self._maybe_assign_channel_hint(query, command)
+            query = self._ensure_scope_metadata(query)
         except ValueError as exc:
             logger.warning("[SLASH SLACK] parse error: %s", exc)
             return {"error": True, "message": str(exc)}
+
+        if plan:
+            query = self._apply_plan_to_query(query, plan)
+            query = self._ensure_scope_metadata(query)
 
         executor = self.executors.get(query.mode)
         if not executor:
             return {"error": True, "message": f"Unsupported slack query type '{query.mode}'."}
 
         try:
-            analysis = executor.execute(query)
+            analysis = None
+            if plan and not (query.channel_id or query.channel_name):
+                analysis = self._build_semantic_analysis(plan, query)
+            if not analysis:
+                analysis = executor.execute(query)
             analysis = self._apply_empty_channel_fallback(query, executor, analysis)
+            if plan and not (analysis.get("messages") or query.thread_ts):
+                semantic_fallback = self._build_semantic_analysis(plan, query)
+                if semantic_fallback:
+                    prior_warnings = list(dict.fromkeys(analysis.get("warnings") or []))
+                    if prior_warnings:
+                        combined = list(dict.fromkeys(prior_warnings + (semantic_fallback.get("warnings") or [])))
+                        semantic_fallback["warnings"] = combined
+                    analysis = semantic_fallback
         except SlackAPIError as exc:
             logger.error("[SLASH SLACK] Slack API error: %s", exc)
             return {"error": True, "message": str(exc)}
@@ -475,6 +594,26 @@ class SlashSlackOrchestrator:
         except Exception as exc:
             logger.exception("[SLASH SLACK] unexpected error")
             return {"error": True, "message": f"Unexpected Slack error: {exc}"}
+
+        context = analysis.setdefault("context", {})
+        if query.channel_scope_labels:
+            labels = context.setdefault("channel_scope_labels", [])
+            for label in query.channel_scope_labels:
+                if label not in labels:
+                    labels.append(label)
+        if query.channel_scope_ids:
+            context.setdefault("channel_scope_ids", list(dict.fromkeys(query.channel_scope_ids)))
+        if query.unresolved_channel_tokens:
+            context.setdefault("channel_resolution_warnings", list(dict.fromkeys(query.unresolved_channel_tokens)))
+        channel_label = context.get("channel_label")
+        if channel_label:
+            labels = context.setdefault("channel_scope_labels", [])
+            if not labels:
+                labels.append(channel_label)
+            elif len(labels) == 1:
+                labels[0] = channel_label
+            elif channel_label not in labels:
+                labels.append(channel_label)
 
         llm_payload: Optional[Dict[str, Any]] = None
         llm_error: Optional[str] = None
@@ -485,6 +624,7 @@ class SlashSlackOrchestrator:
                     context=analysis.get("context", {}),
                     sections=analysis.get("sections", {}),
                     messages=analysis.get("messages", []),
+                    graph=analysis.get("graph"),
                 )
             except Exception as exc:
                 logger.warning("[SLASH SLACK] LLM formatter raised error: %s", exc)
@@ -499,9 +639,23 @@ class SlashSlackOrchestrator:
             llm_payload=llm_payload,
             llm_error=llm_error,
         )
+        if plan:
+            metadata = final_result.setdefault("metadata", {})
+            metadata["query_plan"] = plan.to_dict()
+
+        tooling_warnings: List[str] = []
+        if hasattr(self.tooling, "consume_warnings"):
+            tooling_warnings = list(dict.fromkeys(self.tooling.consume_warnings() or []))
+        if tooling_warnings:
+            metadata = final_result.setdefault("metadata", {})
+            existing = metadata.get("retrieval_warnings") or []
+            metadata["retrieval_warnings"] = list(dict.fromkeys(existing + tooling_warnings))
 
         msg_count = len(analysis.get("messages") or [])
         context = analysis.get("context") or {}
+        if plan:
+            self._attach_plan_context(context, plan)
+            analysis["context"] = context
         logger.info(
             "[SLASH SLACK] Completed %s for channel=%s (%s messages)",
             query.mode,
@@ -513,6 +667,9 @@ class SlashSlackOrchestrator:
         metadata = final_result.get("metadata", {})
         if self.graph_emit_enabled and graph_payload:
             self._emit_graph_payload(graph_payload, metadata)
+
+        if self.impact_auto_enabled:
+            self._enqueue_slack_impact(command, analysis, final_result)
 
         return final_result
 
@@ -658,17 +815,28 @@ class SlashSlackOrchestrator:
                 channel=channel_id,
                 limit=self.empty_channel_search_limit,
             )
+            warnings = list(dict.fromkeys(search_data.get("warnings") or []))
+            if warnings:
+                analysis.setdefault("warnings", []).extend(warnings)
+                context = analysis.setdefault("context", {})
+                fallback_meta = context.setdefault("fallback", {})
+                fallback_meta.setdefault("warnings", [])
+                fallback_meta["warnings"].extend(warnings)
             search_messages = search_data.get("messages", [])
             if search_messages:
                 context = analysis.get("context") or {}
                 fallback_meta = context.setdefault("fallback", {})
                 fallback_meta["search_terms"] = search_terms
                 fallback_meta["search_matches"] = len(search_messages)
-                return executor._build_analysis(
+                new_analysis = executor._build_analysis(
                     messages=search_messages,
                     context=context,
                     keywords=query.keywords,
                 )
+                combined_warnings = list(dict.fromkeys((analysis.get("warnings") or []) + warnings))
+                if combined_warnings:
+                    new_analysis["warnings"] = combined_warnings
+                return new_analysis
         except Exception as exc:
             logger.warning("[SLASH SLACK] Search fallback failed: %s", exc)
 
@@ -800,6 +968,100 @@ class SlashSlackOrchestrator:
         except Exception as exc:
             logger.warning("[SLASH SLACK] Failed to persist graph payload: %s", exc)
 
+    def _enqueue_slack_impact(
+        self,
+        command: str,
+        analysis: Dict[str, Any],
+        final_result: Dict[str, Any],
+    ) -> None:
+        if not self.impact_endpoint_base:
+            return
+        payload = self._build_slack_impact_payload(command, analysis, final_result)
+        if not payload:
+            return
+        logger.info(
+            "[SLASH SLACK] Enqueuing auto-impact slack-complaint for channel=%s thread=%s",
+            payload.get("channel"),
+            payload.get("timestamp"),
+        )
+        thread = threading.Thread(
+            target=self._post_slack_impact_payload,
+            args=(payload,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _build_slack_impact_payload(
+        self,
+        command: str,
+        analysis: Dict[str, Any],
+        final_result: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        context = analysis.get("context") or {}
+        messages = analysis.get("messages") or []
+        timestamp = None
+        if messages:
+            timestamp = messages[-1].get("ts") or messages[-1].get("timestamp")
+        if not timestamp:
+            timestamp = datetime.now(tz=timezone.utc).isoformat()
+
+        channel = context.get("channel_label") or context.get("channel_name") or context.get("channel_id")
+        if not channel:
+            return None
+
+        message_text = final_result.get("message") or command.strip()
+        if not message_text:
+            return None
+
+        component_ids: List[str] = []
+        api_ids: List[str] = []
+        for entity in final_result.get("entities") or []:
+            entity_type = (entity.get("type") or "").lower()
+            if entity_type == "component":
+                comp_values = entity.get("components") or []
+                if not comp_values and entity.get("name"):
+                    comp_values = [entity["name"]]
+                component_ids.extend(comp_values)
+            if entity_type == "api":
+                api_values = entity.get("apis") or []
+                if not api_values and entity.get("name"):
+                    api_values = [entity["name"]]
+                api_ids.extend(api_values)
+
+        component_ids = sorted({value for value in component_ids if value})
+        api_ids = sorted({value for value in api_ids if value})
+
+        context_payload = {
+            "component_ids": component_ids or None,
+            "api_ids": api_ids or None,
+        }
+        cleaned_context = {key: value for key, value in context_payload.items() if value}
+        payload: Dict[str, Any] = {
+            "channel": channel,
+            "message": message_text,
+            "timestamp": str(timestamp),
+            "context": cleaned_context,
+        }
+        return payload
+
+    def _post_slack_impact_payload(self, payload: Dict[str, Any]) -> None:
+        endpoint = f"{self.impact_endpoint_base.rstrip('/')}/impact/slack-complaint"
+        try:
+            response = httpx.post(endpoint, json=payload, timeout=2.5)
+            if response.status_code >= 400:
+                logger.debug(
+                    "[SLASH SLACK] Auto impact request failed (status=%s): %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+            else:
+                logger.info(
+                    "[SLASH SLACK] Auto-impact slack-complaint recorded for channel=%s",
+                    payload.get("channel"),
+                )
+        except Exception as exc:
+            logger.debug("[SLASH SLACK] Auto impact request error: %s", exc)
+
     @staticmethod
     def _serialize_query(query: SlashSlackQuery) -> Dict[str, Any]:
         return {
@@ -831,6 +1093,9 @@ class SlashSlackOrchestrator:
         llm_graph = self._graph_from_llm_payload(llm_payload, analysis.get("context", {}))
         final_graph = self._merge_graphs(final_graph, llm_graph)
 
+        messages = analysis.get("messages") or []
+        sources = self._build_sources(messages, query)
+
         result = {
             "type": "slash_slack_summary",
             "message": final_summary,
@@ -842,7 +1107,13 @@ class SlashSlackOrchestrator:
             "doc_drift": (llm_payload or {}).get("doc_drift"),
             "evidence": (llm_payload or {}).get("evidence"),
             "llm_payload": llm_payload,
+            "sources": sources,
         }
+        result["key_decisions"] = (llm_payload or {}).get("key_decisions") or []
+        result["next_actions"] = (llm_payload or {}).get("next_actions") or []
+        result["open_questions"] = (llm_payload or {}).get("open_questions") or []
+        result["references"] = (llm_payload or {}).get("references") or []
+        result["debug_metadata"] = (llm_payload or {}).get("debug_metadata") or {}
 
         metadata = result.setdefault("metadata", {})
         metadata.update({
@@ -851,17 +1122,36 @@ class SlashSlackOrchestrator:
             "session_id": session_id,
             "llm_used": bool(llm_payload),
             "llm_error": llm_error,
-            "message_count": len(analysis.get("messages") or []),
+            "message_count": len(messages),
+            "source_count": len(sources),
         })
+        warnings = list(dict.fromkeys(analysis.get("warnings") or []))
+        if warnings:
+            metadata["retrieval_warnings"] = warnings
         context = analysis.get("context") or {}
         channel_id = context.get("channel_id") or query.channel_id
         if channel_id:
             metadata["channel_id"] = channel_id
         if context.get("channel_name"):
             metadata["channel_name"] = context.get("channel_name")
+        scope_labels = list(dict.fromkeys(query.channel_scope_labels))
+        channel_label = context.get("channel_label")
+        if channel_label:
+            if not scope_labels:
+                scope_labels = [channel_label]
+            elif len(scope_labels) == 1:
+                scope_labels = [channel_label]
+            elif channel_label not in scope_labels:
+                scope_labels.append(channel_label)
+        if scope_labels:
+            metadata["channel_scope"] = scope_labels
+        if query.unresolved_channel_tokens:
+            metadata["channel_resolution_warnings"] = list(dict.fromkeys(query.unresolved_channel_tokens))
 
         if not result.get("message"):
             result["message"] = fallback_summary
+        if not messages:
+            result["message"] = self._empty_summary_text(query)
 
         self._maybe_attach_debug_block(result, analysis, query)
         return result
@@ -878,7 +1168,59 @@ class SlashSlackOrchestrator:
         if not debug_block:
             return
         result["debug"] = debug_block
-        result["message"] = self._append_json_block(result.get("message"), debug_block)
+        result.setdefault("metadata", {})["debug_block"] = debug_block
+
+    def _build_sources(self, messages: List[Dict[str, Any]], query: SlashSlackQuery) -> List[Dict[str, Any]]:
+        if not messages:
+            return []
+        allowed_channel_ids = {cid.upper() for cid in query.channel_scope_ids or [] if cid}
+        allowed_channel_names = {
+            label.lstrip("#").lower() for label in query.channel_scope_labels or [] if label
+        }
+        sources: List[Dict[str, Any]] = []
+        for idx, message in enumerate(messages):
+            channel_id = message.get("channel_id") or message.get("channel")
+            channel_name = message.get("channel_name")
+            name_token = (channel_name or "").lstrip("#").lower()
+            matches_id = not allowed_channel_ids or (channel_id and channel_id.upper() in allowed_channel_ids)
+            matches_name = not allowed_channel_names or (name_token and name_token in allowed_channel_names)
+            if not matches_id and not matches_name:
+                continue
+            text = (
+                message.get("text")
+                or message.get("message")
+                or message.get("summary")
+                or message.get("snippet")
+                or ""
+            )
+            snippet = self._clean_snippet(text)
+            if not snippet:
+                continue
+            iso_time = message.get("iso_time") or self._ts_to_iso(message.get("ts"))
+            channel_label = self._format_channel_label(channel_name, channel_id)
+            source_entry = {
+                "id": message.get("id") or message.get("ts") or f"source-{idx}",
+                "channel": channel_label,
+                "channel_id": channel_id,
+                "author": message.get("user_name") or message.get("user") or message.get("user_id"),
+                "ts": message.get("ts"),
+                "iso_time": iso_time,
+                "permalink": message.get("permalink"),
+                "deep_link": message.get("deep_link"),
+                "snippet": snippet,
+                "rank": idx + 1,
+                "thread_ts": message.get("thread_ts"),
+            }
+            sources.append(source_entry)
+            if len(sources) >= 12:
+                break
+        return sources
+
+    def _empty_summary_text(self, query: SlashSlackQuery) -> str:
+        if query.channel_scope_labels:
+            scope = ", ".join(query.channel_scope_labels)
+            return f"I couldn't find recent Slack messages in {scope} for that request."
+        return "I couldn't find relevant Slack messages in Slack for that request."
 
     def _build_debug_block(self, analysis: Dict[str, Any], query: SlashSlackQuery) -> Optional[Dict[str, Any]]:
         messages = analysis.get("messages") or []
@@ -916,21 +1258,29 @@ class SlashSlackOrchestrator:
         }
 
     @staticmethod
-    def _append_json_block(message: Optional[str], payload: Dict[str, Any]) -> str:
-        block_text = json.dumps(payload, ensure_ascii=False)
-        formatted = f"```json\n{block_text}\n```"
-        if message:
-            if block_text in message:
-                return message
-            return f"{message.rstrip()}\n\n{formatted}"
-        return formatted
-
-    @staticmethod
     def _clean_snippet(text: str, *, max_length: int = 160) -> str:
         snippet = " ".join(text.strip().split())
         if len(snippet) <= max_length:
             return snippet
         return snippet[: max_length - 3].rstrip() + "..."
+
+    @staticmethod
+    def _format_channel_label(channel_name: Optional[str], channel_id: Optional[str]) -> Optional[str]:
+        if channel_name:
+            cleaned = channel_name.lstrip("#")
+            return f"#{cleaned}" if cleaned else channel_name
+        if channel_id:
+            return f"#{channel_id}"
+        return None
+
+    @staticmethod
+    def _ts_to_iso(ts: Optional[str]) -> Optional[str]:
+        if not ts:
+            return None
+        try:
+            return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+        except (ValueError, OSError):
+            return None
 
     def _graph_from_llm_payload(
         self,
@@ -970,6 +1320,154 @@ class SlashSlackOrchestrator:
 
         return {"nodes": nodes, "edges": edges}
 
+    def _maybe_assign_channel_hint(self, query: SlashSlackQuery, command: str) -> SlashSlackQuery:
+        if query.channel_id:
+            return query
+        hints = []
+        try:
+            hints = self.parser.extract_channel_hints(command)
+        except AttributeError:
+            return query
+        for hint in hints:
+            channel_id = self.tooling.resolve_channel_id(hint)
+            if channel_id:
+                updated = replace(query, channel_id=channel_id, channel_name=hint)
+                return self._record_scope(updated, channel_id, hint)
+        return query
+
+    def _apply_plan_to_query(self, query: SlashSlackQuery, plan: "SlashQueryPlan") -> SlashSlackQuery:
+        updated = query
+        time_range = self._time_range_from_plan(plan)
+        if time_range:
+            updated = replace(updated, time_range=time_range)
+        scope_ids = list(updated.channel_scope_ids)
+        scope_labels = list(updated.channel_scope_labels)
+        unresolved_tokens = list(updated.unresolved_channel_tokens)
+        if plan.targets:
+            for target in plan.targets:
+                if target.target_type != "slack_channel":
+                    continue
+                identifier = target.metadata.get("channel_id") if target.metadata else None
+                if not identifier:
+                    identifier = target.identifier or target.label or target.raw
+                if not identifier:
+                    continue
+                channel_id = self.tooling.resolve_channel_id(identifier)
+                normalized_label = self._normalize_scope_label(target.label or identifier)
+                if channel_id:
+                    if channel_id not in scope_ids:
+                        scope_ids.append(channel_id)
+                    if normalized_label and normalized_label not in scope_labels:
+                        scope_labels.append(normalized_label)
+                    if not updated.channel_id:
+                        updated = replace(
+                            updated,
+                            channel_id=channel_id,
+                            channel_name=normalized_label.lstrip("#") if normalized_label else target.label,
+                        )
+                else:
+                    unresolved_tokens.append(target.raw or identifier)
+        if scope_ids or scope_labels or unresolved_tokens:
+            updated = replace(
+                updated,
+                channel_scope_ids=scope_ids,
+                channel_scope_labels=scope_labels,
+                unresolved_channel_tokens=unresolved_tokens,
+            )
+        plan_keywords = list(dict.fromkeys(plan.keywords))
+        if plan_keywords:
+            keywords = list(dict.fromkeys(updated.keywords + plan_keywords))
+            updated = replace(updated, keywords=keywords)
+        return updated
+
+    def _record_scope(
+        self,
+        query: SlashSlackQuery,
+        channel_id: Optional[str],
+        channel_label: Optional[str],
+    ) -> SlashSlackQuery:
+        scope_ids = list(query.channel_scope_ids)
+        scope_labels = list(query.channel_scope_labels)
+        normalized_label = self._normalize_scope_label(channel_label or channel_id)
+        if channel_id and channel_id not in scope_ids:
+            scope_ids.append(channel_id)
+        if normalized_label and normalized_label not in scope_labels:
+            scope_labels.append(normalized_label)
+        if scope_ids == query.channel_scope_ids and scope_labels == query.channel_scope_labels:
+            return query
+        return replace(query, channel_scope_ids=scope_ids, channel_scope_labels=scope_labels)
+
+    def _ensure_scope_metadata(self, query: SlashSlackQuery) -> SlashSlackQuery:
+        updated = query
+        if not query.channel_id and query.channel_name:
+            resolved = self.tooling.resolve_channel_id(query.channel_name)
+            if resolved:
+                channel_display = query.channel_name
+                if self.metadata_service:
+                    channel_meta = self.metadata_service.get_channel(resolved)
+                    if channel_meta and channel_meta.name:
+                        channel_display = channel_meta.name
+                updated = replace(updated, channel_id=resolved, channel_name=channel_display)
+        if updated.channel_id and self.metadata_service:
+            channel_meta = self.metadata_service.get_channel(updated.channel_id)
+            if channel_meta and channel_meta.name and channel_meta.name != updated.channel_name:
+                updated = replace(updated, channel_name=channel_meta.name)
+        if not (updated.channel_id or updated.channel_name):
+            return updated
+        return self._record_scope(updated, updated.channel_id, updated.channel_name)
+
+    @staticmethod
+    def _normalize_scope_label(label: Optional[str]) -> Optional[str]:
+        if not label:
+            return None
+        cleaned = label.strip()
+        if not cleaned:
+            return None
+        if cleaned.startswith("#"):
+            cleaned = cleaned.lstrip("#")
+        return f"#{cleaned}" if cleaned else None
+
+    def _time_range_from_plan(self, plan: "SlashQueryPlan") -> Optional[TimeRange]:
+        scope = plan.time_scope
+        if not scope:
+            return None
+        return TimeRange(start=scope.start, end=scope.end)
+
+    def _build_semantic_analysis(
+        self,
+        plan: "SlashQueryPlan",
+        query: SlashSlackQuery,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.context_service:
+            return None
+        channel_names = [label.lstrip("#") for label in query.channel_scope_labels or []]
+        messages = self.context_service.search(
+            plan,
+            limit=query.limit,
+            channel_ids=query.channel_scope_ids or None,
+            channel_names=channel_names or None,
+        )
+        if not messages:
+            return None
+        context = {
+            "mode": "semantic_search",
+            "plan_targets": [target.to_dict() for target in plan.targets],
+            "time_window": plan.time_scope.to_dict() if plan.time_scope else None,
+            "conversation_id": self._conversation_id("semantic", plan.raw),
+            "vector_source": "qdrant",
+        }
+        if query.channel_scope_labels:
+            context["channel_scope_labels"] = list(dict.fromkeys(query.channel_scope_labels))
+        return self.executors["channel_recap"]._build_analysis(
+            messages=messages,
+            context=context,
+            keywords=query.keywords,
+        )
+
+    @staticmethod
+    def _attach_plan_context(context: Dict[str, Any], plan: "SlashQueryPlan") -> None:
+        context.setdefault("query_plan", plan.to_dict())
+
     @staticmethod
     def _merge_graphs(
         base: Optional[Dict[str, Any]],
@@ -988,5 +1486,12 @@ class SlashSlackOrchestrator:
         combined = "|".join([part for part in parts if part])
         if not combined:
             combined = f"slash-slack-{datetime.now(tz=timezone.utc).isoformat()}"
+        return hashlib.sha1(combined.encode("utf-8")).hexdigest()[:20]
+
+    @staticmethod
+    def _conversation_id(*parts: Optional[str]) -> str:
+        combined = "|".join([part for part in parts if part])
+        if not combined:
+            combined = "slash-slack"
         return hashlib.sha1(combined.encode("utf-8")).hexdigest()[:20]
 

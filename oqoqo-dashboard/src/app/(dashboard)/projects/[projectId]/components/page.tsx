@@ -6,6 +6,7 @@ import { Activity, Filter } from "lucide-react";
 
 import { ComponentGrid } from "@/components/activity/component-grid";
 import { LiveRecency } from "@/components/live/live-recency";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,9 +54,12 @@ export default function ComponentsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3">
         <p className="text-xs font-semibold uppercase tracking-[0.5em] text-muted-foreground">Activity graph</p>
-        <h1 className="text-3xl font-semibold text-foreground">Component signals</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-semibold text-foreground">Component signals</h1>
+          <ModeBadge mode={project.mode} />
+        </div>
         <p className="text-sm text-muted-foreground">
-          Search components to compare activity, drift, and dissatisfaction signals before handing work to Cerebros.
+          Option 1 lens: compare drift, activity, and dissatisfaction to decide where documentation is at risk.
         </p>
         <LiveRecency prefix="Live data" />
       </div>

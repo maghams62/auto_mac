@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, KeyboardEvent, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { getApiBaseUrl } from "@/lib/apiConfig";
+import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
 import { overlayFade, modalSlideDown } from "@/lib/motion";
 import { duration, easing } from "@/lib/motion";
 import logger from "@/lib/logger";
-import { isElectron, hideWindow, revealInFinder, lockWindow, unlockWindow, openExpandedWindow } from "@/lib/electron";
+import { isElectron, hideWindow, revealInFinder, lockWindow, unlockWindow, openExpandedWindow, onWindowShown } from "@/lib/electron";
 import SpotifyMiniPlayer from "@/components/SpotifyMiniPlayer";
 import RecordingIndicator from "@/components/RecordingIndicator";
 import TypingIndicator from "@/components/TypingIndicator";
@@ -19,10 +19,13 @@ const KeyboardShortcutsOverlay = lazy(() => import("@/components/KeyboardShortcu
 import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
 import { useWebSocket, Message, PlanState } from "@/lib/useWebSocket";
 import { useCommandRouter, CommandRouterContext } from "@/lib/useCommandRouter";
+import { useSharedSessionId } from "@/lib/useSharedSessionId";
 import { isCalculation, evaluateCalculation, getRawResult } from "@/lib/useCalculator";
 import { spotlightUi, clampMiniConversationDepth } from "@/config/ui";
-import { getPaletteCommands, filterSlashCommands } from "@/lib/slashCommands";
+import { getPaletteCommands, filterSlashCommands, getSlashQueryMetadata, canonicalizeSlashCommandId } from "@/lib/slashCommands";
 import { useGlobalEventBus } from "@/lib/telemetry";
+import { useSlashMetadataAutocomplete, AutocompleteSuggestion, AutocompleteRequest } from "@/lib/useSlashMetadataAutocomplete";
+import { detectSlackContext, detectGitContext, detectYouTubeContext, replaceRange, getSuggestionToken, getSuggestionDescriptors } from "@/lib/slashMetadata";
 
 type HintPill = {
   id: string;
@@ -53,6 +56,9 @@ interface SearchResult {
   breadcrumb: string;
   thumbnail_url?: string;
   preview_url?: string;
+  folder_label?: string;
+  indexed_at?: string;
+  ingest_scope?: string;
   metadata?: {
     width?: number;
     height?: number;
@@ -128,6 +134,7 @@ export default function CommandPalette({
   mode = "overlay"
 }: CommandPaletteProps) {
   const baseUrl = getApiBaseUrl();
+  const sessionId = useSharedSessionId();
   const inputRef = useRef<HTMLInputElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
@@ -145,9 +152,11 @@ export default function CommandPalette({
   const [viewState, setViewState] = useState<"search" | "command_input">("search");
   const [selectedCommand, setSelectedCommand] = useState<Command | null>(null);
   const [commandArg, setCommandArg] = useState("");
+  const [commandArgCaret, setCommandArgCaret] = useState<number | null>(null);
   const trimmedQuery = query.trim();
   const slashModeActive = trimmedQuery.startsWith('/');
-  const slashQuery = slashModeActive ? trimmedQuery.slice(1).toLowerCase() : '';
+  const isFileCommand = /^\/(file|folder|files)\b/i.test(trimmedQuery);
+  const slashQueryMeta = useMemo(() => getSlashQueryMetadata(trimmedQuery), [trimmedQuery]);
 
   useEffect(() => {
     if (trimmedQuery === "/help") {
@@ -167,12 +176,104 @@ export default function CommandPalette({
     return map;
   }, [commands]);
 
+  const activeCommandCaret = commandArgCaret ?? commandArg.length;
+  const commandMetadataContext = useMemo(() => {
+    if (!selectedCommand) {
+      return null;
+    }
+    if (selectedCommand.id === "slack") {
+      return detectSlackContext(commandArg, activeCommandCaret);
+    }
+    if (selectedCommand.id === "git") {
+      return detectGitContext(commandArg, activeCommandCaret);
+    }
+    if (selectedCommand.id === "youtube") {
+      return detectYouTubeContext(commandArg, activeCommandCaret);
+    }
+    return null;
+  }, [selectedCommand, commandArg, activeCommandCaret]);
+
+  const commandMetadataRequest = useMemo<AutocompleteRequest | null>(() => {
+    if (!commandMetadataContext) {
+      return null;
+    }
+    switch (commandMetadataContext.kind) {
+      case "slack-channel":
+      case "slack-user":
+        return {
+          kind: commandMetadataContext.kind,
+          query: commandMetadataContext.query,
+        };
+      case "git-repo":
+        return {
+          kind: "git-repo",
+          query: commandMetadataContext.query,
+        };
+      case "git-branch":
+        if (!commandMetadataContext.repoId) {
+          return null;
+        }
+        return {
+          kind: "git-branch",
+          query: commandMetadataContext.query,
+          repoId: commandMetadataContext.repoId,
+        };
+      case "youtube-video":
+        return {
+          kind: "youtube-video",
+          query: commandMetadataContext.query,
+        };
+      default:
+        return null;
+    }
+  }, [commandMetadataContext]);
+
+  const {
+    suggestions: commandMetadataSuggestions,
+    loading: commandMetadataLoading,
+    error: commandMetadataError,
+  } = useSlashMetadataAutocomplete(commandMetadataRequest, {
+    enabled: Boolean(commandMetadataRequest),
+  });
+  const [commandMetadataIndex, setCommandMetadataIndex] = useState(0);
+  useEffect(() => {
+    setCommandMetadataIndex(0);
+  }, [commandMetadataSuggestions.length, commandMetadataContext?.kind]);
+
+  const showCommandMetadata =
+    Boolean(commandMetadataContext) &&
+    (commandMetadataSuggestions.length > 0 ||
+      commandMetadataLoading ||
+      Boolean(commandMetadataError));
+
+  const handleCommandMetadataSelect = useCallback(
+    (suggestion: AutocompleteSuggestion) => {
+      if (!commandMetadataContext) {
+        return;
+      }
+      const token = getSuggestionToken(suggestion);
+      const next = replaceRange(commandArg, commandMetadataContext.range, token, {
+        appendSpace: true,
+      });
+      setCommandArg(next.value);
+      setCommandArgCaret(next.caret);
+      requestAnimationFrame(() => {
+        const inputEl = commandInputRef.current;
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.setSelectionRange(next.caret, next.caret);
+        }
+      });
+    },
+    [commandMetadataContext, commandArg],
+  );
+
   const canonicalSlashMatches = useMemo(() => {
-    if (!slashModeActive) {
+    if (!slashModeActive || !slashQueryMeta.commandToken) {
       return [];
     }
-    return filterSlashCommands(slashQuery, "all");
-  }, [slashModeActive, slashQuery]);
+    return filterSlashCommands(slashQueryMeta.commandToken, "all");
+  }, [slashModeActive, slashQueryMeta.commandToken]);
 
   const filteredSlashCommands = useMemo(() => {
     if (!slashModeActive) {
@@ -194,7 +295,7 @@ export default function CommandPalette({
       .filter(([id]) => !seen.has(id))
       .map(([, cmd]) => cmd)
       .filter((cmd) => {
-        if (!slashQuery) return true;
+        if (!slashQueryMeta.tokens.length) return true;
         const haystack = [
           cmd.id,
           cmd.title,
@@ -203,11 +304,11 @@ export default function CommandPalette({
         ]
           .join(" ")
           .toLowerCase();
-        return haystack.includes(slashQuery);
+        return slashQueryMeta.tokens.some((token) => haystack.includes(token));
       });
 
     return [...ordered, ...extras];
-  }, [slashModeActive, canonicalSlashMatches, slashCommandMap, slashQuery]);
+  }, [slashModeActive, canonicalSlashMatches, slashCommandMap, slashQueryMeta]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -298,6 +399,18 @@ export default function CommandPalette({
     await transcribeAudio(audioBlob);
   }, [transcribeAudio]);
 
+  const recordCommandCaret = useCallback(
+    (target: HTMLInputElement | null, fallbackValue?: string) => {
+      if (!target) {
+        const fallback = fallbackValue ?? commandArg;
+        setCommandArgCaret(fallback.length);
+        return;
+      }
+      setCommandArgCaret(target.selectionStart ?? target.value.length);
+    },
+    [commandArg],
+  );
+
   // Voice recorder hook
   const { isRecording, startRecording, stopRecording, error: voiceRecorderError } = useVoiceRecorder({
     onAutoStop: handleAutoStopTranscription,
@@ -346,7 +459,14 @@ export default function CommandPalette({
   }, [isRecording, stopRecording, transcribeAudio]);
 
   // WebSocket connection for chat responses (only in launcher mode)
-  const wsUrl = mode === "launcher" ? `${baseUrl.replace('http', 'ws')}/ws/chat` : "";
+  const wsUrl = useMemo(() => {
+    if (mode !== "launcher" || !sessionId) {
+      return "";
+    }
+    const resolved = new URL(getWebSocketUrl("/ws/chat"));
+    resolved.searchParams.set("session_id", sessionId);
+    return resolved.toString();
+  }, [mode, sessionId]);
   const { 
     messages: chatMessages, 
     sendMessage: wsSendMessage, 
@@ -359,14 +479,13 @@ export default function CommandPalette({
 
   // State to track if history has been loaded for this session
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const sessionIdRef = useRef<string | null>(null);
   const pendingSubmissionRef = useRef<string | null>(null);
 
   // Load conversation history on WebSocket connection
   const loadConversationHistory = useCallback(async () => {
     // CRITICAL: Don't block on historyLoaded - allow window to render
     // History loading should never prevent the window from displaying
-    if (!wsConnected || mode !== "launcher") {
+    if (!wsConnected || mode !== "launcher" || !sessionId) {
       return;
     }
 
@@ -376,13 +495,6 @@ export default function CommandPalette({
     }
 
     try {
-      // Extract session ID from WebSocket URL query params
-      const urlObj = new URL(wsUrl, window.location.origin);
-      const sessionId = urlObj.searchParams.get('session_id') || 'default';
-
-      // Store session ID for reference
-      sessionIdRef.current = sessionId;
-
       logger.info('[HISTORY] Loading conversation history', { sessionId });
 
       const response = await fetch(`${baseUrl}/api/conversation/history/${sessionId}`);
@@ -408,7 +520,7 @@ export default function CommandPalette({
       logger.error('[HISTORY] Failed to load conversation history', { error });
       setHistoryLoaded(true); // Mark as loaded to prevent infinite retries
     }
-  }, [wsConnected, historyLoaded, mode, wsUrl, baseUrl]);
+  }, [wsConnected, historyLoaded, mode, baseUrl, sessionId]);
 
   // Load history when WebSocket connects
   useEffect(() => {
@@ -435,6 +547,17 @@ export default function CommandPalette({
   const [currentResponse, setCurrentResponse] = useState<string>("");
   const [submittedQuery, setSubmittedQuery] = useState<string>(""); // Track what was submitted
   const [queuedSubmission, setQueuedSubmission] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isElectron()) {
+      return;
+    }
+    const handleWindowShown = () => {
+      setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
+      setSubmittedQuery("");
+      setCurrentResponse("");
+    };
+    onWindowShown(handleWindowShown);
+  }, []);
   const [isWaitingForReconnect, setIsWaitingForReconnect] = useState(false);
   const [connectionBanner, setConnectionBanner] = useState<{
     level: "info" | "warning" | "error";
@@ -723,7 +846,6 @@ export default function CommandPalette({
       setIsWaitingForReconnect(true);
       setSubmittedQuery(submission);
       setCurrentResponse("");
-      unlockWindow();
       return;
     }
     
@@ -797,6 +919,7 @@ export default function CommandPalette({
     if (command.handler_type === "slash_command" && command.command_type === "with_input" && argument === undefined) {
       setSelectedCommand(command);
       setCommandArg("");
+      setCommandArgCaret(null);
       setViewState("command_input");
       // Focus the command input after a short delay
       setTimeout(() => {
@@ -829,13 +952,15 @@ export default function CommandPalette({
 
     // Handle slash commands - send via WebSocket for orchestration visibility
       if (command.handler_type === "slash_command") {
+        const canonicalCommandId = canonicalizeSlashCommandId(command.id);
         const slashMessage = argument 
-          ? `/${command.id} ${argument}`
-          : `/${command.id}`;
+          ? `/${canonicalCommandId} ${argument}`
+          : `/${canonicalCommandId}`;
         
-      logger.info("[LAUNCHER] Executing slash command via WebSocket", { command: command.id, message: slashMessage });
+      logger.info("[LAUNCHER] Executing slash command via WebSocket", { command: canonicalCommandId, alias: command.id, message: slashMessage });
+      const telemetryCommand = canonicalizeSlashCommandId(command.telemetryKey || command.id);
       eventBus?.emit("slash-command-used", {
-        command: command.telemetryKey || command.id,
+        command: telemetryCommand,
         invocation_source: "launcher_palette",
         query: argument || ""
       });
@@ -847,6 +972,8 @@ export default function CommandPalette({
         setViewState("search");
         setSelectedCommand(null);
         setCommandArg("");
+        setCommandArgCaret(null);
+        setCommandArgCaret(null);
         return;
       }
 
@@ -879,6 +1006,7 @@ export default function CommandPalette({
         setViewState("search");
         setSelectedCommand(null);
         setCommandArg("");
+        setCommandArgCaret(null);
         // Refocus search input
         setTimeout(() => {
           inputRef.current?.focus();
@@ -894,7 +1022,8 @@ export default function CommandPalette({
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const performSearch = useCallback(async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
+    const trimmedSearch = searchQuery.trim();
+    if (!trimmedSearch) {
       setResults([]);
       setIsLoading(false);
       return;
@@ -902,16 +1031,32 @@ export default function CommandPalette({
 
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `${baseUrl}/api/universal-search?q=${encodeURIComponent(searchQuery)}&limit=10`
-      );
+      const searchScope = isFileCommand ? "files" : mode;
+      const intent = slashModeActive ? "slash" : "palette";
+      const params = new URLSearchParams({
+        q: trimmedSearch,
+        limit: "10",
+        scope: searchScope,
+        intent,
+      });
+
+      logger.info("[FILES] Performing semantic search", {
+        scope: searchScope,
+        intent,
+      });
+
+      const response = await fetch(`${baseUrl}/api/universal-search?${params.toString()}`);
 
       if (!response.ok) {
         throw new Error(`Search failed: ${response.status}`);
       }
 
       const data = await response.json();
-      setResults(data.results || []);
+      const normalizedResults: SearchResult[] = (data.results || []).map((result: SearchResult) => ({
+        ...result,
+      }));
+
+      setResults(normalizedResults);
       setSelectedIndex(0);
     } catch (error) {
       console.error('Search error:', error);
@@ -919,9 +1064,7 @@ export default function CommandPalette({
     } finally {
       setIsLoading(false);
     }
-  }, [baseUrl]);
-
-  const isFileCommand = /^\/(file|folder|files)\b/i.test(trimmedQuery);
+  }, [baseUrl, isFileCommand, mode, slashModeActive]);
 
   // Debounced search effect - only trigger for file commands or overlay mode
   useEffect(() => {
@@ -1215,7 +1358,10 @@ export default function CommandPalette({
           {slackTemplates.map((template) => (
             <button
               key={template.label}
-              onClick={() => setCommandArg(template.value)}
+              onClick={() => {
+                setCommandArg(template.value);
+                setCommandArgCaret(template.value.length);
+              }}
               className="rounded-full border border-glass/40 px-3 py-1 text-xs font-medium text-text-muted hover:border-accent-primary/40 hover:text-accent-primary"
               type="button"
             >
@@ -1257,6 +1403,7 @@ export default function CommandPalette({
                       setViewState("search");
                       setSelectedCommand(null);
                       setCommandArg("");
+                      setCommandArgCaret(null);
                       setTimeout(() => inputRef.current?.focus(), 50);
                     }}
                     className="p-1.5 rounded-lg hover:bg-glass-hover transition-colors text-text-muted hover:text-text-primary"
@@ -1277,17 +1424,98 @@ export default function CommandPalette({
                     ref={commandInputRef}
                     type="text"
                     value={commandArg}
-                    onChange={(e) => setCommandArg(e.target.value)}
+                    onChange={(e) => {
+                      setCommandArg(e.target.value);
+                      recordCommandCaret(e.currentTarget);
+                    }}
                     placeholder={selectedCommand.placeholder || "Enter argument..."}
                     className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg font-medium"
                     autoFocus
                     onKeyDown={(e) => {
+                      if (
+                        showCommandMetadata &&
+                        commandMetadataSuggestions.length > 0
+                      ) {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setCommandMetadataIndex((prev) =>
+                            prev === commandMetadataSuggestions.length - 1 ? 0 : prev + 1,
+                          );
+                          return;
+                        }
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setCommandMetadataIndex((prev) =>
+                            prev === 0 ? commandMetadataSuggestions.length - 1 : prev - 1,
+                          );
+                          return;
+                        }
+                        if (e.key === "Tab" || e.key === "Enter") {
+                          e.preventDefault();
+                          handleCommandMetadataSelect(
+                            commandMetadataSuggestions[commandMetadataIndex],
+                          );
+                          return;
+                        }
+                      }
                       if (e.key === "Enter") {
                         e.preventDefault();
                         handleCommandArgSubmit();
                       }
                     }}
+                    onSelect={(e) => recordCommandCaret(e.currentTarget)}
+                    onKeyUp={(e) => recordCommandCaret(e.currentTarget)}
+                    onClick={(e) => recordCommandCaret(e.currentTarget)}
                   />
+                  {showCommandMetadata && (
+                    <div className="mt-3">
+                      <div className="rounded-2xl border border-glass/40 bg-glass/20 shadow-inset-border overflow-hidden">
+                        {commandMetadataSuggestions.map((suggestion, index) => {
+                          const isSelected = index === commandMetadataIndex;
+                          const descriptor = getSuggestionDescriptors(suggestion);
+                          return (
+                            <button
+                              key={`${suggestion.kind}-${descriptor.title}-${index}`}
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
+                                isSelected
+                                  ? "bg-glass-hover text-text-primary"
+                                  : "text-text-muted hover:text-text-primary hover:bg-glass-hover/60",
+                              )}
+                              onClick={() => handleCommandMetadataSelect(suggestion)}
+                              onMouseEnter={() => setCommandMetadataIndex(index)}
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{descriptor.title}</p>
+                                {descriptor.subtitle && (
+                                  <p className="text-xs text-text-subtle truncate">{descriptor.subtitle}</p>
+                                )}
+                              </div>
+                              {descriptor.badge && (
+                                <span className="ml-3 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                                  {descriptor.badge}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {commandMetadataLoading && (
+                          <div className="px-3 py-2 text-xs text-text-subtle">Fetching suggestions…</div>
+                        )}
+                        {commandMetadataError && (
+                          <div className="px-3 py-2 text-xs text-amber-300">
+                            Suggestions unavailable: {commandMetadataError}
+                          </div>
+                        )}
+                        {!commandMetadataLoading &&
+                          !commandMetadataError &&
+                          commandMetadataSuggestions.length === 0 && (
+                            <div className="px-3 py-2 text-xs text-text-subtle">Keep typing for suggestions.</div>
+                          )}
+                      </div>
+                    </div>
+                  )}
                   {renderSlackHintPanel()}
                   
                   {/* Keyboard hints */}
@@ -1483,6 +1711,54 @@ export default function CommandPalette({
                         )}
                       </button>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {mode === "launcher" && planState && (planState.status === "planning" || planState.status === "executing") && (
+                <div className="px-4 pb-3">
+                  <div className="rounded-2xl border border-glass/30 bg-glass/15 px-3 py-2 flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wide text-text-muted">Task disambiguation</p>
+                        <p className="text-sm font-semibold text-text-primary truncate">
+                          {planState.goal || "Doc insights plan"}
+                        </p>
+                        <p className="text-xs text-text-muted">
+                          {planState.status === "planning" ? "Planning" : "Executing"} ·{" "}
+                          {planState.steps.filter((s) => s.status === "completed").length}/{planState.steps.length} steps
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          logger.info("[PLAN] Expand from inline summary");
+                          openExpandedWindow();
+                        }}
+                        className="shrink-0 rounded-full border border-accent-primary/50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent-primary hover:bg-accent-primary/20"
+                      >
+                        Expand
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-text-muted">
+                      {planState.steps.slice(0, 4).map((step) => (
+                        <span
+                          key={step.id}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 border",
+                            step.status === "completed" && "border-green-500/40 text-green-300",
+                            step.status === "running" && "border-accent-primary/40 text-accent-primary",
+                            step.status === "failed" && "border-red-400/40 text-red-300",
+                            step.status === "pending" && "border-white/10 text-text-muted"
+                          )}
+                        >
+                          <span className="text-[10px]">
+                            {step.status === "completed" ? "✓" : step.status === "running" ? "⚙️" : step.status === "failed" ? "✗" : "○"}
+                          </span>
+                          <span className="truncate max-w-[110px]">{step.action}</span>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1727,10 +2003,10 @@ export default function CommandPalette({
                 )}
 
                 {/* Slash mode - no commands found */}
-                {slashModeActive && filteredCommands.length === 0 && slashQuery && (
+                {slashModeActive && filteredCommands.length === 0 && slashQueryMeta.normalizedQuery && (
                   <div className="p-6 text-center text-text-muted">
                     <div className="text-2xl mb-2">🔍</div>
-                    <p>No command matches &quot;/{slashQuery}&quot;</p>
+                    <p>No command matches &quot;/{slashQueryMeta.normalizedQuery}&quot;</p>
                     <p className="text-sm mt-1">Try /bluesky, /calendar, /files, etc.</p>
                   </div>
                 )}
@@ -1901,6 +2177,7 @@ export default function CommandPalette({
                     setViewState("search");
                     setSelectedCommand(null);
                     setCommandArg("");
+                    setCommandArgCaret(null);
                     setTimeout(() => inputRef.current?.focus(), 50);
                   }}
                   className="p-1.5 rounded-lg hover:bg-glass-hover transition-colors text-text-muted hover:text-text-primary"
@@ -1921,17 +2198,98 @@ export default function CommandPalette({
                   ref={commandInputRef}
                   type="text"
                   value={commandArg}
-                  onChange={(e) => setCommandArg(e.target.value)}
+                  onChange={(e) => {
+                    setCommandArg(e.target.value);
+                    recordCommandCaret(e.currentTarget);
+                  }}
                   placeholder={selectedCommand.placeholder || "Enter argument..."}
                   className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg font-medium"
                   autoFocus
                   onKeyDown={(e) => {
+                    if (
+                      showCommandMetadata &&
+                      commandMetadataSuggestions.length > 0
+                    ) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setCommandMetadataIndex((prev) =>
+                          prev === commandMetadataSuggestions.length - 1 ? 0 : prev + 1,
+                        );
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setCommandMetadataIndex((prev) =>
+                          prev === 0 ? commandMetadataSuggestions.length - 1 : prev - 1,
+                        );
+                        return;
+                      }
+                      if (e.key === "Tab" || e.key === "Enter") {
+                        e.preventDefault();
+                        handleCommandMetadataSelect(
+                          commandMetadataSuggestions[commandMetadataIndex],
+                        );
+                        return;
+                      }
+                    }
                     if (e.key === "Enter") {
                       e.preventDefault();
                       handleCommandArgSubmit();
                     }
                   }}
+                  onSelect={(e) => recordCommandCaret(e.currentTarget)}
+                  onKeyUp={(e) => recordCommandCaret(e.currentTarget)}
+                  onClick={(e) => recordCommandCaret(e.currentTarget)}
                 />
+                {showCommandMetadata && (
+                  <div className="mt-3">
+                    <div className="rounded-2xl border border-glass/40 bg-glass/20 shadow-inset-border overflow-hidden">
+                      {commandMetadataSuggestions.map((suggestion, index) => {
+                        const isSelected = index === commandMetadataIndex;
+                        const descriptor = getSuggestionDescriptors(suggestion);
+                        return (
+                          <button
+                            key={`${suggestion.kind}-${descriptor.title}-${index}`}
+                            type="button"
+                            className={cn(
+                              "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
+                              isSelected
+                                ? "bg-glass-hover text-text-primary"
+                                : "text-text-muted hover:text-text-primary hover:bg-glass-hover/60",
+                            )}
+                            onClick={() => handleCommandMetadataSelect(suggestion)}
+                            onMouseEnter={() => setCommandMetadataIndex(index)}
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{descriptor.title}</p>
+                              {descriptor.subtitle && (
+                                <p className="text-xs text-text-subtle truncate">{descriptor.subtitle}</p>
+                              )}
+                            </div>
+                            {descriptor.badge && (
+                              <span className="ml-3 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                                {descriptor.badge}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      {commandMetadataLoading && (
+                        <div className="px-3 py-2 text-xs text-text-subtle">Fetching suggestions…</div>
+                      )}
+                      {commandMetadataError && (
+                        <div className="px-3 py-2 text-xs text-amber-300">
+                          Suggestions unavailable: {commandMetadataError}
+                        </div>
+                      )}
+                      {!commandMetadataLoading &&
+                        !commandMetadataError &&
+                        commandMetadataSuggestions.length === 0 && (
+                          <div className="px-3 py-2 text-xs text-text-subtle">Keep typing for suggestions.</div>
+                        )}
+                    </div>
+                  </div>
+                )}
                 {renderSlackHintPanel()}
                 
                 {/* Keyboard hints */}
@@ -2141,6 +2499,14 @@ function SearchResultItem({
   getFileIcon,
   dataTestId
 }: SearchResultItemProps) {
+  let indexedLabel: string | null = null;
+  if (result.indexed_at) {
+    const date = new Date(result.indexed_at);
+    indexedLabel = Number.isNaN(date.getTime())
+      ? result.indexed_at
+      : date.toLocaleString();
+  }
+
   return (
     <motion.button
       onClick={onClick}
@@ -2208,6 +2574,21 @@ function SearchResultItem({
           <div className="text-xs text-text-muted mt-2">
             Match: {(result.similarity_score * 100).toFixed(1)}%
           </div>
+
+          {(result.folder_label || indexedLabel) && (
+            <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-2">
+              {result.folder_label && (
+                <span className="px-2 py-0.5 rounded-full border border-glass/60 bg-glass/20">
+                  {result.folder_label}
+                </span>
+              )}
+              {indexedLabel && (
+                <span title={indexedLabel}>
+                  Indexed {indexedLabel}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Preview Toggle */}

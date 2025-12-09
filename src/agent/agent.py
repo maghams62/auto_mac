@@ -24,7 +24,9 @@ except Exception:  # pragma: no cover - optional dependency
     StatusCode = None  # type: ignore
 
 from . import ALL_AGENT_TOOLS
+from .control_input_guard import ControlInputGuard
 from .feasibility_checker import FeasibilityChecker
+from .low_signal_classifier import LowSignalClassifier
 from .verifier import OutputVerifier
 from .telemetry import get_telemetry
 from ..memory import SessionManager
@@ -32,6 +34,31 @@ from ..utils.message_personality import get_generic_success_message
 from ..utils.performance_monitor import get_performance_monitor
 
 logger = logging.getLogger(__name__)
+
+
+_DOC_INSIGHTS_KEYWORDS = [
+    "activity graph",
+    "doc issue",
+    "doc issues",
+    "dissatisfaction",
+    "dissatisfied",
+    "doc drift",
+    "impact analysis",
+    "context resolution",
+    "blast radius",
+    "downstream",
+    "impacted docs",
+    "impacted services",
+    "core-api",
+    "billing service",
+]
+
+
+def _looks_like_doc_insights_request(text: str) -> bool:
+    if not text:
+        return False
+    normalized = text.lower()
+    return any(keyword in normalized for keyword in _DOC_INSIGHTS_KEYWORDS)
 
 
 def _safe_set_span_status(span, code, description: str) -> None:
@@ -119,48 +146,82 @@ class SlashPlanProgressEmitter:
         on_step_started: Optional[callable],
         on_step_succeeded: Optional[callable],
         on_step_failed: Optional[callable],
+        *,
+        command: Optional[str] = None,
     ):
-        self.slug_to_id = {
-            step.get("slug"): step.get("id")
-            for step in steps
-            if step.get("slug") and step.get("id") is not None
-        }
+        self.command = command
         self.on_step_started = on_step_started
         self.on_step_succeeded = on_step_succeeded
         self.on_step_failed = on_step_failed
         self.sequence_number = 0
+        self.slug_to_meta: Dict[str, Dict[str, Any]] = {}
+        for step in steps:
+            slug = step.get("slug")
+            step_id = step.get("id")
+            if not slug or step_id is None:
+                continue
+            self.slug_to_meta[slug] = {
+                "id": step_id,
+                "action": step.get("action"),
+                "narration": step.get("narration") or step.get("action"),
+            }
 
-    def _emit(self, callback: Optional[callable], step_id: Optional[int], extra: Optional[Dict[str, Any]] = None):
-        if not callback or not step_id:
+    def _emit(
+        self,
+        callback: Optional[callable],
+        slug: str,
+        extra: Optional[Dict[str, Any]] = None,
+        *,
+        status_label: Optional[str] = None,
+    ):
+        if not callback or slug not in self.slug_to_meta:
+            return
+        meta = self.slug_to_meta[slug]
+        step_id = meta.get("id")
+        if step_id is None:
             return
         self.sequence_number += 1
         payload = {
             "step_id": step_id,
             "sequence_number": self.sequence_number,
             "timestamp": datetime.now().isoformat(),
+            "command": self.command,
+            "slug": slug,
+            "action": meta.get("action"),
+            "narration": meta.get("narration"),
         }
         if extra:
             payload.update(extra)
+        status_value = status_label
+        if not status_value and extra:
+            status_value = extra.get("status")
+        logger.info(
+            "[SLASH PLAN] /%s step=%s status=%s seq=%s",
+            self.command or "slash",
+            slug,
+            status_value or "event",
+            self.sequence_number,
+        )
         callback(payload)
 
     def has_step(self, slug: str) -> bool:
-        return slug in self.slug_to_id
+        return slug in self.slug_to_meta
 
     def start(self, slug: str) -> None:
-        self._emit(self.on_step_started, self.slug_to_id.get(slug))
+        self._emit(self.on_step_started, slug, status_label="running")
 
     def succeed(self, slug: str, preview: Optional[str] = None) -> None:
         extra = {}
         if preview:
             extra["output_preview"] = preview[:200]
-        self._emit(self.on_step_succeeded, self.slug_to_id.get(slug), extra)
+        self._emit(self.on_step_succeeded, slug, extra, status_label="completed")
 
     def fail(self, slug: str, error_message: str, can_retry: bool = False) -> None:
         extra = {
             "error": (error_message or "Command failed")[:500],
             "can_retry": can_retry,
         }
-        self._emit(self.on_step_failed, self.slug_to_id.get(slug), extra)
+        self._emit(self.on_step_failed, slug, extra, status_label="failed")
 
 
 class AgentState(TypedDict):
@@ -258,6 +319,49 @@ class AutomationAgent:
                 "expected_output": "Final slash-git response highlighting SHAs, branches, PRs, and files.",
             },
         ],
+        "cerebros": [
+            {
+                "slug": "interpret",
+                "action": "Interpret Cerebros query",
+                "reasoning": "Resolve hashtags, components, and intent so the multi-modal graph query can be scoped correctly.",
+                "expected_output": "Normalized Cerebros query plan with targets, timeframe, and modality hints.",
+            },
+            {
+                "slug": "execute",
+                "action": "Run Cerebros graph reasoner",
+                "reasoning": "Query the activity graph plus Slack/Git/Doc indexes to collect cross-system evidence.",
+                "expected_output": "Structured Cerebros payload containing graph_context, answer candidates, and evidence.",
+            },
+            {
+                "slug": "respond",
+                "action": "Compose cross-system answer",
+                "reasoning": "Surface task disambiguation, sources, and key insights so the UI can render the Cerebros card.",
+                "expected_output": "Final slash-cerebros summary with sources, doc priorities, and query-plan metadata.",
+            },
+        ],
+        "youtube": [
+            {
+                "slug": "interpret",
+                "action": "Interpret YouTube request",
+                "reasoning": "Parse the pasted URL or alias plus the user question/timestamp hints.",
+                "expected_output": "Resolved video ID/alias, question, and timestamp hints.",
+                "narration": "Interpreting YouTube link and question…",
+            },
+            {
+                "slug": "fetch_transcript",
+                "action": "Fetch transcript & chunk video",
+                "reasoning": "Fetch or reuse the transcript, chunk it, and ensure embeddings exist for retrieval.",
+                "expected_output": "Transcript chunks available for retrieval (or marked as cached).",
+                "narration": "Fetching video metadata and transcript…",
+            },
+            {
+                "slug": "synthesize",
+                "action": "Synthesize YouTube summary",
+                "reasoning": "Retrieve relevant chunks and synthesize the requested explanation.",
+                "expected_output": "Final summary plus evidence snippets and trace metadata.",
+                "narration": "Synthesizing video summary…",
+            },
+        ],
     }
 
     def __init__(
@@ -330,6 +434,10 @@ class AutomationAgent:
 
         # Build graph
         self.graph = self._build_graph()
+
+        # Control & fallback utilities
+        self.control_input_guard = ControlInputGuard(config)
+        self.low_signal_classifier = LowSignalClassifier(config)
 
     def _load_prompts(self) -> Dict[str, str]:
         """
@@ -743,6 +851,12 @@ PLANNING GUIDELINES:
 - IMPORTANT: If a step uses "$stepX.field" in parameters, you MUST list X in the "dependencies" array
 - If a step depends on another step's output, list that step ID in "dependencies"
 - After all work steps are complete, add a FINAL step that calls "reply_to_user" to deliver a polished summary referencing prior outputs
+- DOC INSIGHTS (Option 1 / Option 2):
+  • Call `resolve_component_id` whenever the user references informal component/service names (e.g., "core-api", "billing service", "docs portal").
+  • Use `get_component_activity` / `get_top_dissatisfied_components` for activity or dissatisfaction questions.
+  • Use `list_doc_issues` for “what doc issues were triggered…” or remediation rollups.
+  • Use `get_context_impacts` for blast radius / downstream doc/service questions.
+  • Use `analyze_doc_drift` when the user mentions doc drift, API contracts, or spec mismatches.
 
 If you CANNOT complete the request with available tools, respond with:
 {{
@@ -1610,6 +1724,10 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             return "git"
         if command_name == "slack":
             return "slack"
+        if command_name == "cerebros":
+            return "cerebros"
+        if command_name in {"youtube", "yt"}:
+            return "youtube"
         return None
 
     def _build_slash_plan_payload(self, normalized_command: str, user_request: str) -> Optional[Dict[str, Any]]:
@@ -1627,6 +1745,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 "expected_output": step_def.get("expected_output", ""),
                 "dependencies": [],
                 "slug": step_def["slug"],
+                "narration": step_def.get("narration"),
             }
             steps.append(step_payload)
 
@@ -1637,6 +1756,31 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
         if not preview:
             preview = fallback
         return preview[:200]
+
+    def _build_youtube_plan_preview(self, payload: Optional[Dict[str, Any]]) -> str:
+        """
+        Build a short status line for the "fetch_transcript" plan step so the UI
+        shows which video finished indexing.
+        """
+        if not isinstance(payload, dict):
+            return "Transcript ready"
+        data = payload.get("data") or {}
+        video_meta = data.get("video") or {}
+        title = video_meta.get("title") or video_meta.get("video_id") or "Video"
+        channel = video_meta.get("channel_title")
+        cached = data.get("cached")
+        transcript_state = (video_meta.get("transcript_state") or "").replace("_", " ").strip()
+        label_parts = [title]
+        if channel:
+            label_parts.append(f"({channel})")
+        label = " ".join(part for part in label_parts if part)
+        status_bits: List[str] = []
+        if transcript_state:
+            status_bits.append(transcript_state)
+        if cached:
+            status_bits.append("cached")
+        status = ", ".join(status_bits) if status_bits else "ready"
+        return f"{label.strip() or 'Video'} transcript {status}"
 
     def _verify_commitments_fulfilled(self, state: AgentState, memory) -> None:
         """
@@ -3047,6 +3191,37 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             logger.debug(f"[REASONING TRACE] Failed to get trace summary for prompt: {e}")
             return ""
 
+    def _record_control_reply_status(self, telemetry_status: str, reason: str) -> None:
+        """Best-effort telemetry for early short-circuit replies."""
+        try:
+            from telemetry.tool_helpers import record_reply_status
+            record_reply_status(telemetry_status, None, {"reason": reason})
+        except Exception:
+            logger.debug("[CONTROL GUARD] Unable to record telemetry for %s", telemetry_status)
+
+    def _build_control_response(self, decision: Dict[str, str]) -> Dict[str, Any]:
+        """Convert guard/classifier decision to agent.run payload."""
+        status = decision.get("status", "cancelled")
+        message = decision.get("message", "Okay, stopping here.")
+        reason = decision.get("reason", "control_input")
+        payload = {
+            "status": status,
+            "message": message,
+            "final_result": {
+                "status": status,
+                "message": message,
+                "reason": reason,
+            },
+            "results": {},
+            "steps_executed": 0,
+            "error": False,
+        }
+        if status == "cancelled":
+            payload["cancelled"] = True
+        telemetry_status = "reply_cancelled" if status == "cancelled" else "fallback_used"
+        self._record_control_reply_status(telemetry_status, reason)
+        return payload
+
     def run(
         self,
         user_request: str,
@@ -3074,18 +3249,52 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
             logger.info(f"[EMAIL WORKFLOW] Starting agent with context: {context}")
         logger.info(f"Starting agent for request: {user_request}")
 
+        stripped_request = (user_request or "").strip()
+        slash_token = None
+        if stripped_request.startswith('/'):
+            without_slash = stripped_request[1:]
+            slash_token = without_slash.split(None, 1)[0] if without_slash else ""
+
+        guard_decision = self.control_input_guard.inspect(user_request or "", slash_token=slash_token)
+        if guard_decision:
+            return self._build_control_response(guard_decision)
+
+        doc_request_hint = _looks_like_doc_insights_request(user_request or "")
+
+        if not slash_token and self.low_signal_classifier.should_classify(user_request or ""):
+            classification = self.low_signal_classifier.classify(user_request or "")
+            if classification in {"control", "noise"}:
+                status = "cancelled" if classification == "control" else "noop"
+                message = "Okay, stopping here." if classification == "control" else "All good — I'll wait for your next request."
+                reason = f"classifier_{classification}"
+                if classification == "noise" and doc_request_hint:
+                    message = (
+                        "I couldn’t retrieve doc/impact data for that request. "
+                        "This usually means the doc insights tools are unavailable (graph disabled, "
+                        "no doc issues ingested, or the component name is unknown)."
+                    )
+                    reason = "doc_insights_unavailable"
+                decision = {
+                    "status": status,
+                    "message": message,
+                    "reason": reason,
+                }
+                return self._build_control_response(decision)
+
         # Check if this is a slash command and handle it directly
-        if user_request.strip().startswith('/'):
+        if stripped_request.startswith('/'):
             from ..ui.slash_commands import SlashCommandHandler
             from ..agent.agent_registry import AgentRegistry
 
             registry = AgentRegistry(self.config, session_manager=self.session_manager)
             handler = SlashCommandHandler(registry, session_manager=self.session_manager, config=self.config)
 
-            command_token = user_request.strip().split(None, 1)[0] if user_request.strip() else ""
+            command_token = stripped_request.split(None, 1)[0] if stripped_request else ""
             normalized_command = self._normalize_slash_command(command_token.lstrip('/')) if command_token else None
 
             plan_emitter: Optional[SlashPlanProgressEmitter] = None
+            youtube_command = normalized_command == "youtube"
+            youtube_fetch_started = False
             if normalized_command:
                 plan_payload = self._build_slash_plan_payload(normalized_command, user_request)
                 if plan_payload and on_plan_created:
@@ -3096,6 +3305,7 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                             on_step_started,
                             on_step_succeeded,
                             on_step_failed,
+                            command=normalized_command,
                         )
                         if plan_emitter.has_step("interpret"):
                             plan_emitter.start("interpret")
@@ -3103,8 +3313,12 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     except Exception as exc:
                         logger.debug(f"[SLASH PLAN] Failed to emit plan for /{normalized_command}: {exc}")
 
-            if plan_emitter and plan_emitter.has_step("execute"):
-                plan_emitter.start("execute")
+            if plan_emitter:
+                if youtube_command and plan_emitter.has_step("fetch_transcript"):
+                    plan_emitter.start("fetch_transcript")
+                    youtube_fetch_started = True
+                elif plan_emitter.has_step("execute"):
+                    plan_emitter.start("execute")
 
             is_command, result = handler.handle(user_request, session_id=session_id)
             
@@ -3112,8 +3326,11 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 # Unsupported slash command - strip leading slash and fall through to orchestrator
                 # This allows commands like /maps to be treated as natural language
                 logger.debug(f"[SLASH COMMANDS] Ignoring unsupported command: {user_request[:50]}")
-                if plan_emitter and plan_emitter.has_step("execute"):
-                    plan_emitter.fail("execute", "Command delegated to orchestrator")
+                if plan_emitter:
+                    if youtube_command and plan_emitter.has_step("fetch_transcript"):
+                        plan_emitter.fail("fetch_transcript", "Command delegated to orchestrator")
+                    elif plan_emitter.has_step("execute"):
+                        plan_emitter.fail("execute", "Command delegated to orchestrator")
                 # Remove leading slash and command word, keep the rest as natural language
                 parts = user_request.strip().split(None, 1)
                 if len(parts) > 1:
@@ -3138,10 +3355,13 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                 # Format result to match agent.run() return format
                 slash_error_message: Optional[str] = None
                 response_preview: Optional[str] = None
+                primary_payload: Optional[Dict[str, Any]] = None
 
                 if isinstance(result, dict):
                     if result.get("type") == "result":
                         tool_result = result.get("result", {})
+                        if isinstance(tool_result, dict):
+                            primary_payload = tool_result
                         # Extract message from various possible fields (message, summary, content, etc.)
                         message = (
                             tool_result.get("message") or
@@ -3197,23 +3417,47 @@ If step 3 uses "$step1.file_path" in parameters, then step 3's dependencies MUST
                     }
 
                 if plan_emitter:
-                    if slash_error_message:
-                        plan_emitter.fail("execute", slash_error_message)
+                    if youtube_command:
+                        if slash_error_message:
+                            if plan_emitter.has_step("fetch_transcript"):
+                                plan_emitter.fail("fetch_transcript", slash_error_message, can_retry=True)
+                            if plan_emitter.has_step("synthesize"):
+                                plan_emitter.fail("synthesize", slash_error_message, can_retry=True)
+                        else:
+                            fetch_preview = self._build_youtube_plan_preview(primary_payload)
+                            if plan_emitter.has_step("fetch_transcript"):
+                                if not youtube_fetch_started:
+                                    plan_emitter.start("fetch_transcript")
+                                plan_emitter.succeed("fetch_transcript", preview=fetch_preview)
+                            if plan_emitter.has_step("synthesize"):
+                                plan_emitter.start("synthesize")
+                                plan_emitter.succeed(
+                                    "synthesize",
+                                    preview=self._truncate_preview(
+                                        response_preview,
+                                        fallback=f"/{normalized_command or 'youtube'} summary ready",
+                                    ),
+                                )
                     else:
-                        exec_preview = self._truncate_preview(
-                            response_preview,
-                            fallback=f"/{normalized_command or 'slash'} command executed",
-                        )
-                        plan_emitter.succeed("execute", preview=exec_preview)
-                        if plan_emitter.has_step("respond"):
-                            plan_emitter.start("respond")
-                            plan_emitter.succeed(
-                                "respond",
-                                preview=self._truncate_preview(
+                        if slash_error_message:
+                            if plan_emitter.has_step("execute"):
+                                plan_emitter.fail("execute", slash_error_message)
+                        else:
+                            if plan_emitter.has_step("execute"):
+                                exec_preview = self._truncate_preview(
                                     response_preview,
-                                    fallback="Response ready",
-                                ),
-                            )
+                                    fallback=f"/{normalized_command or 'slash'} command executed",
+                                )
+                                plan_emitter.succeed("execute", preview=exec_preview)
+                            if plan_emitter.has_step("respond"):
+                                plan_emitter.start("respond")
+                                plan_emitter.succeed(
+                                    "respond",
+                                    preview=self._truncate_preview(
+                                        response_preview,
+                                        fallback="Response ready",
+                                    ),
+                                )
 
                 return final_payload
 

@@ -7,13 +7,14 @@ import { IssueDetailSheet } from "@/components/issues/issue-detail";
 import { IssueFilters } from "@/components/issues/issue-filters";
 import { IssueList } from "@/components/issues/issue-list";
 import { LiveRecency } from "@/components/live/live-recency";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { filterIssuesWithContext } from "@/lib/issues/utils";
-import { describeMode, isLiveLike } from "@/lib/mode";
+import { isLiveLike } from "@/lib/mode";
 import { selectProjectById, useDashboardStore } from "@/lib/state/dashboard-store";
 import { shortDate } from "@/lib/utils";
-import type { DocIssue, SourceEvent } from "@/lib/types";
+import type { DocIssue } from "@/lib/types";
 
 export default function ProjectIssuesPage() {
   const params = useParams<{ projectId: string }>();
@@ -26,11 +27,13 @@ export default function ProjectIssuesPage() {
   const liveStatus = useDashboardStore((state) => state.liveStatus);
   const referenceTime = liveStatus.lastUpdated ? new Date(liveStatus.lastUpdated).getTime() : null;
   const [selectedIssue, setSelectedIssue] = useState<DocIssue | null>(null);
+  const issueMode = project?.mode ?? liveStatus.mode;
+  const issueError = liveStatus.mode === "error" ? liveStatus.message : undefined;
 
   const componentLookup = useMemo(() => {
     if (!project) return {};
-    return project.components.reduce<Record<string, string>>((acc, component) => {
-      acc[component.id] = component.name;
+    return project.components.reduce<Record<string, { name: string; ownerTeam?: string }>>((acc, component) => {
+      acc[component.id] = { name: component.name, ownerTeam: component.ownerTeam };
       return acc;
     }, {});
   }, [project]);
@@ -38,14 +41,6 @@ export default function ProjectIssuesPage() {
     () => project?.components.map((component) => ({ id: component.id, name: component.name })) ?? [],
     [project]
   );
-  const componentEvents = useMemo(() => {
-    if (!project) return {};
-    return project.components.reduce<Record<string, SourceEvent[]>>((acc, component) => {
-      acc[component.id] = component.sourceEvents;
-      return acc;
-    }, {});
-  }, [project]);
-
   const filteredIssues = useMemo(() => {
     if (!project) return [];
     return filterIssuesWithContext(project, filters, referenceTime);
@@ -65,9 +60,7 @@ export default function ProjectIssuesPage() {
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle>Live drift inbox</CardTitle>
-            <Badge variant="outline" className="rounded-full border-border/60 text-[10px] uppercase text-muted-foreground">
-              {describeMode(project.mode ?? liveStatus.mode)}
-            </Badge>
+            <ModeBadge mode={project.mode ?? liveStatus.mode} />
           </div>
           <CardDescription>
             {isLiveLike(liveStatus.mode)
@@ -117,8 +110,8 @@ export default function ProjectIssuesPage() {
             issues={filteredIssues}
             onSelect={setSelectedIssue}
             componentLookup={componentLookup}
-            componentEvents={componentEvents}
-            projectId={project.id}
+            errorMessage={issueError}
+            mode={issueMode}
           />
         </CardContent>
       </Card>

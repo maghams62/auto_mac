@@ -62,6 +62,7 @@ from .notes_agent import NOTES_AGENT_TOOLS, NOTES_AGENT_HIERARCHY
 from .reminders_agent import REMINDERS_AGENT_TOOLS, REMINDERS_AGENT_HIERARCHY
 from .calendar_agent import CalendarAgent, CALENDAR_AGENT_TOOLS, CALENDAR_AGENT_HIERARCHY
 from .daily_overview_agent import DailyOverviewAgent, DAILY_OVERVIEW_AGENT_TOOLS, DAILY_OVERVIEW_AGENT_HIERARCHY
+from .doc_insights_agent import DocInsightsAgent, DOC_INSIGHTS_AGENT_TOOLS, DOC_INSIGHTS_AGENT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,8 @@ ALL_AGENT_TOOLS = (
     NOTES_AGENT_TOOLS +
     REMINDERS_AGENT_TOOLS +
     CALENDAR_AGENT_TOOLS +
-    DAILY_OVERVIEW_AGENT_TOOLS
+    DAILY_OVERVIEW_AGENT_TOOLS +
+    DOC_INSIGHTS_AGENT_TOOLS
 )
 # Legacy compatibility
 ALL_TOOLS = FILE_AGENT_TOOLS + PRESENTATION_AGENT_TOOLS + EMAIL_AGENT_TOOLS
@@ -217,6 +219,11 @@ for its domain:
    └─ Integration: Uses Calendar.app via AppleScript, DocumentIndexer for semantic search
    └─ Pattern: Reads events → LLM generates search queries → Searches documents → Synthesizes briefs
 
+22. DOC INSIGHTS AGENT (6 tools)
+   └─ Domain: Activity graph, doc issues, doc drift, and context resolution
+   └─ Tools: resolve_component_id, get_component_activity, get_top_dissatisfied_components, list_doc_issues, get_context_impacts, analyze_doc_drift
+   └─ Purpose: Gives the NL planner direct access to Option 1/Option 2 data without slash commands
+
 Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 65+ tools (and growing).
 
 Each agent:
@@ -283,6 +290,7 @@ class AgentRegistry:
             "celebration": CelebrationAgent,
             "calendar": CalendarAgent,
             "daily_overview": DailyOverviewAgent,
+            "doc_insights": DocInsightsAgent,
         }
 
         # Registry of instantiated agents (lazy-loaded on demand)
@@ -318,6 +326,7 @@ class AgentRegistry:
             "celebration": CELEBRATION_AGENT_TOOLS,
             "calendar": CALENDAR_AGENT_TOOLS,
             "daily_overview": DAILY_OVERVIEW_AGENT_TOOLS,
+            "doc_insights": DOC_INSIGHTS_AGENT_TOOLS,
         }
 
         for agent_name, tools in tool_lists.items():

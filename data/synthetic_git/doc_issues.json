@@ -1,0 +1,86 @@
+[
+  {
+    "component_ids": [
+      "docs.payments",
+      "core.payments"
+    ],
+    "created_at": "2025-12-06T01:00:00+00:00",
+    "doc_path": "docs/payments_api.md",
+    "doc_title": "Payments API",
+    "doc_url": "https://maghams62.github.io/docs-portal/payments_api/",
+    "id": "docissue-coreapi-vat",
+    "labels": [
+      "vat",
+      "payments"
+    ],
+    "repo_id": "docs-portal",
+    "severity": "high",
+    "source": "impact-report",
+    "state": "open",
+    "summary": "Docs portal promises optional vat_code but API enforces it.",
+    "updated_at": "2025-12-06T01:00:00+00:00"
+  },
+  {
+    "component_ids": [
+      "docs.payments",
+      "billing.checkout"
+    ],
+    "created_at": "2025-12-06T06:00:00+00:00",
+    "doc_path": "docs/billing_flows.md",
+    "doc_title": "Billing Flows",
+    "doc_url": "https://maghams62.github.io/docs-portal/billing_flows/",
+    "id": "docissue-billing-free-tier",
+    "labels": [
+      "quota",
+      "billing"
+    ],
+    "repo_id": "docs-portal",
+    "severity": "high",
+    "source": "impact-report",
+    "state": "open",
+    "summary": "Billing onboarding doc still references 1000 free requests.",
+    "updated_at": "2025-12-06T06:00:00+00:00"
+  },
+  {
+    "component_ids": [
+      "docs.notifications",
+      "notifications.dispatch"
+    ],
+    "created_at": "2025-12-06T06:00:00+00:00",
+    "doc_path": "docs/notification_playbook.md",
+    "doc_title": "Notification Playbook",
+    "doc_url": "https://maghams62.github.io/docs-portal/notification_playbook/",
+    "id": "docissue-notifications-template",
+    "labels": [
+      "notifications",
+      "template-version"
+    ],
+    "repo_id": "docs-portal",
+    "severity": "medium",
+    "source": "impact-report",
+    "state": "open",
+    "summary": "Notification playbook omits template_version field required by API.",
+    "updated_at": "2025-12-06T06:00:00+00:00"
+  },
+  {
+    "component_ids": [
+      "comp:web-dashboard",
+      "comp:docs-portal"
+    ],
+    "created_at": "2025-12-06T03:00:00+00:00",
+    "doc_path": "src/pages/Pricing.tsx",
+    "doc_title": "Pricing Page",
+    "doc_url": "https://maghams62.github.io/docs-portal/src/pages/Pricing.tsx/",
+    "id": "docissue-pricing-drft",
+    "labels": [
+      "pricing",
+      "free-tier"
+    ],
+    "repo_id": "web-dashboard",
+    "severity": "medium",
+    "source": "impact-report",
+    "state": "open",
+    "summary": "Pricing dashboard copy still promises legacy quotas.",
+    "updated_at": "2025-12-06T03:00:00+00:00"
+  }
+]

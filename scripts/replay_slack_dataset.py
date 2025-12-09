@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--token",
         default=None,
-        help="Slack bot token. Defaults to SLACK_BOT_TOKEN from the environment.",
+        help="Slack bot token. Defaults to SLACK_TOKEN (or SLACK_BOT_TOKEN) from the environment.",
     )
     parser.add_argument(
         "--dry-run",
@@ -281,9 +281,9 @@ def main() -> None:
         sys.exit(1)
 
     load_dotenv()
-    token = args.token or os.getenv("SLACK_BOT_TOKEN")
+    token = args.token or os.getenv("SLACK_TOKEN") or os.getenv("SLACK_BOT_TOKEN")
     if not token and not args.dry_run:
-        print("Missing Slack token. Set SLACK_BOT_TOKEN or pass --token.", file=sys.stderr)
+        print("Missing Slack token. Set SLACK_TOKEN (or legacy SLACK_BOT_TOKEN) or pass --token.", file=sys.stderr)
         sys.exit(1)
 
     entries = load_dataset(dataset_path)

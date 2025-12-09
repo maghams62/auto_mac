@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@brain-graph-ui": ["../shared/brain-graph-ui"],
+      "@brain-graph-ui/*": ["../shared/brain-graph-ui/*"]
     }
   },
   "include": [

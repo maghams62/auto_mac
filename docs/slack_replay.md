@@ -10,7 +10,7 @@ Use `scripts/replay_slack_dataset.py` to push the synthetic conversations in
   `channels:read`, `channels:manage`, `groups:read`, `chat:write`.
 - Invite the bot to any existing channels you plan to reuse. The script can
   create missing public channels automatically.
-- Set `SLACK_BOT_TOKEN` in your `.env`.
+- Set `SLACK_TOKEN` (or legacy `SLACK_BOT_TOKEN`) in your `.env`.
 
 ## Dry Run
 

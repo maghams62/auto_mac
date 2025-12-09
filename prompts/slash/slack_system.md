@@ -34,6 +34,9 @@ the shared LLM + tool calling model:
      and any referenced artifacts (Figma, PRs, docs, APIs). When synthetic
      alerts include `service_ids`/`component_ids`/`related_apis`/`labels`,
      surface them verbatim so graph loaders can map them to nodes.
+   - Use the precomputed `graph_highlights` block (services, components,
+     APIs, top participants) to keep incident tone grounded; confirm each
+     highlight against the raw `messages` before citing it.
    - Return machine-readable metadata alongside human prose:
        * `entities`: array of `{name, type, source, services, components, apis}`
        * `evidence`: each item contains `kind`, `channel`, `ts`, `permalink`,

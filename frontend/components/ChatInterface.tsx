@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { useBootContext } from "@/components/BootProvider";
 import { useGlobalEventBus } from "@/lib/telemetry";
 import { useToast } from "@/lib/useToast";
+import { useSharedSessionId } from "@/lib/useSharedSessionId";
 
 // Lazy load non-critical components to improve initial load time
 const HelpOverlay = lazy(() => import("./HelpOverlay"));
@@ -54,7 +55,15 @@ const FINAL_PLAN_STATUSES = new Set<FinalPlanStatus>(["completed", "failed", "ca
 
 export default function ChatInterface() {
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
-  const wsUrl = useMemo(() => getWebSocketUrl("/ws/chat"), []);
+  const sessionId = useSharedSessionId();
+  const wsUrl = useMemo(() => {
+    if (!sessionId) {
+      return "";
+    }
+    const resolved = new URL(getWebSocketUrl("/ws/chat"));
+    resolved.searchParams.set("session_id", sessionId);
+    return resolved.toString();
+  }, [sessionId]);
   const { messages: allMessages, isConnected, connectionState, lastError, planState, sendMessage, sendCommand } = useWebSocket(wsUrl);
   const { bootPhase, assetsLoaded, signalBootComplete, signalBootError } = useBootContext();
   const [showReasoningTrace, setShowReasoningTrace] = useState(false);
@@ -534,15 +543,17 @@ export default function ChatInterface() {
       <div className="flex-1 flex flex-row min-h-0" role="main">
         {/* Main chat area */}
         <div className="flex-1 flex flex-col min-h-0">
-          <Header
-            isConnected={isConnected}
-            messageCount={messages.length}
-            onClearSession={() => sendCommand("clear")}
-            onShowHelp={() => setShowHelpOverlay(true)}
-            planActive={isPlanActive}
-            onTogglePlanTrace={() => setShowReasoningTrace((prev) => !prev)}
-            isTraceOpen={showReasoningTrace}
-          />
+          <div className="flex-shrink-0">
+            <Header
+              isConnected={isConnected}
+              messageCount={messages.length}
+              onClearSession={() => sendCommand("clear")}
+              onShowHelp={() => setShowHelpOverlay(true)}
+              planActive={isPlanActive}
+              onTogglePlanTrace={() => setShowReasoningTrace((prev) => !prev)}
+              isTraceOpen={showReasoningTrace}
+            />
+          </div>
           <AnimatePresence>
             {planState && showReasoningTrace && (
               <motion.div
@@ -568,7 +579,7 @@ export default function ChatInterface() {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col min-h-0">
             <div className="flex-1 w-full px-6 sm:px-8 lg:px-12" role="region" aria-label="Chat conversation">
               <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
               <div className="flex-1 min-h-0 flex flex-col justify-end gap-6 py-6 sm:py-8 lg:py-10">
@@ -579,50 +590,10 @@ export default function ChatInterface() {
                   )}
                 >
                   {!hasMessages ? (
-                    <div className="w-full">
-                      <div className="text-center max-w-3xl mx-auto space-y-8">
-                        {/* Hero Section - Simplified animations for better performance */}
-                        <div className="glass-elevated rounded-3xl p-8 shadow-elevated backdrop-blur-glass">
-                          {/* Logo - Simplified animation */}
-                          <div className="mb-6 flex justify-center">
-                            <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-accent-primary to-accent-primary-hover flex items-center justify-center shadow-glow-primary">
-                              <span className="text-3xl font-bold text-white">C</span>
-                            </div>
-                          </div>
-
-                          <h1 className="text-5xl font-bold mb-4 text-text-primary">
-                            Welcome to Cerebro OS
-                          </h1>
-
-                          <p className="text-text-muted text-xl mb-8 leading-relaxed">
-                            Your intelligent Mac assistant powered by AI. Ask me anything about your system,
-                            automate tasks, or get help with your daily workflow.
-                          </p>
-                        </div>
-
-                        {/* Suggestion Chips - Simplified */}
-                        <div className="flex flex-wrap justify-center gap-3">
-                          {[
-                            "Show me my system info",
-                            "Check my email",
-                            "Play some music",
-                            "What's the weather like?",
-                            "Help me organize files"
-                          ].map((suggestion, index) => (
-                            <button
-                              key={suggestion}
-                              onClick={() => sendMessage(suggestion)}
-                              className="px-4 py-3 bg-surface-elevated/80 hover:bg-surface-elevated/90 border border-surface-outline/30 rounded-xl text-text-primary font-medium transition-all duration-200 ease-out shadow-soft hover:shadow-medium"
-                            >
-                              {suggestion}
-                            </button>
-                          ))}
-                        </div>
-
-                        {/* Keyboard hint - Simplified */}
-                        <p className="text-sm text-text-subtle text-center">
-                          Press ⌘K to start typing, or Space for voice commands
-                        </p>
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-center space-y-3 text-text-muted">
+                        <p className="text-sm">Start typing or press Space to issue a voice command.</p>
+                        <p className="text-xs text-text-subtle">The expanded desktop is ready whenever you are.</p>
                       </div>
                     </div>
                   ) : (
@@ -700,7 +671,7 @@ export default function ChatInterface() {
                   )}
                 </AnimatePresence>
 
-                <div className="relative">
+                <div className="relative flex-shrink-0">
                   <div
                     className="pointer-events-none absolute inset-x-0 bottom-full h-20"
                     style={{

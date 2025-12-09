@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,8 @@ from ..demo.scenario_classifier import DemoScenario, classify_question
 from ..demo.vector_retriever import VectorRetriever, VectorRetrievalBundle, VectorSnippet
 from ..utils import parse_json_with_retry
 from ..utils.openai_client import PooledOpenAIClient
+from ..utils.slack_links import build_slack_permalink
+from src.settings.policy import get_domain_policy
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ class DocDriftAnswer:
     evidence: List[Dict[str, Any]]
     graph_summary: GraphSummary
     vector_bundle: VectorRetrievalBundle
+    sources: List[Dict[str, Any]] = field(default_factory=list)
     structured_sections: List[Dict[str, Any]] = field(default_factory=list)
     impacted_entities: List[Dict[str, Any]] = field(default_factory=list)
     doc_drift: List[Dict[str, Any]] = field(default_factory=list)
@@ -73,6 +77,13 @@ class DocDriftReasoner:
         self.model = (config.get("openai") or {}).get("model", "gpt-4o")
         self.temperature = (config.get("openai") or {}).get("temperature", 0.2)
         self.prompt_template_path, self.prompt_template = self._load_prompt_template()
+        slash_git_cfg = (config.get("slash_git") or {})
+        self.repo_owner_override = (
+            slash_git_cfg.get("repo_owner_override")
+            or os.getenv("GITHUB_REPO_OWNER")
+            or os.getenv("GIT_ORG")
+            or os.getenv("LIVE_GIT_ORG")
+        )
 
     # ------------------------------------------------------------------
     def answer_question(self, question: str, *, source: str = "slack") -> DocDriftAnswer:
@@ -88,13 +99,16 @@ class DocDriftReasoner:
                 evidence=[],
                 graph_summary=GraphSummary(api=""),
                 vector_bundle=VectorRetrievalBundle(),
+                sources=[],
                 error="Question is required.",
             )
 
         scenario = classify_question(normalized_question)
+        policy = get_domain_policy("api_params")
         vector_bundle = self.vector_retriever.fetch_context(scenario, question=normalized_question)
         graph_summary = self.graph_summarizer.summarize(scenario)
         evidence_entries = self._build_evidence_entries(vector_bundle)
+        sources = self._build_sources(evidence_entries)
 
         if not evidence_entries and not self._has_graph_context(graph_summary):
             summary = (
@@ -110,6 +124,7 @@ class DocDriftReasoner:
                 evidence=evidence_entries,
                 graph_summary=graph_summary,
                 vector_bundle=vector_bundle,
+                sources=sources,
                 next_steps=["Rebuild the vector indexes", "Re-run the Neo4j ingester"],
                 metadata={"source": source, "scenario": scenario.name},
             )
@@ -120,6 +135,7 @@ class DocDriftReasoner:
             graph_summary=graph_summary,
             evidence=evidence_entries,
             source=source,
+            policy=policy,
         )
 
         parsed, raw_response, error = self._call_llm(prompt)
@@ -135,6 +151,8 @@ class DocDriftReasoner:
             "scenario": scenario.name,
             "api": scenario.api,
         }
+        if policy:
+            metadata["source_policy"] = policy.dict()
         if self.prompt_template_path:
             metadata["prompt_template"] = str(self.prompt_template_path)
         if parsed and parsed.get("scenario_id"):
@@ -153,6 +171,7 @@ class DocDriftReasoner:
             evidence=evidence_entries,
             graph_summary=graph_summary,
             vector_bundle=vector_bundle,
+            sources=sources,
             doc_drift=doc_drift,
             doc_drift_facts=doc_drift_facts,
             next_steps=next_steps,
@@ -213,6 +232,7 @@ class DocDriftReasoner:
         graph_summary: GraphSummary,
         evidence: List[Dict[str, Any]],
         source: str,
+        policy,
     ) -> str:
         if self.prompt_template:
             try:
@@ -223,6 +243,7 @@ class DocDriftReasoner:
                     graph_summary=graph_summary,
                     evidence=evidence,
                     source=source,
+                    policy=policy,
                 )
             except Exception as exc:
                 logger.warning("[DOC DRIFT] Prompt template render failed, falling back: %s", exc)
@@ -233,6 +254,7 @@ class DocDriftReasoner:
             graph_summary=graph_summary,
             evidence=evidence,
             source=source,
+            policy=policy,
         )
 
     def _build_fallback_prompt(
@@ -243,9 +265,11 @@ class DocDriftReasoner:
         graph_summary: GraphSummary,
         evidence: List[Dict[str, Any]],
         source: str,
+        policy,
     ) -> str:
         graph_lines = self._graph_summary_lines(graph_summary)
         evidence_block = json.dumps(evidence, indent=2, ensure_ascii=False)
+        policy_block = self._policy_instruction_block(policy)
         schema_block = textwrap.dedent(
             """
             Return JSON with the following keys:
@@ -295,6 +319,9 @@ class DocDriftReasoner:
             ## Evidence (each entry has `id` to cite in evidence_ids)
             {evidence_block}
 
+            ## Source-of-truth policy
+            {policy_block}
+
             ## Instructions
             - Use only the evidence provided (no fabrication).
             - Cite evidence via evidence_ids arrays so downstream graph loaders can follow links.
@@ -315,6 +342,7 @@ class DocDriftReasoner:
         graph_summary: GraphSummary,
         evidence: List[Dict[str, Any]],
         source: str,
+        policy,
     ) -> str:
         graph_lines = self._graph_summary_lines(graph_summary)
         evidence_block = json.dumps(evidence, indent=2, ensure_ascii=False) if evidence else "[]"
@@ -326,6 +354,7 @@ class DocDriftReasoner:
             "USER_QUESTION": question,
             "GRAPH_NEIGHBORHOOD": "\n".join(graph_lines),
             "EVIDENCE_JSON": evidence_block,
+            "SOURCE_POLICY": self._policy_instruction_block(policy),
         }
         rendered = template
         for key, value in replacements.items():
@@ -341,6 +370,12 @@ class DocDriftReasoner:
             f"- Recent Git Events: {', '.join(graph_summary.git_events) or 'n/a'}",
             f"- Recent Slack Events: {', '.join(graph_summary.slack_events) or 'n/a'}",
         ]
+
+    def _policy_instruction_block(self, policy) -> str:
+        default_priority = ["code", "api_spec", "docs"]
+        priority = " > ".join((policy.priority or default_priority) if policy else default_priority)
+        hints = ", ".join((policy.hints or ["slack", "tickets"]) if policy else ["slack", "tickets"])
+        return f"Priority: {priority}\nHint sources: {hints}"
 
     def _load_prompt_template(self) -> Tuple[Optional[Path], Optional[str]]:
         prompt_cfg = self.config.get("doc_drift_reasoner") or {}
@@ -598,7 +633,7 @@ class DocDriftReasoner:
 
         def _ingest(snippets: List[VectorSnippet], label: str) -> None:
             for idx, snippet in enumerate(snippets, 1):
-                metadata = snippet.metadata or {}
+                metadata = self._normalize_metadata(snippet.metadata)
                 entry_id = metadata.get("event_id") or f"{label.lower()}-{idx}"
                 entries.append(
                     {
@@ -614,6 +649,7 @@ class DocDriftReasoner:
                         "apis": metadata.get("apis") or metadata.get("related_apis") or [],
                         "labels": metadata.get("labels") or [],
                         "docs": [metadata.get("doc_path")] if metadata.get("doc_path") else [],
+                        "metadata": metadata,
                     }
                 )
 
@@ -621,6 +657,105 @@ class DocDriftReasoner:
         _ingest(bundle.git, "Git")
         _ingest(bundle.docs, "Doc")
         return entries
+
+    def _build_sources(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        sources: List[Dict[str, Any]] = []
+        for entry in entries:
+            metadata = entry.get("metadata") or {}
+            source_type = (entry.get("source") or metadata.get("source_type") or "").lower()
+            url = entry.get("permalink") or metadata.get("url") or self._resolve_source_url(source_type, metadata)
+            if not url:
+                continue
+            label = metadata.get("title") or metadata.get("repo") or metadata.get("channel_name")
+            if source_type == "git":
+                pr_number = metadata.get("pr_number")
+                commit_sha = metadata.get("commit_sha")
+                if pr_number:
+                    label = label or f"PR #{pr_number}"
+                elif commit_sha:
+                    label = label or f"Commit {str(commit_sha)[:7]}"
+            elif source_type == "slack":
+                label = label or metadata.get("channel_id") or "#slack"
+            elif source_type == "doc":
+                label = label or metadata.get("doc_path") or metadata.get("doc_id")
+            label = label or entry.get("id") or "source"
+            sources.append(
+                {
+                    "id": entry.get("id"),
+                    "type": source_type or "doc",
+                    "label": label,
+                    "url": url,
+                    "snippet": entry.get("text"),
+                    "repo": metadata.get("repo") or metadata.get("repo_slug"),
+                    "channel": metadata.get("channel_name") or metadata.get("channel_id"),
+                    "component": (entry.get("components") or [None])[0],
+                    "timestamp": entry.get("ts"),
+                    "rank": len(sources) + 1,
+                }
+            )
+        return sources
+
+    @staticmethod
+    def _normalize_metadata(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        metadata = dict(raw or {})
+        nested = metadata.pop("metadata", None)
+        if isinstance(nested, dict):
+            normalized = dict(nested)
+            normalized.update(metadata)
+            return normalized
+        return metadata
+
+    def _resolve_source_url(self, source_type: str, metadata: Dict[str, Any]) -> Optional[str]:
+        if source_type == "git":
+            slug = (
+                metadata.get("repo_slug")
+                or self._repo_slug_from_metadata(metadata)
+            )
+            if slug:
+                pr_number = metadata.get("pr_number")
+                if pr_number:
+                    return f"https://github.com/{slug}/pull/{pr_number}"
+                commit_sha = metadata.get("commit_sha")
+                if commit_sha:
+                    return f"https://github.com/{slug}/commit/{commit_sha}"
+            return metadata.get("url")
+        if source_type == "slack":
+            channel_id = metadata.get("channel_id") or metadata.get("channel")
+            timestamp = metadata.get("message_ts") or metadata.get("thread_ts") or metadata.get("ts")
+            if channel_id and timestamp:
+                workspace_url = (self.config.get("slash_slack") or {}).get("workspace_url") or os.getenv("SLACK_WORKSPACE_URL")
+                team_id = os.getenv("SLACK_TEAM_ID") or (self.config.get("slash_slack") or {}).get("team_id")
+                return build_slack_permalink(channel_id, str(timestamp), workspace_url=workspace_url, team_id=team_id)
+            return metadata.get("permalink")
+        if source_type == "doc":
+            return metadata.get("doc_url") or metadata.get("url")
+        return metadata.get("permalink") or metadata.get("url")
+
+    def _repo_slug_from_metadata(self, metadata: Dict[str, Any]) -> Optional[str]:
+        repo_url = metadata.get("repo_url")
+        slug = None
+        if repo_url and "github.com" in repo_url:
+            try:
+                slug = repo_url.split("github.com/", 1)[1].strip("/")
+            except IndexError:
+                slug = None
+        if slug:
+            return self._apply_repo_owner_override(slug)
+        repo = (metadata.get("repo") or "").strip("/")
+        owner = (metadata.get("repo_owner") or "").strip("/")
+        if owner and repo:
+            return self._apply_repo_owner_override(f"{owner}/{repo}")
+        return self._apply_repo_owner_override(repo or None)
+
+    def _apply_repo_owner_override(self, slug: Optional[str]) -> Optional[str]:
+        if not slug:
+            return None
+        if not self.repo_owner_override:
+            return slug
+        parts = slug.split("/", 1)
+        if len(parts) == 2:
+            return f"{self.repo_owner_override}/{parts[1]}"
+        return slug
 
     def _truncate(self, text: str) -> str:
         if not text:

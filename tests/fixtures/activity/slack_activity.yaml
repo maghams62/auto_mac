@@ -1,19 +1,60 @@
 messages:
-  - channel_id: "C0123PAYMENTS"
-    channel_name: "#payments-team"
-    ts: "1732060000.000001"
-    user: "alice"
-    text: "Synthetic: seeing timeouts on /charge after latest retry change."
-    reactions:
-      - name: "thumbsdown"
-        count: 2
-    thread_ts: null
-  - channel_id: "C0456AUTH"
-    channel_name: "#security-team"
-    ts: "1732063600.000002"
-    user: "carol"
-    text: "Synthetic: oauth refresh tokens still failing in staging."
-    reactions:
-      - name: "rage"
-        count: 1
-
+- channel_id: C0123PAYMENTS
+  channel_name: '#payments-team'
+  ts: '1765011600.000000'
+  user: alice
+  text: Vat enforcement landing now. Please validate downstream clients but no user
+    noise so far.
+  reactions:
+  - name: eyes
+    count: 3
+- channel_id: C0123PAYMENTS
+  channel_name: '#payments-team'
+  ts: '1765017000.000000'
+  user: pm
+  text: Docs PR is queued. Billing service confirmed incompatibilities resolved.
+  reactions: []
+- channel_id: C123SUPPORT
+  channel_name: '#support'
+  ts: '1765000800.000000'
+  user: csm
+  text: Merchants on plan B seeing 429s after quota change. Need hotfix asap.
+  reactions:
+  - name: thumbsdown
+    count: 4
+- channel_id: C0A0DNAHK2R
+  channel_name: '#incidents'
+  ts: '1765002600.000000'
+  user: support
+  text: Escalated to Sev2. Customers referencing ticket INC-4412 and INC-4413.
+  reactions:
+  - name: rage
+    count: 2
+- channel_id: C123SUPPORT
+  channel_name: '#support'
+  ts: '1765004400.000000'
+  user: se
+  text: Need billing-service patch that respects new quota config by noon PT.
+  reactions: []
+- channel_id: C0A0DNAHK2R
+  channel_name: '#incidents'
+  ts: '1765013400.000000'
+  user: ops
+  text: Template version requirement broke ServiceB + ServiceC notifications.
+  reactions:
+  - name: warning
+    count: 2
+  - name: thumbsdown
+    count: 1
+- channel_id: C0456AUTH
+  channel_name: '#security-team'
+  ts: '1765015200.000000'
+  user: dave
+  text: Compliance insisted on template_version. Need downstream owners aligned.
+  reactions: []
+- channel_id: C0123PAYMENTS
+  channel_name: '#payments-team'
+  ts: '1765020600.000000'
+  user: docs
+  text: Docs still say free tier is 1000 calls. Need final copy review?
+  reactions: []

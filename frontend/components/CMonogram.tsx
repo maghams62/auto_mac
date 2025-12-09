@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 type CMonogramProps = {
   size?: number;
@@ -68,7 +68,9 @@ export default function CMonogram({
   }, [prefersReducedMotion, onComplete, startDelay]);
 
   // Glow filter with cyan/purple mix
-  const glowFilterId = `glow-${Math.random().toString(36).slice(2, 11)}`;
+  // useId ensures the same ID on server and client to avoid hydration mismatches
+  const rawId = useId();
+  const glowFilterId = `glow-${rawId.replace(/[:]/g, "")}`;
 
   return (
     <motion.svg

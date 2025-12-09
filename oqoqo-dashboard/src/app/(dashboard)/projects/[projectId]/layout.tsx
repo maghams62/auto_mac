@@ -1,23 +1,21 @@
-"use client";
+import { ProjectRouteHydrator } from "@/components/layout/project-route-hydrator";
 
-import { useEffect } from "react";
-import { useParams } from "next/navigation";
+type ProjectParams = {
+  projectId: string | string[];
+};
 
-import { useDashboardStore } from "@/lib/state/dashboard-store";
+export default async function ProjectLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<ProjectParams> | ProjectParams;
+}) {
+  const resolvedParams = "then" in params ? await params : params;
+  const projectId = Array.isArray(resolvedParams.projectId)
+    ? resolvedParams.projectId[0]
+    : resolvedParams.projectId;
 
-export default function ProjectLayout({ children }: { children: React.ReactNode }) {
-  const params = useParams<{ projectId: string }>();
-  const selectProject = useDashboardStore((state) => state.selectProject);
-  const selectComponent = useDashboardStore((state) => state.selectComponent);
-  const projectId = Array.isArray(params.projectId) ? params.projectId[0] : params.projectId;
-
-  useEffect(() => {
-    if (projectId) {
-      selectProject(projectId);
-      selectComponent(undefined);
-    }
-  }, [projectId, selectProject, selectComponent]);
-
-  return <>{children}</>;
+  return <ProjectRouteHydrator projectId={projectId}>{children}</ProjectRouteHydrator>;
 }
 

@@ -1,0 +1,174 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: Oqoqo
+        - generic [ref=e7]: Drift Dashboard
+        - paragraph [ref=e8]: DocDrift-inspired cockpit with activity graph context.
+      - generic [ref=e10]:
+        - generic [ref=e11]: Current project
+        - combobox [ref=e12] [cursor=pointer]:
+          - generic:
+            - generic:
+              - generic:
+                - img
+                - generic: Atlas Activity Graph
+              - generic: PROD
+          - img [ref=e13]
+      - navigation [ref=e15]:
+        - generic [ref=e16]:
+          - paragraph [ref=e17]: Workspace
+          - generic [ref=e18]:
+            - link "All projects Scan doc health and pick a project to dive into." [ref=e19] [cursor=pointer]:
+              - /url: /projects
+              - generic [ref=e20]:
+                - img [ref=e21]
+                - text: All projects
+                - img [ref=e26]
+              - paragraph [ref=e29]: Scan doc health and pick a project to dive into.
+            - link "Brain Fly the 3D universe and inspect reasoning traces." [ref=e30] [cursor=pointer]:
+              - /url: /brain/universe
+              - generic [ref=e31]:
+                - img [ref=e32]
+                - text: Brain
+                - img [ref=e37]
+              - paragraph [ref=e40]: Fly the 3D universe and inspect reasoning traces.
+        - generic [ref=e41]:
+          - paragraph [ref=e42]: Projects (Today)
+          - generic [ref=e43]:
+            - link "Today Doc health pulse, top issues, recent signals." [ref=e44] [cursor=pointer]:
+              - /url: /projects/project_atlas
+              - generic [ref=e45]:
+                - img [ref=e46]
+                - text: Today
+                - img [ref=e48]
+              - paragraph [ref=e51]: Doc health pulse, top issues, recent signals.
+            - link "Issues inbox Focused DocIssue list across all signals." [ref=e52] [cursor=pointer]:
+              - /url: /projects/project_atlas/issues
+              - generic [ref=e53]:
+                - img [ref=e54]
+                - text: Issues inbox
+                - img [ref=e56]
+              - paragraph [ref=e59]: Focused DocIssue list across all signals.
+            - link "Investigations Trace Cerebros answers with linked evidence." [ref=e60] [cursor=pointer]:
+              - /url: /projects/project_atlas/investigations?mode=synthetic
+              - generic [ref=e61]:
+                - img [ref=e62]
+                - text: Investigations
+                - img [ref=e65]
+              - paragraph [ref=e68]: Trace Cerebros answers with linked evidence.
+        - generic [ref=e69]:
+          - paragraph [ref=e70]: Systems & impact
+          - generic [ref=e71]:
+            - link "Component Explorer Signals per component across code, tickets, and chat." [ref=e72] [cursor=pointer]:
+              - /url: /projects/project_atlas/components
+              - generic [ref=e73]:
+                - img [ref=e74]
+                - text: Component Explorer
+                - img [ref=e79]
+              - paragraph [ref=e82]: Signals per component across code, tickets, and chat.
+            - link "Activity Graph Visualize live nodes and dependencies." [ref=e83] [cursor=pointer]:
+              - /url: /projects/project_atlas/graph
+              - generic [ref=e84]:
+                - img [ref=e85]
+                - text: Activity Graph
+                - img [ref=e90]
+              - paragraph [ref=e93]: Visualize live nodes and dependencies.
+            - link "Activity Monitor Cerebros-ranked components by drift risk." [ref=e94] [cursor=pointer]:
+              - /url: /projects/project_atlas/activity
+              - generic [ref=e95]:
+                - img [ref=e96]
+                - text: Activity Monitor
+                - img [ref=e98]
+              - paragraph [ref=e101]: Cerebros-ranked components by drift risk.
+            - link "Cross-System Impact Dependencies and downstream documentation exposure." [ref=e102] [cursor=pointer]:
+              - /url: /projects/project_atlas/impact
+              - generic [ref=e103]:
+                - img [ref=e104]
+                - text: Cross-System Impact
+                - img [ref=e108]
+              - paragraph [ref=e111]: Dependencies and downstream documentation exposure.
+        - generic [ref=e112]:
+          - paragraph [ref=e113]: Configuration & ops
+          - generic [ref=e114]:
+            - link "Sources & Configuration Repo/branch matrix and exportable config." [ref=e115] [cursor=pointer]:
+              - /url: /projects/project_atlas/configuration
+              - generic [ref=e116]:
+                - img [ref=e117]
+                - text: Sources & Configuration
+                - img [ref=e120]
+              - paragraph [ref=e123]: Repo/branch matrix and exportable config.
+            - link "Operator Diagnostics Live ingest inspector and dataset health." [ref=e124] [cursor=pointer]:
+              - /url: /projects/project_atlas/configuration#live-inspector
+              - generic [ref=e125]:
+                - img [ref=e126]
+                - text: Operator Diagnostics
+                - img [ref=e128]
+              - paragraph [ref=e131]: Live ingest inspector and dataset health.
+      - generic [ref=e132]:
+        - generic [ref=e133]: Doc health
+        - generic [ref=e134]:
+          - generic [ref=e135]:
+            - paragraph [ref=e136]: Atlas Activity Graph
+            - paragraph [ref=e137]: prod
+          - generic [ref=e138]: "74"
+        - paragraph [ref=e139]: Updated 11:40 PM
+    - generic [ref=e140]:
+      - banner [ref=e141]:
+        - generic [ref=e143]:
+          - generic [ref=e144]: Oqoqo
+          - generic [ref=e145]: Activity Graph Intelligence
+          - generic [ref=e146]:
+            - generic [ref=e147]: Focused on Atlas Activity Graph
+            - generic [ref=e148]: prod
+        - generic [ref=e149]:
+          - tablist [ref=e151]:
+            - tab "Live data" [ref=e152] [cursor=pointer]
+            - tab "Synthetic demo" [selected] [ref=e153] [cursor=pointer]
+          - generic [ref=e154]:
+            - generic [ref=e156]: Synthetic mode
+            - generic [ref=e157]: •
+            - generic [ref=e158]: Synthetic fixtures
+          - generic [ref=e159]:
+            - generic [ref=e160]:
+              - generic [ref=e162]: Slack
+              - generic [ref=e163]: •
+              - generic [ref=e164]: Synthetic
+              - generic [ref=e165]: •
+              - generic [ref=e166]: Updated 11:13 PM
+            - generic [ref=e167]:
+              - generic [ref=e169]: Git
+              - generic [ref=e170]: •
+              - generic [ref=e171]: Synthetic
+              - generic [ref=e172]: •
+              - generic [ref=e173]: Updated 01:41 AM
+            - generic [ref=e174]:
+              - generic [ref=e176]: Doc issues
+              - generic [ref=e177]: •
+              - generic [ref=e178]: Synthetic
+              - generic [ref=e179]: •
+              - generic [ref=e180]: Updated 03:47 AM
+          - link "Configure sources" [ref=e181] [cursor=pointer]:
+            - /url: /projects
+      - main [ref=e182]:
+        - generic [ref=e183]:
+          - paragraph [ref=e184]: Unable to load this incident.
+          - button "Go back" [ref=e185] [cursor=pointer]
+  - generic [ref=e190] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e191]:
+      - img [ref=e192]
+    - generic [ref=e195]:
+      - button "Open issues overlay" [ref=e196]:
+        - generic [ref=e197]:
+          - generic [ref=e198]: "1"
+          - generic [ref=e199]: "2"
+        - generic [ref=e200]:
+          - text: Issue
+          - generic [ref=e201]: s
+      - button "Collapse issues badge" [ref=e202]:
+        - img [ref=e203]
+  - alert [ref=e205]
+```

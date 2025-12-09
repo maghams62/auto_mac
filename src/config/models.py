@@ -2,8 +2,15 @@
 Typed configuration models for individual feature domains.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional, TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from ..impact.models import ImpactLevel
+
+ImpactLevelValue = Union["ImpactLevel", str]
 
 
 @dataclass(frozen=True)
@@ -119,3 +126,58 @@ class OpenAISettings:
     embedding_model: str
     temperature: float
     max_tokens: int
+
+
+@dataclass(frozen=True)
+class ImpactEvidenceSettings:
+    llm_enabled: bool
+    llm_model: Optional[str]
+    max_bullets: int
+
+
+@dataclass(frozen=True)
+class ImpactPipelineSettings:
+    slack_lookup_hours: int
+    git_lookup_hours: int
+    notify_slack: bool
+
+
+@dataclass(frozen=True)
+class ImpactNotificationSettings:
+    enabled: bool
+    slack_channel: Optional[str]
+    github_app_id: Optional[str]
+    min_impact_level: ImpactLevelValue = "high"
+
+
+@dataclass(frozen=True)
+class ImpactSettings:
+    default_max_depth: int
+    include_docs: bool
+    include_services: bool
+    include_components: bool
+    include_slack_threads: bool
+    max_recommendations: int
+    evidence: ImpactEvidenceSettings
+    pipeline: ImpactPipelineSettings
+    notifications: ImpactNotificationSettings
+
+
+@dataclass(frozen=True)
+class ContextResolutionSettings:
+    dependency_files: List[str]
+    repo_mode: str
+    activity_window_hours: int
+    impact: ImpactSettings
+
+
+@dataclass(frozen=True)
+class TraceabilitySettings:
+    investigations_path: str
+    max_entries: int
+    retention_days: int
+    max_file_bytes: int
+    missing_evidence_threshold: int
+    missing_evidence_window_seconds: int
+    enabled: bool
+    neo4j_enabled: bool

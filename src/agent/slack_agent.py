@@ -11,6 +11,17 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 
 from ..integrations.slack_client import SlackAPIClient, SlackAPIError
+from ..services.slack_metadata import SlackMetadataService
+from ..utils.slack import normalize_channel_name
+_metadata_service: Optional[SlackMetadataService] = None
+
+
+def _get_slack_metadata_service(config: Dict[str, Any]) -> SlackMetadataService:
+    global _metadata_service
+    if _metadata_service is None:
+        _metadata_service = SlackMetadataService(config=config)
+    return _metadata_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -223,41 +234,42 @@ def search_slack_messages(
 
         config = load_config()
         client = SlackAPIClient()
+        metadata_service = _get_slack_metadata_service(config)
 
-        # Get monitored channels from config
-        slack_config = config.get("slack", {})
-        monitored_channels = slack_config.get("monitored_channels", [])
-        default_channel = slack_config.get("default_channel_id")
-
-        # Determine which channel(s) to search
+        # Determine which channel to scope the search to (optional)
         search_channel = channel
-        channels_searched = []
+        channels_searched: List[str] = []
 
+        if search_channel:
+            normalized = normalize_channel_name(search_channel)
+            match = metadata_service.get_channel(search_channel) or (
+                metadata_service.get_channel(normalized) if normalized else None
+            )
+            if match:
+                search_channel = match.id
+                channels_searched = [match.name]
         if not search_channel:
-            # Use default channel if no monitored channels configured
-            if not monitored_channels and default_channel:
-                search_channel = default_channel
-                channels_searched = [default_channel]
-            # If monitored channels exist, we'll search the first one
-            # (search.messages can search all, but fallback needs a specific channel)
-            elif monitored_channels:
-                search_channel = monitored_channels[0] if monitored_channels else None
-                channels_searched = [search_channel] if search_channel else []
+            search_channel = metadata_service.get_default_channel_id()
+            if search_channel:
+                resolved = metadata_service.get_channel(search_channel)
+                channels_searched = [resolved.name if resolved else search_channel]
 
         # Perform search
         results = client.search_messages(query, channel=search_channel, limit=limit)
 
         # Extract unique channels from results
         if not channels_searched and results.get("matches"):
-            channels_searched = list(set(
-                match.get("channel", {}).get("name", match.get("channel", {}).get("id", ""))
-                for match in results["matches"]
-                if match.get("channel")
-            ))
+            channels_searched = list(
+                {
+                    match.get("channel", {}).get("name", match.get("channel", {}).get("id", ""))
+                    for match in results["matches"]
+                    if match.get("channel")
+                }
+            )
 
         return {
             "query": query,
-            "channels_searched": channels_searched or ["all monitored channels"],
+            "channels_searched": channels_searched or (["workspace default"] if search_channel else []),
             "messages_found": results.get("total", 0),
             "messages": results.get("matches", []),
         }

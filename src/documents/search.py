@@ -81,6 +81,7 @@ class SemanticSearch:
                     'total_pages': doc_metadata.get('total_pages', 0),
                     'content_preview': doc_metadata['content'][:300] + '...',
                     'full_content': doc_metadata['content'],
+                    'file_mtime': doc_metadata.get('file_mtime'),
                 })
 
             logger.info(f"Found {len(results)} results")

@@ -147,6 +147,16 @@ npm run dev   # serves http://localhost:3000
 - The dev server proxies API calls to `http://localhost:8000` automatically via `frontend/lib/apiConfig.ts`.
 - If you prefer a production-style build: `npm run build && npm run start`.
 
+> **Running the dashboard + master stack together**
+>
+- **Stacks & ports:** `bash master_start.sh` now runs the Cerebros chat/brain UI on `http://localhost:3300` (backend stays on 8000). The Oqoqo dashboard lives in `oqoqo-dashboard/` and, via `./oq_start.sh`, runs on `http://localhost:3100` by default. Override ports with `MASTER_PORT=<port>` (or `FRONTEND_PORT=<port>`) for master and `PORT=<port>` for the dashboard if you need alternatives.
+- **Port forwarding tips:** tunnel `3100` when you need dashboard access (`ssh -L 3100:localhost:3100 …`) and `3300` for the Cerebros UI. Backend diagnostics still flow through `8000`, so forward that port if you plan to curl FastAPI directly.
+- **One-liner recap:**
+  ```bash
+  MASTER_PORT=3300 bash master_start.sh          # backend 8000 + Cerebros UI 3300
+  (cd oqoqo-dashboard && ./oq_start.sh)          # dashboard on 3100
+  ```
+
 ### 4. (Optional) Launch the Electron desktop shell
 
 ```bash
@@ -170,6 +180,111 @@ The script kills stray servers, clears caches (`__pycache__`, `.next`), verifies
 
 - Use `Ctrl+C` in each terminal to stop the backend, frontend, or Electron shell.
 - If ports 3000/8000 get wedged, run `./start_ui.sh` or manually `lsof -ti :3000 :8000 | xargs kill -9`.
+
+## Multi-repo impact demo (Option 2 → Option 1)
+
+Once the backend is running (either via `master_start.sh` or the steps above), you can exercise the canonical cross-repo story end-to-end. All commands below assume `CEREBROS_API_BASE=http://localhost:8000`.
+
+1. **Trigger a synthetic change in `core-api`:**
+   ```bash
+   curl -X POST "$CEREBROS_API_BASE/impact/git-change" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "repo": "acme/core-api",
+           "title": "payments: require vat_code in contract v2",
+           "description": "Upstream contract changed; billing-service + docs must mention vat_code.",
+           "files": [
+             {"path": "contracts/payment_v2.json", "change_type": "modified"},
+             {"path": "docs/payments.md", "change_type": "modified"}
+           ]
+         }'
+   ```
+2. **Inspect the DocIssues produced by ImpactPipeline:**
+   ```bash
+   curl "$CEREBROS_API_BASE/impact/doc-issues?source=impact-report" | jq '.doc_issues[:2]'
+   ```
+   You should see entries whose `component_ids` include both `billing.checkout` (billing-service) and `docs.payments` (docs-portal), proving that a single upstream change fanned out to two downstream repos.
+3. **Check Activity Graph’s dissatisfaction leaderboard:**
+   ```bash
+   curl "$CEREBROS_API_BASE/activity-graph/top-dissatisfied?limit=5"
+   ```
+   The response lists `core.payments`, `billing.checkout`, and `docs.payments` with non-zero `dissatisfaction_score`.
+4. **Grab the snapshot cards used by the dashboard:**
+   ```bash
+   curl "$CEREBROS_API_BASE/activity/snapshot?limit=5"
+   ```
+5. **Optional UI verification:** Open the dashboard (Next.js front-end at `http://localhost:3000`) and watch the Impact Alerts + Activity Graph tiles update in real time. They consume the same APIs you just called, so no extra wiring is required.
+
+This mini run book is the quickest way to prove that Option 2 (Impact → DocIssues) and Option 1 (Activity Graph) stay in sync for cross-repo changes.
+
+## Unified quota demo seeder
+
+The `scripts/seed_quota_demo.py` helper locks in the new “free tier drops from 1 000 → 300 calls” storyline. It can operate entirely against the synthetic fixtures or touch real repos/Slack depending on the mode you choose.
+
+```bash
+# Update fixtures + ingest them (safe to run repeatedly)
+python scripts/seed_quota_demo.py --mode synthetic
+
+# Push demo branches/commits and replay the Slack thread using your tokens
+python scripts/seed_quota_demo.py --mode live
+```
+
+Add `--dry-run` to either command to see what would change without mutating anything.
+
+### What happens under the hood
+
+1. **Seed Git** – creates `core-api` + `billing-service` commits that enforce 300-call quotas while leaving `web-dashboard`/`docs-portal` stale at 1 000.
+2. **Seed Slack** – appends (or posts live) a support thread where CSMs/PMs complain about the mismatch, tagging all four repos.
+3. **Seed DocIssues** – writes JSON entries tying the drift to `src/pages/Pricing.tsx` and `docs/pricing/free_tier.md` plus a meta issue for `core-api`.
+4. **Run ingestion** – reuses the existing Slack/Git/DocIssue ingestors. Synthetic mode calls the fixture APIs; live mode hits Slack/GitHub.
+5. **Verification** – calls `get_component_activity`, `list_doc_issues`, and `get_context_impacts`. Any FAIL explains what’s missing (graph offline, doc issues absent, etc.) and the script exits 1 so you never walk into a demo half-seeded.
+
+The `quota_demo` block in `config.yaml` centralizes all IDs:
+
+- Repo metadata + demo branches (`quota_demo.git.repos`), including path hints used to rewrite quota constants.
+- Slack channel + participant IDs (`quota_demo.slack`) so fixture text matches the Option 1 classifiers.
+- Doc issue templates (`quota_demo.doc_issues.templates`) which the script renders with both “1 000” and “300” baked into the summaries.
+- Verification targets (`quota_demo.verification`) telling the script which component IDs must light up.
+
+Synthetic mode rewrites:
+
+- `data/synthetic_git/git_events.json`
+- `data/synthetic_slack/slack_events.json`
+- `data/synthetic_git/quota_doc_issues.json`
+
+and also mirrors the doc issues into `data/live/doc_issues.json` so Activity Graph’s DocIssue reader sees the new dissatisfaction signals immediately.
+
+You should see output similar to:
+
+```
+PASS – Fixtures: Synthetic fixtures updated
+PASS – Ingestion: Synthetic ingest complete (slack=5)
+PASS – Activity Graph: comp:web-dashboard activity=…
+PASS – Doc Issues: comp:docs-portal doc issues: 2
+PASS – Context Resolution: Dependents=['comp:docs-portal', 'comp:web-dashboard']
+Quota demo seeding complete.
+```
+
+Treat this PASS/FAIL report as the go/no-go gate before partner demos or regression runs. If any line fails, the script already logged the missing dependency so you can fix it before the audience notices.
+
+### Live-data checklist
+
+- 📋 Follow [`docs/live_ingest_setup.md`](docs/live_ingest_setup.md) to switch every ingest path (Slack, Git, docs, Cerebros) to live data. Synthetic fixtures now load **only** when `mode=synthetic`.
+- 🧩 Set the `LIVE_GIT_ORG` env var (or rely on its default `maghams62`) so `activity_ingest.git.repos` and slash-git targets resolve to the live GitHub repos you control (`core-api`, `billing-service`, `docs-portal`).
+
+## Slash command live check
+
+Use `scripts/check_slash_live.py` to exercise the canonical `/slack` and `/git` flows against a running Cerebros instance:
+
+```bash
+python scripts/check_slash_live.py --base-url http://localhost:8000
+# run just the git scenarios
+python scripts/check_slash_live.py --only git_billing_summary,git_doc_drift
+```
+
+The script replays the scenarios listed in `docs/slash_flow_health.md`, prints a short PASS/FAIL line for each command, and exits non-zero if any response is empty or missing the expected keywords. Keep your production `SLACK_TOKEN` (or legacy `SLACK_BOT_TOKEN`) / `GITHUB_TOKEN` configured so the live backend can resolve real messages and commits.
+- 🕵️ Review [`docs/live_mode_audit.md`](docs/live_mode_audit.md) when debugging—each subsystem’s live vs synthetic switch is documented there with the corresponding config flag.
+- ✅ Verification curl commands (`/impact/doc-issues`, `/activity-graph/top-dissatisfied`, `/activity/snapshot`) must return `mode=atlas` and real GitHub/Slack/doc URLs before demos go out.
 
 ## Usage
 
@@ -242,6 +357,8 @@ python main.py
 **Terminal Commands:**
 
 - `/index` - Reindex all documents in configured folders
+- `/setup` - Inspect universal search modalities and status
+- `/cerebros` - Run universal semantic search across all modalities
 - `/test` - Test system components (Mail.app, OpenAI API, FAISS index)
 - `/help` - Show help message
 - `/quit` - Exit the application
@@ -343,6 +460,11 @@ email:
 ```
 
 ## Documentation
+
+### How It Fits Together
+- [Option 2 – Cross-System Impact](docs/option2_cross_system_impact.md) emits DocIssues by analyzing Git/Slack changes with the dependency map, so cross-repo documentation drift is captured as machine-readable alerts (`/impact/doc-issues`, `/health/impact`).
+- [Option 1 – Activity Graph](docs/option1_activity_graph.md) consumes those DocIssues alongside live Slack + Git JSONL logs to prioritize the noisiest components via `/activity-graph/*`, `/activity/snapshot`, and `/activity/quadrant`.
+- The dashboard and Cerebros Graph UI build on the same APIs (e.g., `/impact/doc-issues`, `/activity/snapshot`, `/api/cerebros/ask-graph`), so humans and agents see consistent evidence when triaging doc work.
 
 **📚 Central Documentation Index**: See [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md) for a complete mapping of all documentation files.
 

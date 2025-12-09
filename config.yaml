@@ -1,12 +1,47 @@
 # Cerebro OS Configuration
 
 # OpenAI API Configuration
+runtime:
+  # High-level execution mode. You can override this with the CEREBROS_MODE
+  # environment variable (dev, demo, live). When unset, defaults to "dev".
+  mode: "${CEREBROS_MODE:-dev}"
+
 openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
   model: "gpt-4o"  # Highest generally available reasoning model
   embedding_model: "text-embedding-3-small"
   temperature: 0.2
   max_tokens: 2000
+
+fallbacks:
+  heuristics_only_length: 24
+  short_token_limit: 3
+  enable_low_signal_classifier: true
+  cancel_keywords:
+    - cancel
+    - never mind
+    - stop
+    - abort
+    - hold on
+    - wait
+    - forget it
+    - nvm
+  ack_keywords:
+    - ok
+    - okay
+    - k
+    - thanks
+    - thank you
+    - got it
+    - cool
+  slash_stop_commands:
+    - stop
+    - cancel
+  llm_classifier:
+    model: "gpt-4o-mini"
+    temperature: 0.0
+    max_tokens: 120
+    max_chars: 120
 
 # VectorDB Configuration (Docs/Issues semantic search)
 vectordb:
@@ -21,6 +56,111 @@ vectordb:
   timeout_seconds: 6.0
   dimension: 1536
 
+youtube:
+  enabled: true
+  history_path: "data/state/youtube_history.json"
+  max_recent: 8
+  metadata:
+    api_key: "${YOUTUBE_API_KEY:-}"
+    oembed_timeout_seconds: 4.0
+  transcript:
+    preferred_languages:
+      - "en"
+    fallback_languages:
+      - "en-US"
+      - "en-GB"
+    max_retries: 3
+    retry_delay_seconds: 2.0
+  vectordb:
+    max_chunk_chars: 1200
+    chunk_overlap_seconds: 2.0
+  transcript_cache:
+    path: "data/state/youtube_videos"
+  clipboard:
+    enabled: true
+    max_candidates: 5
+
+search:
+  enabled: true
+  workspace_id: "${SEARCH_WORKSPACE_ID:-default_workspace}"
+  defaults:
+    max_results_per_modality: 5
+    timeout_ms_per_modality: 2000
+    web_fallback_weight: 0.6
+  # Document/vector search scoring
+  top_k: 5
+  similarity_threshold: 0.45
+  planner:
+    enabled: true
+    rules:
+      - name: code
+        keywords:
+          - "stack trace"
+          - ".py"
+          - "exception"
+          - "error code"
+          - "traceback"
+        include:
+          - "git"
+          - "files"
+      - name: chat
+        keywords:
+          - "slack"
+          - "dm"
+          - "channel"
+          - "thread"
+          - "conversation"
+        include:
+          - "slack"
+      - name: video
+        keywords:
+          - "video"
+          - "youtube"
+          - "talk"
+          - "lecture"
+          - "watch"
+        include:
+          - "youtube"
+  modalities:
+    slack:
+      enabled: true
+      channels:
+        - "#all-cerebros"
+        - "#support"
+      weight: 1.0
+      timeout_ms: 2500
+    git:
+      enabled: true
+      repos:
+        - "core-api"
+        - "docs-portal"
+      weight: 1.1
+      timeout_ms: 2500
+    doc_issues:
+      enabled: true
+      weight: 1.2
+      timeout_ms: 2500
+      max_results: 5
+      scope:
+        path: "${DOC_ISSUES_PATH:-data/live/doc_issues.json}"
+    files:
+      enabled: true
+      roots:
+        - "docs/"
+        - "guides/"
+      weight: 1.0
+      timeout_ms: 2000
+    youtube:
+      enabled: true
+      video_ids: []
+      weight: 0.9
+      timeout_ms: 2000
+    web_search:
+      enabled: true
+      fallback_only: true
+      weight: 0.6
+      timeout_ms: 3000
+
 mongo:
   enabled: false
   uri: "${MONGO_URI:-mongodb://127.0.0.1:27017}"
@@ -31,9 +171,32 @@ mongo:
     max_messages_per_session: 75
     disk_path: "data/cache/chat_sessions"
 
+# Live metadata cache controls (Slack/Git)
+metadata_cache:
+  slack:
+    ttl_seconds: 600          # Cache lifetime for channel/user inventories
+    max_items: 2000           # Soft cap for cached channel/user entries
+    log_metrics: false        # Emit cache hit/miss logs
+  git:
+    repo_ttl_seconds: 900     # Cache lifetime for repo metadata
+    branch_ttl_seconds: 300   # Cache lifetime for branch listings
+    max_branches_per_repo: 500
+    log_metrics: false        # Emit cache hit/miss logs
+
+traceability:
+  enabled: true
+  investigations_path: "data/live/investigations.jsonl"
+  max_entries: 500
+  retention_days: 30
+  max_file_bytes: 5242880  # 5 MB
+  missing_evidence_threshold: 5
+  missing_evidence_window_seconds: 3600
+  neo4j:
+    enabled: false
+
 # Graph / Neo4j Configuration
 graph:
-  enabled: false
+  enabled: true
   uri: "${NEO4J_URI:-bolt://localhost:7687}"
   username: "${NEO4J_USERNAME:-neo4j}"
   password: "${NEO4J_PASSWORD:-}"
@@ -43,9 +206,10 @@ graph:
 activity_ingest:
   state_dir: "data/state/activity_ingest"
   slack:
-    enabled: false
+    enabled: true
     batch_limit: 200
-    workspace_url: ""  # Optional e.g., https://yourteam.slack.com
+    workspace_url: "${SLACK_WORKSPACE_URL:-}"
+    fixture_path: "tests/fixtures/activity/slack_activity.yaml"
     dissatisfaction_keywords:
       - "fail"
       - "error"
@@ -56,8 +220,8 @@ activity_ingest:
       - "rage"
       - "angry"
     channels:
-      - id: "C0123456789"
-        name: "#payments"
+      - id: "C09V8AFDLUF"
+        name: "#all-cerebros"
         components:
           - "comp:payments"
         endpoint_ids:
@@ -69,11 +233,50 @@ activity_ingest:
         dissatisfaction_keywords:
           - "timeout"
           - "failure"
+      - id: "C0A0APQMGAF"
+        name: "#channel-C0A0APQMGAF"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A01N5EVEK"
+        name: "#channel-C0A01N5EVEK"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A0LNN7HQC"
+        name: "#channel-C0A0LNN7HQC"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A2GNUPW3E"
+        name: "demo1"
+        components:
+          - "docs.payments"
+          - "core.payments"
+          - "comp:payments"
+          - "comp:core-api"
+        tags:
+          - "incidents"
+          - "issues"
+          - "rate limits"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      # - id: "C0A0DNAHK2R"
+      #   name: "incidents"
+      #   components:
+      #     - "docs.payments"
+      #     - "core.payments"
+      #     - "comp:payments"
+      #     - "comp:core-api"
+      #   tags:
+      #     - "incidents"
+      #     - "vat"
+      #   recency_half_life_hours: 72
+      #   base_weight: 1.0
   git:
-    enabled: false
+    enabled: true
+    fixture_path: "tests/fixtures/activity/git_activity.yaml"
     default_branch: "main"
     lookback_hours: 168
     include_issues: true
+    comments_enabled: true
     max_issues: 15
     issue_labels:
       - "bug"
@@ -83,7 +286,7 @@ activity_ingest:
       - "docs"
       - "documentation"
     default_issue_components:
-      - "comp:core"
+      - "comp:docs"
     issue_component_map:
       - labels:
           - "documentation"
@@ -96,28 +299,35 @@ activity_ingest:
       - labels:
           - "bug"
         components:
-          - "comp:core"
+          - "comp:payments"
     repos:
-      - owner: "tiangolo"
-        name: "fastapi"
+      - owner: "maghams62"
+        name: "core-api"
+        project_id: "project_core_api"
         include_prs: true
         include_commits: true
         include_issues: true
-        branch: "master"
-        max_prs: 10
-        max_commits: 20
-        max_issues: 15
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
         default_components:
-          - "comp:core"
+          - "comp:payments"
         default_issue_components:
           - "comp:docs"
         component_map:
-          - match: "docs/en/docs/"
+          - match: "contracts/"
+            components:
+              - "comp:payments"
+          - match: "services/payments"
+            components:
+              - "comp:payments"
+          - match: "config/plans/"
+            components:
+              - "comp:core-api"
+          - match: "docs/"
             components:
               - "comp:docs"
-          - match: "fastapi/routing"
-            components:
-              - "comp:core"
         issue_component_map:
           - labels:
               - "documentation"
@@ -127,7 +337,210 @@ activity_ingest:
           - labels:
               - "bug"
             components:
-              - "comp:core"
+              - "comp:payments"
+      - owner: "maghams62"
+        name: "billing-service"
+        project_id: "project_billing_service"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
+        default_components:
+          - "comp:mobile"
+        default_issue_components:
+          - "comp:mobile"
+        component_map:
+          - match: "src/"
+            components:
+              - "comp:mobile"
+          - match: "src/pricing/"
+            components:
+              - "comp:billing-service"
+          - match: "docs/"
+            components:
+              - "comp:docs"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+          - labels:
+              - "bug"
+            components:
+              - "comp:mobile"
+      - owner: "maghams62"
+        name: "docs-portal"
+        project_id: "project_docs_portal"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
+        default_components:
+          - "comp:docs"
+        default_issue_components:
+          - "comp:docs"
+        component_map:
+          - match: "docs/"
+            components:
+              - "comp:docs"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+  doc_issues:
+    enabled: true
+    path: "data/live/doc_issues.json"
+    default_component: "comp:docs"
+
+quota_demo:
+  scenario_id: "free_tier_quota"
+  quotas:
+    legacy_free_tier: 1000
+    updated_free_tier: 300
+  synthetic:
+    slack_fixture_path: "data/synthetic_slack/slack_events.json"
+    git_events_path: "data/synthetic_git/git_events.json"
+    git_prs_path: "data/synthetic_git/git_prs.json"
+    doc_issues_path: "data/synthetic_git/quota_doc_issues.json"
+  slack:
+    channel_id: "${QUOTA_DEMO_SLACK_CHANNEL_ID:-C123SUPPORT}"
+    channel_name: "${QUOTA_DEMO_SLACK_CHANNEL_NAME:-#support}"
+    workspace: "${QUOTA_DEMO_SLACK_WORKSPACE:-acme-quota}"
+    default_thread_ts: "quota-demo-thread"
+    participants:
+      - handle: "csm"
+        user_id: "${QUOTA_DEMO_CSM_USER_ID:-U_csm}"
+        display_name: "Customer Success"
+        component_ids:
+          - "comp:web-dashboard"
+      - handle: "se"
+        user_id: "${QUOTA_DEMO_SE_USER_ID:-U_se}"
+        display_name: "Support Engineer"
+        component_ids:
+          - "comp:core-api"
+      - handle: "billing"
+        user_id: "${QUOTA_DEMO_BILLING_USER_ID:-U_billing}"
+        display_name: "Billing Lead"
+        component_ids:
+          - "comp:billing-service"
+      - handle: "docs"
+        user_id: "${QUOTA_DEMO_DOCS_USER_ID:-U_docs}"
+        display_name: "Docs Lead"
+        component_ids:
+          - "comp:docs-portal"
+      - handle: "pm"
+        user_id: "${QUOTA_DEMO_PM_USER_ID:-U_pm}"
+        display_name: "Product Manager"
+        component_ids:
+          - "comp:core-api"
+          - "comp:web-dashboard"
+  git:
+    repos:
+      core-api:
+        repo_id: "core-api"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${CORE_API_REPO:-core-api}"
+        default_branch: "${CORE_API_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_CORE_API_BRANCH:-quota-demo}"
+        component_id: "comp:core-api"
+        service_id: "core-api-service"
+        local_root: "core-api"
+        files:
+          - "config/plans/free_tier.yaml"
+        commit_message: "feat(plans): reduce free tier quota from {legacy} to {updated}"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: true
+      billing-service:
+        repo_id: "billing-service"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${BILLING_SERVICE_REPO:-billing-service}"
+        default_branch: "${BILLING_SERVICE_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_BILLING_BRANCH:-quota-demo}"
+        component_id: "comp:billing-service"
+        service_id: "billing-service"
+        local_root: "billing-service"
+        files:
+          - "src/pricing/plan_config.py"
+        commit_message: "chore(pricing): sync billing free tier quota with core-api"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: true
+      web-dashboard:
+        repo_id: "web-dashboard"
+        owner: "${WEB_DASHBOARD_REPO_OWNER:-maghams62}"
+        name: "${WEB_DASHBOARD_REPO:-web-dashboard}"
+        default_branch: "${WEB_DASHBOARD_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_WEB_BRANCH:-quota-demo}"
+        component_id: "comp:web-dashboard"
+        service_id: "web-dashboard-service"
+        local_root: "web-dashboard"
+        files:
+          - "src/pages/Pricing.tsx"
+        commit_message: "fix: update pricing copy for free tier quota"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: false
+      docs-portal:
+        repo_id: "docs-portal"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${DOCS_PORTAL_REPO:-docs-portal}"
+        default_branch: "${DOCS_PORTAL_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_DOCS_BRANCH:-quota-demo}"
+        component_id: "comp:docs-portal"
+        service_id: "docs-portal"
+        local_root: "docs-portal"
+        files:
+          - "docs/pricing/free_tier.md"
+        commit_message: "docs: refresh free tier quota copy"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: false
+  doc_issues:
+    templates:
+      - key: "web-dashboard-pricing"
+        component_id: "comp:web-dashboard"
+        repo_id: "web-dashboard"
+        doc_path: "src/pages/Pricing.tsx"
+        severity: "high"
+        tags:
+          - "free-tier"
+          - "quota"
+          - "pricing-ui"
+        summary_template: "Pricing dashboard still shows {legacy} free requests but backend enforces {updated}."
+      - key: "docs-portal-free-tier"
+        component_id: "comp:docs-portal"
+        repo_id: "docs-portal"
+        doc_path: "docs/pricing/free_tier.md"
+        severity: "high"
+        tags:
+          - "free-tier"
+          - "quota"
+          - "api-docs"
+        summary_template: "Docs portal free tier page promises {legacy} calls/month even though services throttle at {updated}."
+      - key: "core-api-meta"
+        component_id: "comp:core-api"
+        repo_id: "core-api"
+        doc_path: null
+        severity: "medium"
+        tags:
+          - "free-tier"
+          - "plan-consistency"
+        summary_template: "Free tier quota definitions are inconsistent between services ({updated}) and docs/UI ({legacy})."
+  verification:
+    activity_component: "comp:web-dashboard"
+    doc_component: "comp:docs-portal"
+    context_root_component: "comp:core-api"
+    doc_repo_id: "docs-portal"
 
 context_resolution:
   dependency_files:
@@ -138,6 +551,22 @@ context_resolution:
     default_max_depth: 2
     include_docs: true
     include_services: true
+    include_components: true
+    include_slack_threads: true
+    max_recommendations: 5
+    evidence:
+      llm_enabled: true
+      llm_model: "${IMPACT_EVIDENCE_MODEL:-gpt-4o-mini}"
+      max_bullets: 5
+    pipeline:
+      slack_lookup_hours: 72
+      git_lookup_hours: 168
+      notify_slack: false
+    notifications:
+      enabled: false               # Feature flag for downstream alerts (Slack/PR)
+      slack_channel: "#docs-impact" # Optional default channel for mock notifier
+      github_app_id: null          # Placeholder for future GitHub App integration
+      min_impact_level: "high"     # Notify only when issues meet/exceed this level
 
 # Reasoning Trace Configuration (Experimental)
 # Enables persistent reasoning memory across agent executions
@@ -246,14 +675,14 @@ documents:
   # Index refresh interval (in seconds, -1 to disable auto-refresh)
   refresh_interval: 3600
 
+# Hosted documentation portal (used for doc issue deep links)
+docs:
+  portal_base_url: "${DOC_PORTAL_BASE_URL:-https://maghams62.github.io/docs-portal}"
+  portal_slug_map:
+    "docs/payments_api.md": "payments_api"
+    "docs/billing_flows.md": "billing_flows"
+
 # Search Configuration
-search:
-  # Number of top results to return
-  top_k: 5
-
-  # Similarity threshold (0-1, higher = more strict)
-  similarity_threshold: 0.45
-
 # Images Configuration
 images:
   # Enable/disable image indexing and search
@@ -595,7 +1024,7 @@ performance:
 
 # Slack Configuration
 slack:
-  bot_token: "${SLACK_BOT_TOKEN}"          # Slack Bot Token (xoxb-...)
+  bot_token: "${SLACK_TOKEN}"              # Slack Bot Token (xoxb-...). Also falls back to legacy SLACK_BOT_TOKEN.
   default_channel_id: "${SLACK_CHANNEL_ID}" # Default channel ID for fetching messages
 
   # Monitored channels for search (channel IDs)
@@ -609,7 +1038,7 @@ slack:
 
 # Slash-Slack agent configuration
 slash_slack:
-  default_channel_id: ""            # Optional override if different from slack.default_channel_id
+  default_channel_id: "C0A0DNAHK2R" # Hardcoded to #incidents for slash Cerebros demo
   default_time_window_hours: 24     # Default lookback window for channel recaps
   workspace_url: ""                 # e.g., https://yourteam.slack.com for permalink construction
   graph_emit: true                  # Emit graph payloads for Neo4j ingestion hooks
@@ -621,13 +1050,71 @@ slash_slack:
     - "drift"
     - "api drift"
   debug_block_enabled: ${SLASH_SLACK_DEBUG_BLOCK_ENABLED:-true}
-  debug_source_label: "${SLASH_SLACK_DEBUG_SOURCE_LABEL:-synthetic_slack}"
+  debug_source_label: "${SLASH_SLACK_DEBUG_SOURCE_LABEL:-live_slack}"
 
 slash_git:
   doc_drift_reasoner: true
   debug_block_enabled: ${SLASH_GIT_DEBUG_BLOCK_ENABLED:-true}
-  debug_source_label: "${SLASH_GIT_DEBUG_SOURCE_LABEL:-synthetic_git}"
+  debug_source_label: "${SLASH_GIT_DEBUG_SOURCE_LABEL:-live_git}"
   debug_repo_label: "${SLASH_GIT_DEBUG_REPO_LABEL:-${GITHUB_REPO_NAME:-auto_mac}}"
+  data_mode: "${SLASH_GIT_DATA_MODE:-graph}"
+  target_catalog_path: "config/slash_git_targets.yaml"
+  default_repo_id: "core-api"
+  default_time_window_days: 7
+  component_time_window_days: 7
+  graph_emit_enabled: true
+  graph_log_path: "data/logs/slash/git_graph.jsonl"
+  graph_mode:
+    enabled: true
+    require: true
+    max_results: 80
+  use_live_data: ${SLASH_GIT_USE_LIVE_DATA:-false}
+  synthetic_data:
+    events_path: "data/synthetic_git/git_events.json"
+    prs_path: "data/synthetic_git/git_prs.json"
+
+activity_graph:
+  slack_graph_path: "data/logs/slash/slack_graph.jsonl"
+  git_graph_path: "data/logs/slash/git_graph.jsonl"
+  doc_issues_path: "data/live/doc_issues.json"
+  impact_events_path: "data/logs/impact_events.jsonl"
+  cache:
+    enabled: true
+    ttl_seconds: 45
+    backend: "memory"  # options: memory, redis
+    redis_url: "${ACTIVITY_GRAPH_REDIS_URL:-}"
+  weights:
+    activity:
+      git_events: 1.0
+      slack_conversations: 0.5
+    dissatisfaction:
+      slack_complaints: 1.0
+      doc_issues: 0.7
+  scoring:
+    # Activity Score = (Git commits/PRs * git weights) + (Slack conversations * slack weight)
+    # Dissatisfaction Score = (Slack complaints * complaint weight) + (DocIssues severity weight)
+    # All signal contributions are later scaled by the time decay multipliers below.
+    slack:
+      conversation_weight: 0.4        # lightweight chatter = low weight
+      complaint_weight: 0.9           # tagged complaints carry more impact
+    git:
+      commit_weight: 0.8              # routine commits = medium weight
+      pr_weight: 1.2                  # PRs/merges typically higher-risk
+    doc_issues:
+      severity_weights:               # DocIssues dominate dissatisfaction
+        critical: 3.0
+        high: 2.0
+        medium: 1.2
+        low: 0.5
+    time_decay:
+      buckets:                        # multiplier applied using newest event timestamp
+        "1h": 1.0                     # < 1 hour old -> fully weighted
+        "24h": 0.7                    # < 24 hours old -> medium decay
+        "7d": 0.4                     # < 7 days old -> strong decay
+        "30d": 0.15                   # < 30 days old -> minimal impact
+      default: 0.1                    # anything older than 30d still counts a little
+    trend:
+      baseline_window: "7d"           # compare current window to prior 7d block for trend_delta
 
 # Activity Intelligence / Oqoqo
 activity:
@@ -658,8 +1145,13 @@ github:
     - synchronize                       # PR updated with new commits
     - reopened                          # PR reopened
 
+impact:
+  data_mode: "${IMPACT_DATA_MODE:-live}"
+  auto_from_slash: ${IMPACT_AUTO_FROM_SLASH:-true}
+  endpoint_base: "${IMPACT_ENDPOINT_BASE:-http://127.0.0.1:8000}"
+
 branch_watcher:
-  enabled: true
+  enabled: false
   startup_delay_seconds: 8              # Delay before starting GitHub polling (seconds)
 
 synthetic_git:

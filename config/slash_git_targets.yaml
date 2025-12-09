@@ -1,0 +1,290 @@
+repos:
+  - id: core-api
+    name: "Core API"
+    repo_owner: "${LIVE_GIT_ORG:-maghams62}"
+    repo_name: "core-api"
+    default_branch: "main"
+    aliases:
+      - "core api"
+      - "core-api"
+      - "coreapi"
+      - "core payments"
+      - "payments service"
+    components:
+      - id: "core.payments"
+        name: "Core Payments"
+        project_id: "project_atlas"
+        aliases:
+          - "core payments"
+          - "payments api"
+          - "payments component"
+          - "/v1/payments/create"
+          - "vat"
+        paths:
+          - "src/payments.py"
+          - "openapi/payments.yaml"
+          - "docs/payments.md"
+        topics:
+          - "vat"
+          - "payments"
+          - "onboarding"
+      - id: "core.webhooks"
+        name: "Core Webhooks"
+        project_id: "project_atlas"
+        aliases:
+          - "core webhooks"
+          - "webhooks"
+        paths:
+          - "src/auth.py"
+        topics:
+          - "auth"
+          - "routing"
+      - id: "comp:core-api"
+        name: "Core API Platform"
+        project_id: "project_atlas"
+        aliases:
+          - "core-api"
+          - "core api"
+          - "core quotas"
+        paths:
+          - "config/plans/free_tier.yaml"
+          - "src/limits/rate_limiter.py"
+        topics:
+          - "quota"
+          - "free tier"
+          - "billing"
+
+  - id: billing-service
+    name: "Billing Service"
+    repo_owner: "${LIVE_GIT_ORG:-maghams62}"
+    repo_name: "billing-service"
+    default_branch: "main"
+    aliases:
+      - "billing"
+      - "billing-service"
+      - "billing service"
+      - "checkout"
+    components:
+      - id: "billing.checkout"
+        name: "Billing Checkout"
+        project_id: "project_atlas"
+        aliases:
+          - "billing checkout"
+          - "checkout"
+          - "cart"
+          - "billing client"
+        paths:
+          - "src/checkout.py"
+          - "src/core_api_client.py"
+          - "docs/api_usage.md"
+          - "docs/billing_onboarding.md"
+        topics:
+          - "vat"
+          - "cart"
+          - "checkout"
+          - "onboarding"
+      - id: "comp:billing-service"
+        name: "Billing Service Quotas"
+        project_id: "project_atlas"
+        aliases:
+          - "billing service"
+          - "billing quotas"
+          - "plan config"
+        paths:
+          - "src/pricing/plan_config.py"
+          - "src/core_api_client.py"
+        topics:
+          - "quota"
+          - "free tier"
+          - "pricing"
+
+  - id: notifications-service
+    name: "Notifications Service"
+    repo_owner: "${LIVE_GIT_ORG:-maghams62}"
+    repo_name: "notifications-service"
+    default_branch: "main"
+    aliases:
+      - "notifications"
+      - "notifications-service"
+      - "notification service"
+      - "receipt service"
+    components:
+      - id: "notifications.dispatch"
+        name: "Notifications Dispatch"
+        aliases:
+          - "notifications dispatch"
+          - "notification dispatch"
+          - "/v1/notifications/send"
+          - "template_version"
+        paths:
+          - "src/notifications.py"
+          - "src/scheduler.py"
+          - "docs/notification_playbook.md"
+        topics:
+          - "notifications"
+          - "template"
+          - "receipts"
+
+  - id: docs-portal
+    name: "Docs Portal"
+    repo_owner: "${LIVE_GIT_ORG:-maghams62}"
+    repo_name: "docs-portal"
+    default_branch: "main"
+    aliases:
+      - "docs"
+      - "docs portal"
+      - "documentation"
+      - "doc site"
+    components:
+      - id: "docs.payments"
+        name: "Payments Docs"
+        project_id: "project_atlas"
+        aliases:
+          - "payments docs"
+          - "payments documentation"
+          - "docs/payments_api.md"
+          - "billing flows docs"
+        paths:
+          - "docs/payments_api.md"
+          - "docs/billing_flows.md"
+        topics:
+          - "docs"
+          - "payments"
+          - "billing"
+      - id: "docs.notifications"
+        name: "Notifications Docs"
+        project_id: "project_atlas"
+        aliases:
+          - "notifications docs"
+          - "notification playbook"
+          - "docs/changelog.md"
+        paths:
+          - "docs/changelog.md"
+        topics:
+          - "template_version"
+          - "notifications"
+
+  - id: web-dashboard
+    name: "Web Dashboard"
+    repo_owner: "${WEB_DASHBOARD_REPO_OWNER:-maghams62}"
+    repo_name: "${WEB_DASHBOARD_REPO:-web-dashboard}"
+    default_branch: "${WEB_DASHBOARD_BRANCH:-main}"
+    aliases:
+      - "web-dashboard"
+      - "dashboard"
+      - "pricing ui"
+    components:
+      - id: "comp:web-dashboard"
+        name: "Web Dashboard Pricing UI"
+        project_id: "project_atlas"
+        aliases:
+          - "dashboard pricing"
+          - "pricing page"
+          - "pricing.tsx"
+        paths:
+          - "src/pages/Pricing.tsx"
+        topics:
+          - "quota"
+          - "free tier"
+          - "ui"
+      - id: "comp:docs-portal"
+        name: "Docs Portal Pricing"
+        project_id: "project_atlas"
+        aliases:
+          - "docs-portal"
+          - "pricing docs"
+          - "free tier docs"
+        paths:
+          - "docs/pricing/free_tier.md"
+        topics:
+          - "quota"
+          - "pricing"
+          - "documentation"
+
+  - id: fastapi
+    name: "FastAPI"
+    repo_owner: "tiangolo"
+    repo_name: "fastapi"
+    default_branch: "master"
+    aliases:
+      - "fastapi"
+      - "fast api"
+      - "pydantic"
+    components:
+      - id: "comp:fastapi-core"
+        name: "FastAPI Core"
+        aliases:
+          - "fastapi core"
+          - "fastapi framework"
+          - "fastapi internal"
+        paths:
+          - "fastapi/"
+          - "docs/en/docs/"
+          - "docs_src/"
+        topics:
+          - "framework"
+          - "pydantic"
+          - "core"
+      - id: "comp:fastapi-examples"
+        name: "FastAPI Examples"
+        aliases:
+          - "fastapi examples"
+          - "fastapi tutorial"
+          - "docs src"
+        paths:
+          - "docs_src/"
+          - "docs/en/docs/tutorial/"
+          - "docs/en/docs/advanced/"
+        topics:
+          - "tutorial"
+          - "examples"
+          - "guides"
+
+  - id: starlette
+    name: "Starlette"
+    repo_owner: "encode"
+    repo_name: "starlette"
+    default_branch: "main"
+    aliases:
+      - "starlette"
+      - "encode/starlette"
+      - "asgi"
+    components:
+      - id: "comp:starlette-core"
+        name: "Starlette Core"
+        aliases:
+          - "starlette core"
+          - "starlette router"
+          - "starlette middleware"
+        paths:
+          - "starlette/"
+          - "docs/"
+        topics:
+          - "asgi"
+          - "router"
+          - "middleware"
+
+  - id: httpx
+    name: "HTTPX"
+    repo_owner: "encode"
+    repo_name: "httpx"
+    default_branch: "main"
+    aliases:
+      - "httpx"
+      - "encode/httpx"
+      - "http client"
+    components:
+      - id: "comp:httpx-core"
+        name: "HTTPX Core"
+        aliases:
+          - "httpx client"
+          - "httpx transport"
+          - "async http client"
+        paths:
+          - "httpx/"
+          - "docs/"
+        topics:
+          - "http"
+          - "client"
+          - "async"
+

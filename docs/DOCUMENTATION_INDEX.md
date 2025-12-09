@@ -37,6 +37,7 @@ Cerebros implementation are listed here. Historical write-ups live in
 | Document | Path | Purpose |
 |----------|------|---------|
 | Stable Guide §§4–5 | `docs/LLM_CODEBASE_GUIDE.md` | Backend entry points, data layout, runbooks |
+| Cross-System Impact Engine | `docs/cross_system_context.md` | Option 2 dependency graph + impact pipeline overview |
 | Synthetic Git Dataset | `docs/development/synthetic_git_dataset.md` | Git fixture structure for slash commands |
 | Synthetic Slack Dataset | `docs/development/synthetic_slack_dataset.md` | Slack fixture structure |
 | Vector Service Overview | `docs/operations/vector.md` | Qdrant / vector store wiring |
@@ -49,9 +50,11 @@ Cerebros implementation are listed here. Historical write-ups live in
 | Document | Path | Purpose |
 |----------|------|---------|
 | Slash Command Smoke Tests | `docs/testing/SLASH_COMMANDS.md` | Manual + automated validation steps |
+| Option 2 Real Runs | `docs/testing/reports/CROSS_SYSTEM_OPTION2_REAL_RUNS.md` | Sample API/Slack scenarios + commentary |
 | Instant Startup Checklist | `docs/testing/INSTANT_STARTUP.md` | Verifies launcher behavior after builds |
 | Stable Guide §6 | `docs/LLM_CODEBASE_GUIDE.md` | pytest focus + smoke scripts |
 | Scripts & Checks | `tests/scripts/test_run_checks.py` | Programmatic health probe |
+| Cerebros E2E Test Plan | `docs/testing/CEREBROS_E2E_TEST_PLAN.md` | Brutal QA prompt for `/cerebros` Option1/Option2 verification |
 
 ---
 

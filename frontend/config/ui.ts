@@ -27,6 +27,20 @@ export const spotlightUi = {
       damping: 32,
       mass: 0.6,
     },
+    overlay: {
+      duration: 0.24,
+      ease: [0.33, 1, 0.68, 1],
+    },
+    card: {
+      type: "spring",
+      stiffness: 280,
+      damping: 28,
+      mass: 0.75,
+    },
+    progress: {
+      duration: 1.4,
+      ease: "easeInOut",
+    },
   },
 };
 

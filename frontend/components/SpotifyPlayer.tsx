@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, ChangeEvent, KeyboardEvent } from "react";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 
 interface SpotifyPlayerProps {
@@ -68,12 +68,30 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
   const [scrollToBottomVisible, setScrollToBottomVisible] = useState(false);
   const [activeDevice, setActiveDevice] = useState<string | null>(null);
   const [lastPollTime, setLastPollTime] = useState(0);
+  const [volumePercent, setVolumePercent] = useState(70);
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [pendingSeekMs, setPendingSeekMs] = useState<number | null>(null);
 
   const apiBaseUrl = getApiBaseUrl();
   const scriptLoadedRef = useRef(false);
   const playerInitializedRef = useRef(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const volumeUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSeekingRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (volumeUpdateTimeoutRef.current) {
+        clearTimeout(volumeUpdateTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    isSeekingRef.current = isSeeking;
+  }, [isSeeking]);
 
   // Detect ScrollToBottom button visibility for collision avoidance
   useEffect(() => {
@@ -228,12 +246,17 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
           setIsPaused(true);
           setPosition(0);
           setDuration(0);
+          setPendingSeekMs(null);
+          setIsSeeking(false);
           return;
         }
 
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
-        setPosition(state.position);
+        if (!isSeekingRef.current) {
+          setPosition(state.position);
+          setPendingSeekMs(null);
+        }
         setDuration(state.duration);
       });
 
@@ -305,6 +328,8 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
           setPosition(0);
           setDuration(0);
           setActiveDevice(null);
+          setPendingSeekMs(null);
+          setIsSeeking(false);
           return;
         }
 
@@ -321,9 +346,19 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
         });
 
         setIsPaused(!status.is_playing);
-        setPosition(status.progress_ms || 0);
+        if (!isSeekingRef.current) {
+          setPosition(status.progress_ms || 0);
+          setPendingSeekMs(null);
+        }
         setDuration(track.duration_ms || 0);
         setLastPollTime(Date.now());
+        if (typeof status.shuffle_state === "boolean") {
+          setIsShuffle(status.shuffle_state);
+        }
+        if (status.device && typeof status.device.volume_percent === "number") {
+          const nextVolume = Math.max(0, Math.min(100, status.device.volume_percent));
+          setVolumePercent(nextVolume);
+        }
 
         // Update active device info
         if (status.device) {
@@ -353,7 +388,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
 
   // Local progress updates between polls for smooth progress bar
   useEffect(() => {
-    if (isPaused || !duration || !isAuthenticated) {
+    if (isPaused || !duration || !isAuthenticated || isSeeking) {
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
         progressIntervalRef.current = null;
@@ -377,7 +412,7 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
         progressIntervalRef.current = null;
       }
     };
-  }, [isPaused, duration, lastPollTime, isAuthenticated]);
+  }, [isPaused, duration, lastPollTime, isAuthenticated, isSeeking]);
 
   const handleLogin = () => {
     window.location.href = `${apiBaseUrl}/api/spotify/login`;
@@ -462,12 +497,130 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
     }
   };
 
+  const sendVolumeUpdate = useCallback(async (value: number) => {
+    const clampedValue = Math.max(0, Math.min(100, Math.round(value)));
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/spotify/volume`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ volume_percent: clampedValue }),
+      });
+
+      if (!response.ok && player) {
+        await player.setVolume(Math.max(0, Math.min(1, clampedValue / 100)));
+      }
+    } catch (error) {
+      console.error("Failed to set volume:", error);
+      if (player) {
+        try {
+          await player.setVolume(Math.max(0, Math.min(1, clampedValue / 100)));
+        } catch (playerError) {
+          console.error("Player volume fallback also failed:", playerError);
+        }
+      }
+    }
+  }, [apiBaseUrl, player]);
+
+  const scheduleVolumeUpdate = useCallback((value: number) => {
+    if (volumeUpdateTimeoutRef.current) {
+      clearTimeout(volumeUpdateTimeoutRef.current);
+    }
+    volumeUpdateTimeoutRef.current = setTimeout(() => {
+      void sendVolumeUpdate(value);
+    }, 200);
+  }, [sendVolumeUpdate]);
+
+  const handleVolumeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextValue = Number(event.target.value);
+    setVolumePercent(nextValue);
+    if (player) {
+      player.setVolume(Math.max(0, Math.min(1, nextValue / 100))).catch(err => {
+        console.error("Web Playback volume update failed:", err);
+      });
+    }
+    scheduleVolumeUpdate(nextValue);
+  }, [player, scheduleVolumeUpdate]);
+
+  const handleSeekChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    if (!duration) return;
+    const percent = Number(event.target.value);
+    const nextPosition = Math.round((percent / 100) * duration);
+    setIsSeeking(true);
+    setPosition(nextPosition);
+    setPendingSeekMs(nextPosition);
+  }, [duration]);
+
+  const handleSeekCommit = useCallback(async () => {
+    if (pendingSeekMs === null) {
+      setIsSeeking(false);
+      return;
+    }
+    const target = pendingSeekMs;
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/spotify/seek`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position_ms: target }),
+      });
+
+      if (!response.ok && player) {
+        await player.seek(target);
+      }
+      setPosition(target);
+      setLastPollTime(Date.now());
+    } catch (error) {
+      console.error("Failed to seek within track:", error);
+      if (player) {
+        try {
+          await player.seek(target);
+        } catch (playerError) {
+          console.error("Player seek fallback also failed:", playerError);
+        }
+      }
+    } finally {
+      setPendingSeekMs(null);
+      setIsSeeking(false);
+    }
+  }, [pendingSeekMs, apiBaseUrl, player]);
+
+  const handleSeekKeyUp = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    const keysToCommit = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Enter"];
+    if (keysToCommit.includes(event.key)) {
+      event.preventDefault();
+      void handleSeekCommit();
+    }
+  }, [handleSeekCommit]);
+
+  const triggerSeekCommit = useCallback(() => {
+    void handleSeekCommit();
+  }, [handleSeekCommit]);
+
+  const handleToggleShuffle = useCallback(async () => {
+    const nextState = !isShuffle;
+    setIsShuffle(nextState);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/spotify/shuffle`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: nextState }),
+      });
+      if (!response.ok) {
+        setIsShuffle(!nextState);
+      }
+    } catch (error) {
+      console.error("Failed to toggle shuffle:", error);
+      setIsShuffle(!nextState);
+    }
+  }, [apiBaseUrl, isShuffle]);
+
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
+
+  const playbackProgressPercent = duration ? Math.min(100, (position / Math.max(duration, 1)) * 100) : 0;
 
   // Don't show anything if checking auth
   if (authStatus === "checking") {
@@ -624,57 +777,105 @@ export default function SpotifyPlayer({ onDeviceReady }: SpotifyPlayerProps) {
               </div>
             </div>
 
-            {/* Progress Bar */}
-            {duration > 0 && (
-              <div className="mb-4">
-                <div className="h-1.5 bg-gray-700/50 rounded-full overflow-hidden backdrop-blur-sm">
-                  <div
-                    className="h-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-300 rounded-full"
-                    style={{ width: `${(position / duration) * 100}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-gray-500 mt-1.5">
-                  <span>{formatTime(position)}</span>
-                  <span>{formatTime(duration)}</span>
-                </div>
+            {/* Progress / Seek */}
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-gray-500 font-mono mb-2">
+                <span>{formatTime(position)}</span>
+                <span>{formatTime(duration)}</span>
               </div>
-            )}
+              <div className="relative h-1.5 bg-gray-700/50 rounded-full overflow-hidden backdrop-blur-sm">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-300 rounded-full"
+                  style={{ width: `${playbackProgressPercent}%` }}
+                />
+                <div
+                  className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg transition-all duration-200 ${duration === 0 ? 'opacity-40' : ''}`}
+                  style={{ left: `calc(${playbackProgressPercent}% - 6px)` }}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  value={playbackProgressPercent}
+                  onChange={handleSeekChange}
+                  onMouseUp={triggerSeekCommit}
+                  onTouchEnd={triggerSeekCommit}
+                  onBlur={triggerSeekCommit}
+                  onKeyUp={handleSeekKeyUp}
+                  aria-label="Seek within track"
+                  disabled={duration === 0}
+                  className="absolute inset-0 w-full h-5 opacity-0 cursor-pointer appearance-none bg-transparent focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/50 rounded-full"
+                />
+              </div>
+            </div>
 
             {/* Controls */}
-            <div className="flex items-center justify-center gap-6">
-              <button
-                onClick={skipToPrevious}
-                className="text-gray-400 hover:text-white hover:scale-110 transition-all duration-200 active:scale-95"
-                title="Previous track"
-              >
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                </svg>
-              </button>
-              <button
-                onClick={togglePlayPause}
-                className="bg-gradient-to-br from-white to-gray-100 hover:from-gray-100 hover:to-gray-200 text-black rounded-full p-3.5 transition-all duration-200 hover:scale-110 active:scale-95 shadow-lg hover:shadow-xl"
-                title={isPaused ? "Play" : "Pause"}
-              >
-                {isPaused ? (
-                  <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+                <button
+                  onClick={handleToggleShuffle}
+                  aria-pressed={isShuffle}
+                  title={isShuffle ? "Disable shuffle" : "Enable shuffle"}
+                  className={`p-2 rounded-full border transition-all duration-200 justify-self-center sm:justify-self-start ${isShuffle ? 'border-green-400/60 text-green-300 bg-green-500/10 shadow-lg shadow-green-500/20' : 'border-transparent text-gray-400 hover:text-white hover:bg-gray-700/40'}`}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M16 3h5v5l-1.79-1.79-3.59 3.59-1.41-1.41 3.59-3.59L16 3zM4 4h4l5.59 7.59-1.42 1.42L6.83 6H4V4zm0 16v-2h2.83l2.88-3.91 1.42 1.42L7.17 20H4zm12-4l3.59 3.59L21 17v5h-5l1.79-1.79L13.5 13.5l1.41-1.41L16 16z" />
                   </svg>
-                ) : (
-                  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 4h4v16H6zm8 0h4v16h-4z" />
+                </button>
+
+                <div className="flex items-center justify-center gap-6 w-full">
+                  <button
+                    onClick={skipToPrevious}
+                    className="text-gray-400 hover:text-white hover:scale-110 transition-all duration-200 active:scale-95"
+                    title="Previous track"
+                  >
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={togglePlayPause}
+                    className="bg-gradient-to-br from-white to-gray-100 hover:from-gray-100 hover:to-gray-200 text-black rounded-full w-14 h-14 flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95 shadow-lg hover:shadow-xl"
+                    title={isPaused ? "Play" : "Pause"}
+                  >
+                    {isPaused ? (
+                      <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 4h4v16H6zm8 0h4v16h-4z" />
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    onClick={skipToNext}
+                    className="text-gray-400 hover:text-white hover:scale-110 transition-all duration-200 active:scale-95"
+                    title="Next track"
+                  >
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 text-gray-400 w-full sm:w-auto sm:min-w-[220px] justify-self-stretch sm:justify-self-end">
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a2.5 2.5 0 00-1-2l-1.42 1.42A1 1 0 0113 12a1 1 0 011.08-.99l1.42 1.42a2.5 2.5 0 00-1 2 2.5 2.5 0 001 2l-1.42 1.42A4.5 4.5 0 0115.5 12zm3-4a6.5 6.5 0 00-1.94-4.6L17.14 4.3A4.5 4.5 0 0118.5 8a4.5 4.5 0 01-1.36 3.2l1.42 1.42A6.5 6.5 0 0021.5 8z" />
                   </svg>
-                )}
-              </button>
-              <button
-                onClick={skipToNext}
-                className="text-gray-400 hover:text-white hover:scale-110 transition-all duration-200 active:scale-95"
-                title="Next track"
-              >
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                </svg>
-              </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(volumePercent)}
+                    onChange={handleVolumeChange}
+                    aria-label="Volume"
+                    className="flex-1 accent-green-500 cursor-pointer"
+                  />
+                  <span className="text-xs text-gray-500 font-mono w-10 text-right">{Math.round(volumePercent)}%</span>
+                </div>
+              </div>
             </div>
           </div>
         ) : (

@@ -45,7 +45,12 @@ def process_message(message, history):
     try:
         result = agent.run(message)
 
-        if result and not result.get('error'):
+        status = (result or {}).get("status", "").lower() if result else ""
+
+        if result and status in {"cancelled", "noop"} and not result.get("error"):
+            ack_message = result.get("message") or ("Request cancelled." if status == "cancelled" else "Okay, I'll wait for your next request.")
+            response = f"**Status:** {status.capitalize()}\n\n{ack_message}"
+        elif result and not result.get('error'):
             # Build success response
             response = f"**{get_task_completed_message()}**\n\n"
             response += f"**Goal:** {result.get('goal', 'N/A')}\n\n"

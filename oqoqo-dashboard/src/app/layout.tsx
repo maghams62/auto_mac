@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Oqoqo Drift Dashboard",
+  title: "OQOQO Drift Dashboard",
   description:
     "DocDrift-inspired cockpit for configuring monitored repos, tracking activity graph signals, and resolving cross-system documentation drift.",
 };

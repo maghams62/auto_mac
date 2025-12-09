@@ -29,6 +29,61 @@ class GraphIngestor:
         self._merge_node(NodeLabels.SERVICE, service_id, properties)
         # Ensure service nodes carry a default name for readability
 
+    def upsert_repository(self, repo_id: str, properties: Optional[Dict[str, str]] = None) -> None:
+        self._merge_node(NodeLabels.REPOSITORY, repo_id, properties)
+
+    def upsert_channel(self, channel_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_node(NodeLabels.CHANNEL, channel_id, properties)
+
+    def upsert_playlist(self, playlist_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_node(NodeLabels.PLAYLIST, playlist_id, properties)
+
+    def upsert_video(self, video_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_node(NodeLabels.VIDEO, video_id, properties)
+
+    def link_video_channel(self, video_id: str, channel_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.VIDEO,
+            video_id,
+            RelationshipTypes.BELONGS_TO_CHANNEL,
+            NodeLabels.CHANNEL,
+            channel_id,
+        )
+
+    def link_video_playlist(self, video_id: str, playlist_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.VIDEO,
+            video_id,
+            RelationshipTypes.PART_OF_PLAYLIST,
+            NodeLabels.PLAYLIST,
+            playlist_id,
+        )
+
+    def upsert_transcript_chunk(self, chunk_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_node(NodeLabels.TRANSCRIPT_CHUNK, chunk_id, properties)
+
+    def link_video_chunk(self, video_id: str, chunk_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.VIDEO,
+            video_id,
+            RelationshipTypes.HAS_CHUNK,
+            NodeLabels.TRANSCRIPT_CHUNK,
+            chunk_id,
+        )
+
+    def upsert_concept(self, concept_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_node(NodeLabels.CONCEPT, concept_id, properties)
+
+    def link_chunk_concept(self, chunk_id: str, concept_id: str, properties: Optional[Dict[str, Any]] = None) -> None:
+        self._merge_relationship(
+            NodeLabels.TRANSCRIPT_CHUNK,
+            chunk_id,
+            RelationshipTypes.MENTIONS_CONCEPT,
+            NodeLabels.CONCEPT,
+            concept_id,
+            properties,
+        )
+
     def link_service_component(self, service_id: str, component_id: str) -> None:
         self._merge_relationship(
             NodeLabels.SERVICE,
@@ -36,6 +91,48 @@ class GraphIngestor:
             RelationshipTypes.HAS_COMPONENT,
             NodeLabels.COMPONENT,
             component_id,
+        )
+
+    def link_repo_component(self, repo_id: str, component_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.REPOSITORY,
+            repo_id,
+            RelationshipTypes.REPO_OWNS_COMPONENT,
+            NodeLabels.COMPONENT,
+            component_id,
+        )
+
+    def link_repo_artifact(self, repo_id: str, artifact_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.REPOSITORY,
+            repo_id,
+            RelationshipTypes.REPO_OWNS_ARTIFACT,
+            NodeLabels.CODE_ARTIFACT,
+            artifact_id,
+        )
+
+    def link_component_dependency(
+        self,
+        source_component: str,
+        target_component: str,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._merge_relationship(
+            NodeLabels.COMPONENT,
+            source_component,
+            RelationshipTypes.COMPONENT_USES_COMPONENT,
+            NodeLabels.COMPONENT,
+            target_component,
+            properties,
+        )
+
+    def link_service_calls_api(self, service_id: str, api_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.SERVICE,
+            service_id,
+            RelationshipTypes.SERVICE_CALLS_API,
+            NodeLabels.API_ENDPOINT,
+            api_id,
         )
 
     def upsert_code_artifact(
@@ -82,11 +179,25 @@ class GraphIngestor:
                 NodeLabels.COMPONENT,
                 component_id,
             )
+            self._merge_relationship(
+                NodeLabels.DOC,
+                doc_id,
+                RelationshipTypes.DOC_DOCUMENTS_COMPONENT,
+                NodeLabels.COMPONENT,
+                component_id,
+            )
         for endpoint_id in endpoint_ids:
             self._merge_relationship(
                 NodeLabels.DOC,
                 doc_id,
                 RelationshipTypes.DESCRIBES_ENDPOINT,
+                NodeLabels.API_ENDPOINT,
+                endpoint_id,
+            )
+            self._merge_relationship(
+                NodeLabels.DOC,
+                doc_id,
+                RelationshipTypes.DOC_DOCUMENTS_API,
                 NodeLabels.API_ENDPOINT,
                 endpoint_id,
             )
@@ -96,6 +207,7 @@ class GraphIngestor:
         issue_id: str,
         component_ids: Iterable[str] = (),
         endpoint_ids: Iterable[str] = (),
+        doc_ids: Iterable[str] = (),
         properties: Optional[Dict[str, str]] = None,
     ) -> None:
         self._merge_node(NodeLabels.ISSUE, issue_id, properties)
@@ -114,6 +226,14 @@ class GraphIngestor:
                 RelationshipTypes.REFERENCES_ENDPOINT,
                 NodeLabels.API_ENDPOINT,
                 endpoint_id,
+            )
+        for doc_id in doc_ids:
+            self._merge_relationship(
+                NodeLabels.ISSUE,
+                issue_id,
+                RelationshipTypes.IMPACTS_DOC,
+                NodeLabels.DOC,
+                doc_id,
             )
 
     def upsert_pr(
@@ -158,6 +278,24 @@ class GraphIngestor:
                 NodeLabels.API_ENDPOINT,
                 endpoint_id,
             )
+
+    def link_git_event_to_pr(self, event_id: str, pr_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.GIT_EVENT,
+            event_id,
+            RelationshipTypes.DERIVED_FROM,
+            NodeLabels.PR,
+            pr_id,
+        )
+
+    def link_git_event_to_issue(self, event_id: str, issue_id: str) -> None:
+        self._merge_relationship(
+            NodeLabels.GIT_EVENT,
+            event_id,
+            RelationshipTypes.DERIVED_FROM,
+            NodeLabels.ISSUE,
+            issue_id,
+        )
     def upsert_api_endpoint(
         self,
         api_id: str,
@@ -298,6 +436,59 @@ class GraphIngestor:
                 NodeLabels.API_ENDPOINT,
                 endpoint_id,
                 rel_props,
+            )
+
+    def upsert_impact_event(
+        self,
+        event_id: str,
+        *,
+        properties: Optional[Dict[str, Any]] = None,
+        component_ids: Iterable[str] = (),
+        service_ids: Iterable[str] = (),
+        doc_ids: Iterable[str] = (),
+        slack_thread_ids: Iterable[str] = (),
+        git_event_ids: Iterable[str] = (),
+    ) -> None:
+        self._merge_node(NodeLabels.IMPACT_EVENT, event_id, properties)
+        for component_id in component_ids:
+            self._merge_relationship(
+                NodeLabels.IMPACT_EVENT,
+                event_id,
+                RelationshipTypes.IMPACTS_COMPONENT,
+                NodeLabels.COMPONENT,
+                component_id,
+            )
+        for service_id in service_ids:
+            self._merge_relationship(
+                NodeLabels.IMPACT_EVENT,
+                event_id,
+                RelationshipTypes.IMPACTS_SERVICE,
+                NodeLabels.SERVICE,
+                service_id,
+            )
+        for doc_id in doc_ids:
+            self._merge_relationship(
+                NodeLabels.IMPACT_EVENT,
+                event_id,
+                RelationshipTypes.IMPACTS_DOC,
+                NodeLabels.DOC,
+                doc_id,
+            )
+        for slack_id in slack_thread_ids:
+            self._merge_relationship(
+                NodeLabels.IMPACT_EVENT,
+                event_id,
+                RelationshipTypes.DERIVED_FROM,
+                NodeLabels.SLACK_THREAD,
+                slack_id,
+            )
+        for git_id in git_event_ids:
+            self._merge_relationship(
+                NodeLabels.IMPACT_EVENT,
+                event_id,
+                RelationshipTypes.DERIVED_FROM,
+                NodeLabels.GIT_EVENT,
+                git_id,
             )
 
     def _merge_node(self, label: NodeLabels, node_id: str, properties: Optional[Dict[str, str]]) -> None:

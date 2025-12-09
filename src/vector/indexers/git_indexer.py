@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from urllib.parse import urlparse
+
 from ..canonical_ids import CanonicalIdRegistry
 from ..embedding_provider import EmbeddingProvider
 from ..vector_event import VectorEvent
@@ -109,6 +111,7 @@ class GitVectorIndexer:
         if doc_paths:
             self.registry.assert_valid(docs=doc_paths, context=event_id)
 
+        permalink = self._build_permalink(raw, source_type)
         metadata = {
             "repo": raw.get("repo"),
             "repo_url": raw.get("repo_url"),
@@ -122,6 +125,9 @@ class GitVectorIndexer:
             "component_ids": component_ids,
             "apis": apis,
             "labels": labels,
+            "url": permalink,
+            "permalink": permalink,
+            "repo_slug": self._extract_repo_slug(raw),
         }
 
         event_text = self._compose_text(raw, source_type, doc_paths)
@@ -192,4 +198,34 @@ class GitVectorIndexer:
                 lines.append(f"- {file_path}")
 
         return "\n".join(line for line in lines if line is not None)
+
+    @staticmethod
+    def _extract_repo_slug(raw: Dict) -> Optional[str]:
+        repo_url = raw.get("repo_url") or ""
+        if repo_url:
+            try:
+                parsed = urlparse(repo_url)
+                slug = parsed.path.strip("/")
+                if slug:
+                    return slug
+            except ValueError:
+                pass
+        repo = (raw.get("repo") or "").strip("/")
+        owner = (raw.get("repo_owner") or "").strip("/")
+        if repo and owner:
+            return f"{owner}/{repo}"
+        return repo or None
+
+    def _build_permalink(self, raw: Dict, source_type: str) -> Optional[str]:
+        slug = self._extract_repo_slug(raw)
+        if not slug:
+            return None
+        if source_type == "git_pr":
+            pr_number = raw.get("pr_number")
+            if pr_number:
+                return f"https://github.com/{slug}/pull/{pr_number}"
+        sha = raw.get("commit_sha")
+        if sha:
+            return f"https://github.com/{slug}/commit/{sha}"
+        return None
 

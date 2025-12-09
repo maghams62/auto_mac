@@ -5,8 +5,9 @@ import { useParams } from "next/navigation";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Activity, ArrowRight, FileText, GitCommit, LifeBuoy, MessageSquare, Ticket } from "lucide-react";
 
-import { AskOqoqoCard } from "@/components/common/ask-oqoqo";
-import { AskCerebrosButton } from "@/components/common/ask-cerebros-button";
+import { AskCerebrosButton, AskCerebrosCopyButton } from "@/components/common/ask-cerebros-button";
+import { LinkChip } from "@/components/common/link-chip";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { fetchComponentActivity, isCerebrosApiConfigured, type ActivitySummary } from "@/lib/api/activity";
 import { ContextSourceBadge } from "@/components/context/context-source-badge";
 import { LiveRecency } from "@/components/live/live-recency";
@@ -19,16 +20,10 @@ import { filterIssuesWithContext } from "@/lib/issues/utils";
 import { requestContextSnippets } from "@/lib/context/client";
 import type { ContextResponse, ContextSnippet } from "@/lib/context/types";
 import { selectComponentById, selectProjectById, useDashboardStore } from "@/lib/state/dashboard-store";
-import type { ComponentNode, DocIssue, Severity, SignalSource, SourceEvent } from "@/lib/types";
+import type { ComponentNode, DocIssue, Investigation, LiveMode, Severity, SignalSource, SourceEvent } from "@/lib/types";
 import { severityTokens, signalSourceTokens } from "@/lib/ui/tokens";
-import { longDateTime, shortDate } from "@/lib/utils";
-
-const CEREBROS_APP_BASE = (process.env.NEXT_PUBLIC_CEREBROS_APP_BASE ?? "https://cerebros.example.com").replace(/\/$/, "");
-
-function buildCerebrosUrl(path: string) {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${CEREBROS_APP_BASE}${normalizedPath}`;
-}
+import { longDateTime, shortDate, shortTime } from "@/lib/utils";
+import { buildCerebrosComponentUrl, buildInvestigationUrl, resolveProjectSlug } from "@/lib/cerebros";
 
 export default function ComponentDetailPage() {
   const params = useParams<{ projectId: string; componentId: string }>();
@@ -38,9 +33,13 @@ export default function ComponentDetailPage() {
   const componentSelector = useMemo(() => selectComponentById(projectId, componentId), [projectId, componentId]);
   const project = useDashboardStore(projectSelector);
   const component = useDashboardStore(componentSelector);
+  const projectForLinks = project ?? { id: projectId };
+  const projectSlug = resolveProjectSlug(projectForLinks);
+  const componentCerebrosUrl = component ? buildCerebrosComponentUrl(projectForLinks, component.id) : undefined;
   const selectComponent = useDashboardStore((state) => state.selectComponent);
   const filters = useDashboardStore((state) => state.issueFilters);
   const liveStatus = useDashboardStore((state) => state.liveStatus);
+  const modePreference = useDashboardStore((state) => state.modePreference);
   const [activitySummary, setActivitySummary] = useState<ActivitySummary | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
@@ -97,7 +96,7 @@ export default function ComponentDetailPage() {
     let cancelled = false;
     setContextLoading(true);
     setContextError(null);
-    requestContextSnippets({ projectId, componentId: component.id })
+    requestContextSnippets({ projectId, componentId: component.id }, { mode: modePreference })
       .then((response) => {
         if (!cancelled) {
           setContextResponse(response);
@@ -117,7 +116,7 @@ export default function ComponentDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [component, projectId]);
+  }, [component, projectId, modePreference]);
 
   const filteredComponentIssues = useMemo(() => {
     if (!project || !component) return [];
@@ -177,6 +176,7 @@ export default function ComponentDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
+          <ModeBadge mode={project.mode ?? liveStatus.mode} />
           <Badge variant="outline" className="rounded-full border-border/60">
             {component.serviceType}
           </Badge>
@@ -225,13 +225,7 @@ export default function ComponentDetailPage() {
               </div>
               <div className="space-y-2">
                 {liveComponentIssues.map((issue) => (
-                  <ComponentLiveIssueRow
-                    key={issue.id}
-                    projectId={project.id}
-                    issue={issue}
-                    component={component}
-                    onOpen={() => setSelectedIssue(issue)}
-                  />
+                  <ComponentLiveIssueRow key={issue.id} projectId={project.id} issue={issue} component={component} />
                 ))}
               </div>
             </>
@@ -253,7 +247,23 @@ export default function ComponentDetailPage() {
                 Aggregated over {activitySummary?.windowDays ?? 14} days of doc-drift telemetry.
               </CardDescription>
             </div>
-            <AskCerebrosButton command={`/slack docdrift ${component.name}`} label="Copy /slack docdrift" />
+            <div className="flex flex-wrap items-center gap-2">
+              <AskCerebrosButton
+                projectId={project.id}
+                projectSlug={projectSlug}
+                componentId={component.id}
+                query={`Summarize doc drift risk for component ${component.name}`}
+                size="sm"
+                buttonClassName="rounded-full"
+              />
+              <AskCerebrosCopyButton
+                command={`/slack docdrift ${component.name}`}
+                label="Copy /slack docdrift"
+                size="sm"
+                variant="link"
+                className="px-0 text-xs font-medium text-primary underline-offset-4 hover:underline"
+              />
+            </div>
           </CardHeader>
           <CardContent>
             {activityLoading ? (
@@ -390,14 +400,16 @@ export default function ComponentDetailPage() {
                       <li key={snippet.id} className="flex flex-col gap-1">
                         <span className="text-foreground">{snippet.summary}</span>
                         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                          <a
+                          <LinkChip
+                            label="Open source"
                             href={snippet.link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-primary underline-offset-2 hover:underline"
-                          >
-                            Open source
-                          </a>
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto px-2 text-primary underline-offset-2 hover:underline"
+                          />
+                          {!snippet.link ? (
+                            <span className="text-muted-foreground/70">Source unavailable</span>
+                          ) : null}
                           <span>{Math.round(snippet.confidence * 100)}% confident</span>
                         </div>
                       </li>
@@ -408,11 +420,17 @@ export default function ComponentDetailPage() {
             ) : (
               <p className="text-sm text-muted-foreground">No semantic context available for this component.</p>
             )}
-            <Button variant="outline" className="rounded-full text-xs" asChild>
-              <a href={buildCerebrosUrl(`/projects/${projectId}/components/${component.id}`)} target="_blank" rel="noreferrer">
-                View detailed reasoning in Cerebros
-              </a>
-            </Button>
+            {componentCerebrosUrl ? (
+              <Button variant="outline" className="rounded-full text-xs" asChild>
+                <a href={componentCerebrosUrl} target="_blank" rel="noreferrer">
+                  View detailed reasoning in Cerebros
+                </a>
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Cerebros app URL is not configured.
+              </p>
+            )}
           </div>
         </TabsContent>
       </Tabs>
@@ -487,7 +505,7 @@ export default function ComponentDetailPage() {
         <Card>
           <CardHeader>
             <CardTitle>Graph neighbors</CardTitle>
-            <CardDescription>Cross-service dependencies detected by Oqoqo.</CardDescription>
+            <CardDescription>Cross-service dependencies detected by OQOQO.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {dependencies.map((dependency) => (
@@ -550,11 +568,7 @@ export default function ComponentDetailPage() {
         </CardContent>
       </Card>
 
-      <AskOqoqoCard
-        context="component"
-        title={component.name}
-        summary={`Drift score ${component.graphSignals.drift.score}: ${component.graphSignals.drift.summary}`}
-      />
+      <RecentInvestigationsCard projectId={projectId} componentId={component.id} mode={modePreference} />
     </div>
   );
 }
@@ -603,13 +617,13 @@ const SourceEventList = ({
               <span>{shortDate(event.timestamp)}</span>
               <div className="flex items-center gap-2">
                 <Badge className={`border text-[10px] ${token.color}`}>{token.label}</Badge>
-                {event.link ? (
-                  <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" asChild>
-                    <a href={event.link} target="_blank" rel="noreferrer">
-                      Open source
-                    </a>
-                  </Button>
-                ) : null}
+                <LinkChip
+                  label="Open source"
+                  href={event.link}
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto p-0 text-[11px]"
+                />
               </div>
             </div>
           </div>
@@ -646,12 +660,10 @@ const ComponentLiveIssueRow = ({
   projectId,
   component,
   issue,
-  onOpen,
 }: {
   projectId: string;
   component: ComponentNode;
   issue: DocIssue;
-  onOpen: () => void;
 }) => {
   const eventLinks =
     component.sourceEvents
@@ -675,16 +687,18 @@ const ComponentLiveIssueRow = ({
           <Badge variant="outline" className="rounded-full border-border/60 text-[10px] uppercase">
             {issue.severity}
           </Badge>
-          <Button variant="ghost" size="sm" className="rounded-full" onClick={onOpen}>
-            Inspect
-            <ArrowRight className="ml-1 h-4 w-4" />
+          <Button variant="ghost" size="sm" className="rounded-full" asChild>
+            <a href={`/projects/${projectId}/issues/${issue.id}`} className="flex items-center gap-1">
+              Inspect
+              <ArrowRight className="h-4 w-4" />
+            </a>
           </Button>
         </div>
       </div>
       <div className="flex flex-wrap gap-2 pt-2 text-xs text-muted-foreground">
         <span>Sources • {issue.divergenceSources.join(", ")}</span>
         <span>Updated • {shortDate(issue.updatedAt)}</span>
-        <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" asChild>
+        <Button variant="ghost" size="sm" className="h-auto p-0 text-[11px]" asChild>
           <a href={`/projects/${projectId}/issues/${issue.id}`}>Open issue view</a>
         </Button>
       </div>
@@ -705,5 +719,134 @@ const ComponentLiveIssueRow = ({
     </div>
   );
 };
+
+const RECENT_INVESTIGATION_LIMIT = 5;
+
+type InvestigationResponse = {
+  investigations: Investigation[];
+  mode?: string;
+};
+
+function RecentInvestigationsCard({
+  projectId,
+  componentId,
+  mode,
+}: {
+  projectId: string;
+  componentId: string;
+  mode: LiveMode;
+}) {
+  const [investigations, setInvestigations] = useState<Investigation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        const params = new URLSearchParams({
+          projectId,
+          componentId,
+          limit: String(RECENT_INVESTIGATION_LIMIT),
+        });
+        if (mode) {
+          params.set("mode", mode);
+        }
+        const response = await fetch(`/api/investigations?${params.toString()}`);
+        if (!response.ok) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+        const payload = (await response.json()) as InvestigationResponse;
+        if (!cancelled) {
+          setInvestigations(payload.investigations ?? []);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load investigations");
+          setInvestigations([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, componentId, mode]);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <CardTitle>Recent investigations</CardTitle>
+          <CardDescription>Traceability runs touching this component in Cerebros chat.</CardDescription>
+        </div>
+        <Button asChild variant="outline" size="sm" className="rounded-full text-xs">
+          <a
+            href={`/projects/${projectId}/investigations?componentId=${componentId}${
+              mode ? `&mode=${mode}` : ""
+            }`}
+          >
+            View all
+          </a>
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading && <div className="text-sm text-muted-foreground">Loading investigations…</div>}
+        {error && !loading ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">{error}</div>
+        ) : null}
+        {!loading && !investigations.length && !error ? (
+          <div className="text-sm text-muted-foreground">No investigations recorded yet.</div>
+        ) : null}
+        {investigations.map((investigation) => {
+          const investigationUrl = buildInvestigationUrl(investigation.id);
+          return (
+          <div key={investigation.id} className="rounded-2xl border border-border/50 bg-background/70 p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>
+                {shortDate(investigation.createdAt)} • {shortTime(investigation.createdAt)}
+              </span>
+              <Badge variant="outline" className="rounded-full border-border/60 text-[10px] uppercase">
+                {investigation.status ?? "completed"}
+              </Badge>
+              <span>Evidence: {investigation.evidence.length}</span>
+            </div>
+            <div className="pt-2 text-sm font-semibold text-foreground">{investigation.question}</div>
+            {investigation.answer ? (
+              <p className="text-xs text-muted-foreground line-clamp-2">{investigation.answer}</p>
+            ) : null}
+            <div className="mt-3 flex items-center gap-2">
+              {investigationUrl ? (
+                <Button variant="ghost" size="sm" className="h-auto rounded-full px-3 py-1 text-[11px]" asChild>
+                  <a href={investigationUrl} target="_blank" rel="noreferrer">
+                    Open run
+                  </a>
+                </Button>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">Cerebros app URL not configured.</span>
+              )}
+              {investigation.evidence.length ? (
+                <p className="text-[11px] text-muted-foreground/80">
+                  {investigation.evidence
+                    .slice(0, 2)
+                    .map((item) => item.source ?? "source")
+                    .join(", ")}
+                  {investigation.evidence.length > 2 ? ` +${investigation.evidence.length - 2} more` : ""}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
 
 

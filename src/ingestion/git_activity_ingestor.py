@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import time
 
 from ..graph import GraphIngestor, GraphService
+from ..graph.universal_nodes import UniversalNodeWriter
 from ..vector import ContextChunk, get_vector_search_service
 from ..vector.context_chunk import (
     generate_commit_entity_id,
@@ -17,6 +18,9 @@ from ..vector.context_chunk import (
     generate_pr_entity_id,
 )
 from ..services.github_pr_service import GitHubAPIError, GitHubPRService
+from ..settings.git import resolve_repo_branch
+from ..utils.component_ids import normalize_component_ids
+from .loggers import SignalLogWriter
 from .state import ActivityIngestState
 
 logger = logging.getLogger(__name__)
@@ -38,12 +42,18 @@ class GitActivityIngestor:
         self.git_cfg = activity_cfg.get("git") or {}
         self.enabled = bool(self.git_cfg.get("enabled", False))
         self.lookback_hours = self.git_cfg.get("lookback_hours", 168)
+        self.comments_enabled = bool(self.git_cfg.get("comments_enabled", False))
         self.state_store = ActivityIngestState(activity_cfg.get("state_dir", "data/state/activity_ingest"))
 
         self.graph_service = graph_service or GraphService(config)
         self.graph_ingestor = GraphIngestor(self.graph_service)
+        self.universal_writer = UniversalNodeWriter(self.graph_service)
         self.vector_service = vector_service or get_vector_search_service(config)
         self.vector_collection = getattr(self.vector_service, "collection", None) if self.vector_service else None
+        ag_cfg = config.get("activity_graph") or {}
+        slash_git_cfg = config.get("slash_git") or {}
+        git_log_path = ag_cfg.get("git_graph_path") or slash_git_cfg.get("graph_log_path") or "data/logs/slash/git_graph.jsonl"
+        self.git_log_writer = SignalLogWriter(git_log_path)
 
         self.github_cfg = config.get("github", {}) or {}
         self.default_components = self.git_cfg.get("default_components", [])
@@ -55,6 +65,11 @@ class GitActivityIngestor:
         self.issue_dissatisfaction_labels = {
             label.lower() for label in self.git_cfg.get("issue_dissatisfaction_labels", ["bug", "docs", "documentation"])
         }
+        self.default_branch = (
+            self.git_cfg.get("default_branch")
+            or self.github_cfg.get("base_branch")
+            or "main"
+        )
         self.repos = self.git_cfg.get("repos", [])
 
     def ingest(self) -> Dict[str, Any]:
@@ -95,17 +110,33 @@ class GitActivityIngestor:
             logger.warning("[GIT INGEST] Skipping repo without owner/name: %s", repo_cfg)
             return {"prs": 0, "commits": 0, "issues": 0}
 
+        project_id = repo_cfg.get("project_id")
+
+        repo_identifier = None
+        if owner and name:
+            repo_identifier = f"{owner}/{name}"
+        elif repo_cfg.get("repo"):
+            repo_identifier = repo_cfg.get("repo")
         repo_key = f"{owner}_{name}"
         state = self.state_store.load(f"git_{repo_key}")
         last_pr_updated = state.get("last_pr_updated")
         last_commit_iso = state.get("last_commit_iso")
+
+        resolved_branch = None
+        if repo_identifier:
+            resolved_branch = resolve_repo_branch(
+                repo_identifier,
+                project_id=project_id,
+                fallback_branch=self.default_branch,
+            )
+        branch_name = repo_cfg.get("branch") or resolved_branch or self.default_branch
 
         service = GitHubPRService(
             config=self._config,
             token=repo_cfg.get("token") or self.git_cfg.get("token") or self.github_cfg.get("token"),
             owner=owner,
             repo=name,
-            base_branch=repo_cfg.get("branch") or self.git_cfg.get("default_branch"),
+            base_branch=branch_name,
         )
 
         repo_result = {"prs": 0, "commits": 0, "issues": 0}
@@ -114,13 +145,26 @@ class GitActivityIngestor:
         repo_identifier = f"{service.owner}/{service.repo}"
 
         if repo_cfg.get("include_prs", True):
-            prs_ingested, newest_pr_time = self._ingest_pull_requests(service, repo_cfg, last_pr_updated, repo_identifier)
+            prs_ingested, newest_pr_time = self._ingest_pull_requests(
+                service,
+                repo_cfg,
+                last_pr_updated,
+                repo_identifier,
+                project_id,
+            )
             repo_result["prs"] = prs_ingested
             if newest_pr_time:
                 state_updates["last_pr_updated"] = newest_pr_time
 
         if repo_cfg.get("include_commits", True):
-            commits_ingested, newest_commit_time = self._ingest_commits(service, repo_cfg, last_commit_iso, repo_identifier)
+            commits_ingested, newest_commit_time = self._ingest_commits(
+                service,
+                repo_cfg,
+                last_commit_iso,
+                repo_identifier,
+                project_id,
+                branch_name,
+            )
             repo_result["commits"] = commits_ingested
             if newest_commit_time:
                 state_updates["last_commit_iso"] = newest_commit_time
@@ -131,6 +175,7 @@ class GitActivityIngestor:
                 repo_cfg,
                 state.get("last_issue_iso"),
                 repo_identifier,
+                project_id,
             )
             repo_result["issues"] = issues_ingested
             if newest_issue_time:
@@ -162,6 +207,7 @@ class GitActivityIngestor:
         if not repo_cfg:
             logger.warning("[GIT INGEST] No git repo config available for fixture ingestion")
             return {"prs": 0, "commits": 0, "issues": 0}
+        project_id = repo_cfg.get("project_id")
 
         prs = fixtures.get("pull_requests") or []
         commits = fixtures.get("commits") or []
@@ -204,6 +250,13 @@ class GitActivityIngestor:
                 signal_weight=self._compute_pr_weight({"files": files, "total_files": len(files)}),
                 last_seen=pr.get("merged_at"),
             )
+            self._log_git_event(
+                component_ids=components,
+                event_type="pr",
+                repo_identifier=repo_identifier,
+                timestamp=pr.get("merged_at"),
+                metadata={"number": pr.get("number"), "source": "fixture_pr"},
+            )
 
             chunk = self._build_pr_chunk(
                 {
@@ -220,6 +273,7 @@ class GitActivityIngestor:
                 {"files": files},
                 components,
                 repo_identifier,
+                project_id,
             )
             vector_chunks.append(chunk)
             pr_count += 1
@@ -242,6 +296,13 @@ class GitActivityIngestor:
                 signal_weight=self._compute_commit_weight(files),
                 last_seen=commit.get("date"),
             )
+            self._log_git_event(
+                component_ids=components,
+                event_type="commit",
+                repo_identifier=repo_identifier,
+                timestamp=commit.get("date"),
+                metadata={"sha": commit.get("sha"), "source": "fixture_commit"},
+            )
 
             chunk = self._build_commit_chunk(
                 {
@@ -253,6 +314,8 @@ class GitActivityIngestor:
                 },
                 components,
                 repo_identifier,
+                project_id,
+                None,
             )
             vector_chunks.append(chunk)
             commit_count += 1
@@ -298,7 +361,7 @@ class GitActivityIngestor:
                 last_seen=normalized_issue.get("updated_at"),
             )
 
-            chunk = self._build_issue_chunk(normalized_issue, components, repo_identifier)
+            chunk = self._build_issue_chunk(normalized_issue, components, repo_identifier, project_id)
             vector_chunks.append(chunk)
             issue_count += 1
 
@@ -319,6 +382,7 @@ class GitActivityIngestor:
         repo_cfg: Dict[str, Any],
         last_pr_updated: Optional[str],
         repo_identifier: str,
+        project_id: Optional[str],
     ) -> Tuple[int, Optional[str]]:
         max_prs = repo_cfg.get("max_prs", 10)
         branch = repo_cfg.get("branch")
@@ -337,22 +401,48 @@ class GitActivityIngestor:
                 continue
 
             number = pr["number"]
+            pr_entity_id = generate_pr_entity_id(number, repo_identifier)
             pr_details = service.fetch_pr_details(number)
             diff_summary = service.fetch_pr_diff_summary(number)
             component_ids, endpoint_ids, artifact_paths = self._resolve_artifacts(diff_summary.get("files", []), repo_cfg)
 
             self._upsert_artifacts(repo_identifier, artifact_paths, component_ids)
+            self._ensure_repo_component_links(repo_identifier, component_ids, project_id)
+            file_paths = [
+                file.get("filename")
+                for file in diff_summary.get("files", [])
+                if isinstance(file, dict) and file.get("filename")
+            ]
+            labels = [
+                label.get("name")
+                for label in pr_details.get("labels", [])
+                if isinstance(label, dict) and label.get("name")
+            ]
+            repo_url = f"https://github.com/{service.owner}/{service.repo}"
+            pr_url = pr_details.get("url") or pr_details.get("html_url") or f"{repo_url}/pull/{number}"
+            pr_properties = {
+                "title": pr_details.get("title", ""),
+                "state": pr_details.get("state", ""),
+                "author": pr_details.get("author", ""),
+                "repo": repo_identifier,
+                "url": pr_url,
+                "repo_url": repo_url,
+                "pr_number": number,
+                "merged": bool(pr_details.get("merged_at")),
+                "created_at": pr_details.get("created_at"),
+                "updated_at": pr_details.get("updated_at"),
+                "merged_at": pr_details.get("merged_at"),
+                "labels": labels,
+                "files": file_paths,
+                "body": pr_details.get("body"),
+            }
+            if project_id:
+                pr_properties["project_id"] = project_id
             self.graph_ingestor.upsert_pr(
-                pr_id=f"pr:{number}",
+                pr_id=pr_entity_id or f"pr:{number}",
                 component_ids=component_ids,
                 endpoint_ids=endpoint_ids,
-                properties={
-                    "title": pr_details.get("title", ""),
-                    "state": pr_details.get("state", ""),
-                    "author": pr_details.get("author", ""),
-                    "repo": repo_identifier,
-                    "url": pr_details.get("url", ""),
-                },
+                properties=pr_properties,
             )
 
             signal_id = f"signal:pr:{repo_identifier}:{number}"
@@ -365,13 +455,45 @@ class GitActivityIngestor:
                     "source": "github_pr",
                     "repo": repo_identifier,
                     "number": str(number),
+                    "title": pr_details.get("title"),
+                    "state": pr_details.get("state"),
+                    "author": pr_details.get("author"),
+                    "labels": labels,
+                    "files": file_paths,
+                    "url": pr_url,
+                    "repo_url": repo_url,
+                    "merged": bool(pr_details.get("merged_at")),
+                    "timestamp": updated_iso,
                 },
                 signal_weight=self._compute_pr_weight(diff_summary),
                 last_seen=updated_iso,
             )
+            self._log_git_event(
+                component_ids=component_ids,
+                event_type="pr",
+                repo_identifier=repo_identifier,
+                timestamp=updated_iso,
+                metadata={"number": str(number), "source": "github_pr"},
+            )
 
-            chunk = self._build_pr_chunk(pr_details, diff_summary, component_ids, repo_identifier)
+            chunk = self._build_pr_chunk(
+                pr_details,
+                diff_summary,
+                component_ids,
+                repo_identifier,
+                project_id,
+            )
             vector_chunks.append(chunk)
+            if self.comments_enabled:
+                comment_chunks = self._ingest_pr_comments(
+                    service=service,
+                    pr_number=number,
+                    pr_entity_id=pr_entity_id,
+                    component_ids=component_ids,
+                    repo_identifier=repo_identifier,
+                    project_id=project_id,
+                )
+                vector_chunks.extend(comment_chunks)
             processed += 1
             latest_time = max(latest_time or "", updated_at)
 
@@ -386,11 +508,12 @@ class GitActivityIngestor:
         repo_cfg: Dict[str, Any],
         last_commit_iso: Optional[str],
         repo_identifier: str,
+        project_id: Optional[str],
+        branch_name: Optional[str],
     ) -> Tuple[int, Optional[str]]:
         max_commits = repo_cfg.get("max_commits", 20)
-        branch = repo_cfg.get("branch")
         since = last_commit_iso or self._default_since()
-        commits = service.list_commits(branch=branch, since=since, per_page=max_commits, include_files=True)
+        commits = service.list_commits(branch=branch_name, since=since, per_page=max_commits, include_files=True)
         commits.sort(key=lambda item: item.get("date") or "")
 
         processed = 0
@@ -407,22 +530,54 @@ class GitActivityIngestor:
             files = commit.get("files", []) or []
             component_ids, endpoint_ids, artifact_paths = self._resolve_artifacts(files, repo_cfg)
             self._upsert_artifacts(repo_identifier, artifact_paths, component_ids)
+            self._ensure_repo_component_links(repo_identifier, component_ids, project_id)
 
+            files_changed = [
+                file.get("filename")
+                for file in files
+                if isinstance(file, dict) and file.get("filename")
+            ]
+            repo_url = f"https://github.com/{service.owner}/{service.repo}"
+            commit_url = commit.get("url") or commit.get("html_url") or f"{repo_url}/commit/{commit['sha']}"
             signal_id = f"signal:commit:{repo_identifier}:{commit['sha']}"
+            commit_iso = self._to_iso(commit_date)
+            signal_properties = {
+                "source": "github_commit",
+                "repo": repo_identifier,
+                "sha": commit["sha"],
+                "author": commit.get("author"),
+                "message": commit.get("message"),
+                "text_for_embedding": commit.get("message"),
+                "files": files_changed,
+                "url": commit_url,
+                "repo_url": repo_url,
+                "timestamp": commit_iso,
+            }
+            if branch_name:
+                signal_properties["branch"] = branch_name
             self.graph_ingestor.upsert_activity_signal(
                 signal_id=signal_id,
                 component_ids=component_ids,
                 endpoint_ids=endpoint_ids,
-                properties={
-                    "source": "github_commit",
-                    "repo": repo_identifier,
-                    "sha": commit["sha"],
-                },
+                properties=signal_properties,
                 signal_weight=self._compute_commit_weight(files),
-                last_seen=self._to_iso(commit_date),
+                last_seen=commit_iso,
+            )
+            self._log_git_event(
+                component_ids=component_ids,
+                event_type="commit",
+                repo_identifier=repo_identifier,
+                timestamp=commit_iso,
+                metadata={"sha": commit["sha"], "source": "github_commit"},
             )
 
-            chunk = self._build_commit_chunk(commit, component_ids, repo_identifier)
+            chunk = self._build_commit_chunk(
+                commit,
+                component_ids,
+                repo_identifier,
+                project_id,
+                branch_name,
+            )
             vector_chunks.append(chunk)
             processed += 1
             latest_time = commit_date
@@ -438,6 +593,7 @@ class GitActivityIngestor:
         repo_cfg: Dict[str, Any],
         last_issue_iso: Optional[str],
         repo_identifier: str,
+        project_id: Optional[str],
     ) -> Tuple[int, Optional[str]]:
         max_issues = repo_cfg.get("max_issues", self.max_issues)
         labels = repo_cfg.get("issue_labels", self.issue_labels)
@@ -467,15 +623,20 @@ class GitActivityIngestor:
             components, endpoint_ids = self._resolve_issue_scope(issue, repo_cfg)
             support_weight = self._compute_issue_weight(issue)
 
-            issue_id = generate_issue_entity_id(issue.get("number") or 0)
+            issue_number = issue.get("number")
+            issue_id = generate_issue_entity_id(issue_number or 0, repo_identifier)
+            self._ensure_repo_component_links(repo_identifier, components, project_id)
             self.graph_ingestor.upsert_issue(
                 issue_id=issue_id,
                 component_ids=components,
                 endpoint_ids=endpoint_ids,
+                doc_ids=[],
                 properties={
                     "title": issue.get("title"),
                     "state": issue.get("state"),
                     "url": issue.get("url"),
+                    "repo": repo_identifier,
+                    "project_id": project_id,
                 },
             )
             self.graph_ingestor.upsert_support_case(
@@ -491,8 +652,18 @@ class GitActivityIngestor:
                 last_seen=self._to_iso(updated_at),
             )
 
-            chunk = self._build_issue_chunk(issue, components, repo_identifier)
+            chunk = self._build_issue_chunk(issue, components, repo_identifier, project_id)
             vector_chunks.append(chunk)
+            if self.comments_enabled and issue_number:
+                comment_chunks = self._ingest_issue_comments(
+                    service=service,
+                    issue_number=issue_number,
+                    issue_entity_id=issue_id,
+                    component_ids=components,
+                    repo_identifier=repo_identifier,
+                    project_id=project_id,
+                )
+                vector_chunks.extend(comment_chunks)
             processed += 1
             latest_time = updated_at
 
@@ -500,6 +671,98 @@ class GitActivityIngestor:
             self._index_chunks(vector_chunks)
 
         return processed, latest_time
+
+    def _log_git_event(
+        self,
+        *,
+        component_ids: List[str],
+        event_type: str,
+        repo_identifier: str,
+        timestamp: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not component_ids:
+            return
+        ts_iso = timestamp or datetime.now(timezone.utc).isoformat()
+        record = {
+            "source": "git",
+            "event_type": event_type,
+            "timestamp": ts_iso,
+            "repo": repo_identifier,
+            "component_ids": component_ids,
+            "properties": metadata or {},
+        }
+        self.git_log_writer.write(record)
+
+    def _ingest_pr_comments(
+        self,
+        service: GitHubPRService,
+        pr_number: int,
+        pr_entity_id: Optional[str],
+        component_ids: List[str],
+        repo_identifier: str,
+        project_id: Optional[str],
+    ) -> List[ContextChunk]:
+        review_comments = service.list_review_comments(pr_number)
+        chunks: List[ContextChunk] = []
+        if not review_comments:
+            return chunks
+        for comment in review_comments:
+            chunk = self._build_pr_comment_chunk(
+                pr_number=pr_number,
+                pr_entity_id=pr_entity_id,
+                comment=comment,
+                component_ids=component_ids,
+                repo_identifier=repo_identifier,
+                project_id=project_id,
+            )
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            self._upsert_comment_event(
+                event_id=chunk.entity_id,
+                component_ids=component_ids,
+                repo_identifier=repo_identifier,
+                project_id=project_id,
+                kind="review_comment",
+                parent_pr_id=pr_entity_id,
+            )
+        return chunks
+
+    def _ingest_issue_comments(
+        self,
+        service: GitHubPRService,
+        issue_number: int,
+        issue_entity_id: Optional[str],
+        component_ids: List[str],
+        repo_identifier: str,
+        project_id: Optional[str],
+    ) -> List[ContextChunk]:
+        comments = service.list_issue_comments(issue_number)
+        chunks: List[ContextChunk] = []
+        if not comments:
+            return chunks
+        for comment in comments:
+            chunk = self._build_issue_comment_chunk(
+                issue_number=issue_number,
+                issue_entity_id=issue_entity_id,
+                comment=comment,
+                component_ids=component_ids,
+                repo_identifier=repo_identifier,
+                project_id=project_id,
+            )
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            self._upsert_comment_event(
+                event_id=chunk.entity_id,
+                component_ids=component_ids,
+                repo_identifier=repo_identifier,
+                project_id=project_id,
+                kind="issue_comment",
+                parent_issue_id=issue_entity_id,
+            )
+        return chunks
 
     def _resolve_artifacts(
         self,
@@ -533,7 +796,7 @@ class GitActivityIngestor:
             endpoint_ids.extend(matched_endpoints)
             artifact_ids.append(path)
 
-        components = sorted({comp for comp in components if comp})
+        components = normalize_component_ids(components)
         endpoint_ids = sorted({endpoint for endpoint in endpoint_ids if endpoint})
         artifact_ids = sorted({artifact for artifact in artifact_ids if artifact})
 
@@ -571,7 +834,7 @@ class GitActivityIngestor:
             fallback = repo_cfg.get("default_issue_components") or self.default_issue_components
             components.extend(fallback)
 
-        components = sorted({comp for comp in components if comp})
+        components = normalize_component_ids(components)
         endpoint_ids = sorted({endpoint for endpoint in endpoint_ids if endpoint})
         return components, endpoint_ids
 
@@ -593,6 +856,7 @@ class GitActivityIngestor:
         diff_summary: Dict[str, Any],
         component_ids: List[str],
         repo_identifier: str,
+        project_id: Optional[str],
     ) -> ContextChunk:
         pr_number = pr_details.get("number")
         updated_at = self._parse_datetime(pr_details.get("updated_at") or pr_details.get("created_at"))
@@ -617,22 +881,36 @@ class GitActivityIngestor:
             text_parts.append("\nDescription:\n" + body)
         chunk_text = "\n".join(text_parts)
 
-        entity_id = generate_pr_entity_id(pr_number) if pr_number else ContextChunk.generate_chunk_id()
+        entity_id = generate_pr_entity_id(pr_number, repo_identifier) if pr_number else None
+        chunk_entity_id = entity_id or ContextChunk.generate_chunk_id()
+        metadata = {
+            "url": pr_details.get("url"),
+            "repo": repo_identifier,
+            "repo_slug": repo_identifier,
+            "kind": "pull_request",
+            "components": component_ids,
+            "author": pr_details.get("author"),
+            "state": pr_details.get("state"),
+            "branch_base": pr_details.get("base_branch"),
+            "branch_head": pr_details.get("head_branch"),
+            "pr_number": pr_number,
+        }
+        if project_id:
+            metadata["project_id"] = project_id
+        metadata["source_modality"] = "git"
+        metadata["source_id"] = chunk_entity_id
+        metadata["graph_node_id"] = chunk_entity_id
+
         chunk = ContextChunk(
-            chunk_id=ContextChunk.generate_chunk_id(),
-            entity_id=entity_id,
+            chunk_id=chunk_entity_id,
+            entity_id=chunk_entity_id,
             source_type="git",
             text=chunk_text,
             component=component_ids[0] if component_ids else None,
             service=f"{pr_details.get('base_branch', '')}".strip() or None,
             timestamp=updated_at,
             tags=["github", "pr"],
-            metadata={
-                "url": pr_details.get("url"),
-                "repo": repo_identifier,
-                "author": pr_details.get("author"),
-                "state": pr_details.get("state"),
-            },
+            metadata=metadata,
             collection=self.vector_collection,
         )
         return chunk
@@ -642,8 +920,10 @@ class GitActivityIngestor:
         commit: Dict[str, Any],
         component_ids: List[str],
         repo_identifier: str,
+        project_id: Optional[str],
+        branch_name: Optional[str],
     ) -> ContextChunk:
-        sha = commit.get("sha", "")[:7]
+        sha = commit.get("sha", "")
         timestamp = self._parse_datetime(commit.get("date"))
         files = commit.get("files", []) or []
         file_lines = [
@@ -662,7 +942,7 @@ class GitActivityIngestor:
 
         entity_id = generate_commit_entity_id(commit.get("sha", ""))
         chunk = ContextChunk(
-            chunk_id=ContextChunk.generate_chunk_id(),
+            chunk_id=entity_id,
             entity_id=entity_id,
             source_type="git",
             text=chunk_text,
@@ -670,12 +950,7 @@ class GitActivityIngestor:
             service=None,
             timestamp=timestamp,
             tags=["github", "commit"],
-            metadata={
-                "sha": commit.get("sha"),
-                "url": commit.get("url"),
-                "author": commit.get("author"),
-                "repo": repo_identifier,
-            },
+            metadata=self._commit_metadata(commit, repo_identifier, project_id, branch_name, component_ids, entity_id),
             collection=self.vector_collection,
         )
         return chunk
@@ -685,6 +960,7 @@ class GitActivityIngestor:
         issue: Dict[str, Any],
         component_ids: List[str],
         repo_identifier: str,
+        project_id: Optional[str],
     ) -> ContextChunk:
         number = issue.get("number")
         labels = [label.get("name") for label in issue.get("labels", []) if label and label.get("name")]
@@ -707,25 +983,211 @@ class GitActivityIngestor:
             summary_lines.append(snippet)
 
         chunk_text = "\n".join(summary_lines)
-        entity_id = generate_issue_entity_id(number) if number is not None else ContextChunk.generate_chunk_id()
+        entity_id = generate_issue_entity_id(number, repo_identifier) if number is not None else None
+        chunk_entity_id = entity_id or ContextChunk.generate_chunk_id()
+        metadata = {
+            "url": issue.get("url"),
+            "repo": repo_identifier,
+            "repo_slug": repo_identifier,
+            "state": issue.get("state"),
+            "labels": labels,
+            "components": component_ids,
+            "kind": "issue",
+            "issue_number": number,
+        }
+        if project_id:
+            metadata["project_id"] = project_id
+        metadata["source_modality"] = "git"
+        metadata["source_id"] = chunk_entity_id
+        metadata["graph_node_id"] = chunk_entity_id
+
         chunk = ContextChunk(
-            chunk_id=ContextChunk.generate_chunk_id(),
-            entity_id=entity_id,
-            source_type="issue",
+            chunk_id=chunk_entity_id,
+            entity_id=chunk_entity_id,
+            source_type="git",
             text=chunk_text,
             component=component_ids[0] if component_ids else None,
             service=repo_identifier,
             timestamp=updated_at,
             tags=["github", "issue"],
-            metadata={
-                "url": issue.get("url"),
-                "repo": repo_identifier,
-                "state": issue.get("state"),
-                "labels": labels,
-            },
+            metadata=metadata,
             collection=self.vector_collection,
         )
         return chunk
+
+    def _build_pr_comment_chunk(
+        self,
+        pr_number: int,
+        pr_entity_id: Optional[str],
+        comment: Dict[str, Any],
+        component_ids: List[str],
+        repo_identifier: str,
+        project_id: Optional[str],
+    ) -> Optional[ContextChunk]:
+        comment_id = comment.get("id")
+        if comment_id is None:
+            return None
+        timestamp = self._parse_datetime(comment.get("updated_at") or comment.get("created_at"))
+        author = comment.get("user")
+        body = (comment.get("body") or "").strip()
+        lines = [
+            f"Review comment on PR #{pr_number}",
+            f"Author: {author or 'unknown'}",
+        ]
+        if comment.get("path"):
+            lines.append(f"File: {comment.get('path')}")
+        if timestamp:
+            lines.append(f"Timestamp: {timestamp.isoformat()}")
+        if body:
+            lines.extend(["", body])
+        chunk_text = "\n".join(lines)
+        entity_id = f"pr_comment:{repo_identifier}:{comment_id}"
+        metadata = {
+            "repo": repo_identifier,
+            "repo_slug": repo_identifier,
+            "kind": "review_comment",
+            "components": component_ids,
+            "comment_id": comment_id,
+            "permalink": comment.get("html_url"),
+            "parent_entity_id": pr_entity_id,
+            "pr_number": pr_number,
+            "path": comment.get("path"),
+        }
+        if project_id:
+            metadata["project_id"] = project_id
+        metadata["source_modality"] = "git"
+        metadata["source_id"] = entity_id
+        metadata["graph_node_id"] = entity_id
+
+        return ContextChunk(
+            chunk_id=entity_id,
+            entity_id=entity_id,
+            source_type="git",
+            text=chunk_text,
+            component=component_ids[0] if component_ids else None,
+            service=None,
+            timestamp=timestamp,
+            tags=["github", "review_comment"],
+            metadata=metadata,
+            collection=self.vector_collection,
+        )
+
+    def _build_issue_comment_chunk(
+        self,
+        issue_number: int,
+        issue_entity_id: Optional[str],
+        comment: Dict[str, Any],
+        component_ids: List[str],
+        repo_identifier: str,
+        project_id: Optional[str],
+    ) -> Optional[ContextChunk]:
+        comment_id = comment.get("id")
+        if comment_id is None:
+            return None
+        timestamp = self._parse_datetime(comment.get("updated_at") or comment.get("created_at"))
+        author = comment.get("user")
+        body = (comment.get("body") or "").strip()
+        lines = [
+            f"Issue comment on #{issue_number}",
+            f"Author: {author or 'unknown'}",
+        ]
+        if timestamp:
+            lines.append(f"Timestamp: {timestamp.isoformat()}")
+        if body:
+            lines.extend(["", body])
+        chunk_text = "\n".join(lines)
+        entity_id = f"issue_comment:{repo_identifier}:{comment_id}"
+        metadata = {
+            "repo": repo_identifier,
+            "repo_slug": repo_identifier,
+            "kind": "issue_comment",
+            "components": component_ids,
+            "comment_id": comment_id,
+            "permalink": comment.get("html_url"),
+            "parent_entity_id": issue_entity_id,
+            "issue_number": issue_number,
+        }
+        if project_id:
+            metadata["project_id"] = project_id
+        metadata["source_modality"] = "git"
+        metadata["source_id"] = entity_id
+        metadata["graph_node_id"] = entity_id
+
+        return ContextChunk(
+            chunk_id=entity_id,
+            entity_id=entity_id,
+            source_type="git",
+            text=chunk_text,
+            component=component_ids[0] if component_ids else None,
+            service=None,
+            timestamp=timestamp,
+            tags=["github", "issue_comment"],
+            metadata=metadata,
+            collection=self.vector_collection,
+        )
+
+    def _upsert_comment_event(
+        self,
+        event_id: Optional[str],
+        component_ids: List[str],
+        repo_identifier: str,
+        project_id: Optional[str],
+        kind: str,
+        parent_pr_id: Optional[str] = None,
+        parent_issue_id: Optional[str] = None,
+    ) -> None:
+        if not event_id or not self.graph_ingestor.available():
+            return
+        properties = {
+            "kind": kind,
+            "repo": repo_identifier,
+        }
+        if project_id:
+            properties["project_id"] = project_id
+        self.graph_ingestor.upsert_git_event(
+            event_id,
+            component_ids=component_ids,
+            properties=properties,
+        )
+        if parent_pr_id:
+            self.graph_ingestor.link_git_event_to_pr(event_id, parent_pr_id)
+        if parent_issue_id:
+            self.graph_ingestor.link_git_event_to_issue(event_id, parent_issue_id)
+
+    def _ensure_repo_component_links(self, repo_identifier: str, component_ids: List[str], project_id: Optional[str]) -> None:
+        if not self.graph_ingestor.available():
+            return
+        repo_properties = {"project_id": project_id} if project_id else None
+        self.graph_ingestor.upsert_repository(repo_identifier, repo_properties)
+        for component_id in component_ids:
+            self.graph_ingestor.link_repo_component(repo_identifier, component_id)
+
+    @staticmethod
+    def _commit_metadata(
+        commit: Dict[str, Any],
+        repo_identifier: str,
+        project_id: Optional[str],
+        branch_name: Optional[str],
+        component_ids: List[str],
+        entity_id: str,
+    ) -> Dict[str, Any]:
+        metadata = {
+            "sha": commit.get("sha"),
+            "url": commit.get("url"),
+            "author": commit.get("author"),
+            "repo": repo_identifier,
+            "repo_slug": repo_identifier,
+            "components": component_ids,
+            "kind": "commit",
+        }
+        if project_id:
+            metadata["project_id"] = project_id
+        if branch_name:
+            metadata["branch"] = branch_name
+        metadata["source_modality"] = "git"
+        metadata["source_id"] = entity_id
+        metadata["graph_node_id"] = entity_id
+        return metadata
 
     def _compute_pr_weight(self, diff_summary: Dict[str, Any]) -> float:
         total_files = diff_summary.get("total_files", 0)
@@ -789,6 +1251,7 @@ class GitActivityIngestor:
                     "duration_ms": round(duration_ms, 2),
                 },
             )
+            self.universal_writer.ingest_chunks(chunks)
 
     def _default_since(self) -> str:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.lookback_hours)

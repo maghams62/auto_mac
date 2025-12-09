@@ -3,7 +3,7 @@
 This script keeps the dashboard demo-ready by exercising the decluttered UI, deterministic timestamps, and the stabilized graph/activity surfaces.
 
 ## 0. Pre-flight
-- Install + build once: `npm install && npm run lint`
+- Install + build once: `npm install && npm run lint && npm run typecheck && npm run build`
 - Validate dataset reachability: `npm run check:data`
 - Start the dev server: `npm run dev` (keep console open to watch hydration logs)
 
@@ -72,6 +72,20 @@ Once the backend checks pass:
 2. Navigate to `/projects/:id/issues` → open an issue. Confirm the Semantic Context card loads with provider badge + deep links.
 3. Open `/projects/:id/components/:componentId` → check the Context tab + “View in Cerebros” CTA.
 4. Visit `/projects/:id/graph` → ensure the provider banner matches the active graph provider, no console errors, and node selection links work.
+5. Run `npm run smoke:pages` for the scripted Playwright pass across `/projects/project_atlas/graph` and `/settings` (synthetic mode, no backend required). The test fails fast if either page throws during hydration.
 
 Mark the run complete only when all surfaces above present consistent timestamps, no hydration warnings fire, deep links succeed end-to-end, and the backend smoke passes.
+
+## 11. Visual harness for impact alerts
+- `npm run storybook` launches the Storybook dev server for `ImpactAlertsPanel` so you can capture screenshots or verify UI polish.
+- `npm run build-storybook` produces the static bundle (`storybook-static/`) for visual regression or doc embeds.
+
+## 12. Impact doc-issues guardrails
+- Sanity check the bridge API directly:  
+  `curl "http://localhost:3100/api/impact/doc-issues?project_id=project_atlas&source=impact-report" | jq "."`  
+  The response must include `doc_issues`, `mode`, and `fallback`. Any HTML output indicates the proxy is broken.
+- Force the synthetic fallback to confirm the fixtures stay in sync:  
+  `curl "http://localhost:3100/api/impact/doc-issues?project_id=project_atlas&mode=synthetic" | jq ".fallback"` → should print `true`.
+- Reload the dashboard Impact Alerts panel and verify the badge text matches the API (`Live data` for atlas/hybrid, `Synthetic fallback` when the proxy fails).
+
 

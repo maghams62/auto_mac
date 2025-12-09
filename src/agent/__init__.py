@@ -31,6 +31,7 @@ from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIER
 from .weather_agent import WEATHER_AGENT_TOOLS, WEATHER_AGENT_HIERARCHY
 from .notes_agent import NOTES_AGENT_TOOLS, NOTES_AGENT_HIERARCHY
 from .reminders_agent import REMINDERS_AGENT_TOOLS, REMINDERS_AGENT_HIERARCHY
+from .doc_insights_agent import DocInsightsAgent, DOC_INSIGHTS_AGENT_TOOLS, DOC_INSIGHTS_AGENT_HIERARCHY
 
 # Import registry
 from .agent_registry import (
@@ -64,6 +65,7 @@ __all__ = [
     "WeatherAgent",
     "NotesAgent",
     "RemindersAgent",
+    "DocInsightsAgent",
 
     # Agent registry
     "AgentRegistry",
@@ -86,6 +88,7 @@ __all__ = [
     "WEATHER_AGENT_TOOLS",
     "NOTES_AGENT_TOOLS",
     "REMINDERS_AGENT_TOOLS",
+    "DOC_INSIGHTS_AGENT_TOOLS",
     "STOCK_AGENT_TOOLS",
     "STOCK_AGENT_HYBRID_TOOLS",
     "SCREEN_AGENT_TOOLS",
@@ -104,4 +107,5 @@ __all__ = [
     "WEATHER_AGENT_HIERARCHY",
     "NOTES_AGENT_HIERARCHY",
     "REMINDERS_AGENT_HIERARCHY",
+    "DOC_INSIGHTS_AGENT_HIERARCHY",
 ]

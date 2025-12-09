@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from src.settings.policy import get_domain_policy
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,10 @@ Return a JSON object with this structure:
         
         llm = self._get_llm(temperature=0.0)
         
-        system_prompt = """You are an API compatibility expert. Compare the actual API (from code) 
+        policy = get_domain_policy("api_params")
+        priority_text = " > ".join(policy.priority or ["code", "api_spec", "docs"])
+        hints_text = ", ".join(policy.hints or ["slack", "tickets"])
+        system_prompt = f"""You are an API compatibility expert. Compare the actual API (from code) 
 against the documented API spec and identify all differences.
 
 For each difference, determine:
@@ -226,6 +230,9 @@ For each difference, determine:
 4. description: Human-readable explanation of the change
 5. code_value: What the code currently has
 6. spec_value: What the spec documents
+
+Apply the following source-of-truth priority (highest trust first): {priority_text}.
+Treat hint sources ({hints_text}) as supportive context, not canonical truth.
 
 Output valid JSON array only."""
 

@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, KeyboardEvent, useRef, useEffect, useMemo } from "react";
+import { useState, KeyboardEvent, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { filterSlashCommands, getCommandsByScope, SlashCommandDefinition } from "@/lib/slashCommands";
+import { filterSlashCommands, getCommandsByScope, SlashCommandDefinition, getSlashQueryMetadata, normalizeSlashCommandInput } from "@/lib/slashCommands";
 import { duration, easing } from "@/lib/motion";
 import logger from "@/lib/logger";
 import { useGlobalEventBus } from "@/lib/telemetry";
+import { useSlashMetadataAutocomplete, AutocompleteSuggestion, AutocompleteRequest } from "@/lib/useSlashMetadataAutocomplete";
+import { detectSlackContext, detectGitContext, detectYouTubeContext, replaceRange, getSuggestionToken, getSuggestionDescriptors } from "@/lib/slashMetadata";
 
 interface InputAreaProps {
   onSend: (message: string) => void;
@@ -30,12 +32,13 @@ export default function InputArea({
   isRecording = false,
 }: InputAreaProps) {
   const [input, setInput] = useState(initialValue);
+  const [inputCaret, setInputCaret] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const eventBus = useGlobalEventBus();
 
-  const slashInput = input.startsWith("/") ? input.slice(1) : "";
-  const slashQuery = slashInput.split(/[\s\n]/)[0] ?? "";
+  const slashMetadata = useMemo(() => getSlashQueryMetadata(input), [input]);
+  const slashQuery = slashMetadata.commandToken;
   const showSlashPalette =
     input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
 
@@ -45,6 +48,96 @@ export default function InputArea({
     }
     return filterSlashCommands(slashQuery, "chat");
   }, [showSlashPalette, slashQuery]);
+
+  const inputMetadataContext = useMemo(() => {
+    if (!input.startsWith("/")) {
+      return null;
+    }
+    const match = input.match(/^\/(\w+)\s+/);
+    if (!match) {
+      return null;
+    }
+    const commandId = match[1].toLowerCase();
+    const argStart = match[0].length;
+    const args = input.slice(argStart);
+    const caretInArgs = Math.max(0, (inputCaret ?? input.length) - argStart);
+    if (commandId === "slack") {
+      const context = detectSlackContext(args, caretInArgs);
+      if (!context) return null;
+      return {
+        ...context,
+        range: [context.range[0] + argStart, context.range[1] + argStart] as [number, number],
+      };
+    }
+    if (commandId === "git") {
+      const context = detectGitContext(args, caretInArgs);
+      if (!context) return null;
+      return {
+        ...context,
+        range: [context.range[0] + argStart, context.range[1] + argStart] as [number, number],
+      };
+    }
+    if (commandId === "youtube") {
+      const context = detectYouTubeContext(args, caretInArgs);
+      if (!context) return null;
+      return {
+        ...context,
+        range: [context.range[0] + argStart, context.range[1] + argStart] as [number, number],
+      };
+    }
+    return null;
+  }, [input, inputCaret]);
+
+  const inputMetadataRequest = useMemo<AutocompleteRequest | null>(() => {
+    if (!inputMetadataContext) {
+      return null;
+    }
+    switch (inputMetadataContext.kind) {
+      case "slack-channel":
+      case "slack-user":
+        return {
+          kind: inputMetadataContext.kind,
+          query: inputMetadataContext.query,
+        };
+      case "git-repo":
+        return {
+          kind: "git-repo",
+          query: inputMetadataContext.query,
+        };
+      case "git-branch":
+        if (!inputMetadataContext.repoId) {
+          return null;
+        }
+        return {
+          kind: "git-branch",
+          query: inputMetadataContext.query,
+          repoId: inputMetadataContext.repoId,
+        };
+      case "youtube-video":
+        return {
+          kind: "youtube-video",
+          query: inputMetadataContext.query,
+        };
+      default:
+        return null;
+    }
+  }, [inputMetadataContext]);
+
+  const {
+    suggestions: metadataSuggestions,
+    loading: metadataLoading,
+    error: metadataError,
+  } = useSlashMetadataAutocomplete(inputMetadataRequest, {
+    enabled: Boolean(inputMetadataRequest),
+  });
+  const [metadataIndex, setMetadataIndex] = useState(0);
+  useEffect(() => {
+    setMetadataIndex(0);
+  }, [metadataSuggestions.length, inputMetadataContext?.kind]);
+
+  const showMetadataDropdown =
+    Boolean(inputMetadataContext) &&
+    (metadataSuggestions.length > 0 || metadataLoading || Boolean(metadataError));
 
   useEffect(() => {
     if (showSlashPalette) {
@@ -62,6 +155,7 @@ export default function InputArea({
     if (initialValue && initialValue !== input && !isExternalChangeRef.current) {
       isExternalChangeRef.current = true;
       setInput(initialValue);
+      setInputCaret(initialValue.length);
       // Reset the flag after state update
       requestAnimationFrame(() => {
         isExternalChangeRef.current = false;
@@ -91,9 +185,43 @@ export default function InputArea({
     };
   }, []);
 
+  const updateInputCaret = useCallback(
+    (target: HTMLTextAreaElement | null, fallbackValue?: string) => {
+      if (!target) {
+        const fallback = fallbackValue ?? input;
+        setInputCaret(fallback.length);
+        return;
+      }
+      setInputCaret(target.selectionStart ?? target.value.length);
+    },
+    [input],
+  );
+
+  const handleMetadataSelect = useCallback(
+    (suggestion: AutocompleteSuggestion) => {
+      if (!inputMetadataContext) {
+        return;
+      }
+      const token = getSuggestionToken(suggestion);
+      const next = replaceRange(input, inputMetadataContext.range, token, { appendSpace: true });
+      setInput(next.value);
+      setInputCaret(next.caret);
+      onValueChange?.(next.value);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+          textarea.focus();
+          textarea.setSelectionRange(next.caret, next.caret);
+        }
+      });
+    },
+    [inputMetadataContext, input, onValueChange],
+  );
+
   const applySlashCommand = (command: SlashCommandDefinition) => {
     const newValue = `${command.command} `;
     setInput(newValue);
+    setInputCaret(newValue.length);
     onValueChange?.(newValue);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -158,8 +286,9 @@ export default function InputArea({
 
     // Check if this is a slash command and emit telemetry
     const trimmedInput = input.trim();
-    if (trimmedInput.startsWith("/")) {
-      const commandMatch = trimmedInput.match(/^\/(\w+)/);
+    const normalizedInput = normalizeSlashCommandInput(trimmedInput);
+    if (normalizedInput.startsWith("/")) {
+      const commandMatch = normalizedInput.match(/^\/(\w+)/);
       if (commandMatch) {
         const commandName = commandMatch[1].toLowerCase();
         // Only emit telemetry for supported commands
@@ -175,14 +304,37 @@ export default function InputArea({
       }
     }
 
-    if (trimmedInput && !disabled) {
-      onSend(trimmedInput);
+    if (normalizedInput && !disabled) {
+      onSend(normalizedInput);
       setInput("");
+      setInputCaret(0);
       onValueChange?.("");
     }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showMetadataDropdown && metadataSuggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMetadataIndex((prev) =>
+          prev === metadataSuggestions.length - 1 ? 0 : prev + 1,
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMetadataIndex((prev) =>
+          prev === 0 ? metadataSuggestions.length - 1 : prev - 1,
+        );
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        handleMetadataSelect(metadataSuggestions[metadataIndex]);
+        return;
+      }
+    }
+
     if (showSlashPalette && filteredSlashCommands.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -219,17 +371,17 @@ export default function InputArea({
   };
 
   return (
-    <div className="w-full">
-      <div className="relative">
-        {showSlashPalette && (
-          <motion.div
-            className="absolute bottom-full left-0 right-0 mb-2 z-20"
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
-          >
-            <div className="rounded-lg border border-glass bg-glass-elevated backdrop-blur-glass shadow-elevated p-2 max-h-80 overflow-y-auto shadow-inset-border">
+    <div className="w-full flex flex-col gap-3">
+      {(showSlashPalette || showMetadataDropdown) && (
+        <div className="flex flex-col gap-2 max-h-[calc(100vh-18rem)] overflow-y-auto">
+          {showSlashPalette && (
+            <motion.div
+              className="rounded-lg border border-glass bg-glass-elevated backdrop-blur-glass shadow-elevated p-2 max-h-[50vh] overflow-y-auto shadow-inset-border"
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+            >
               <div className="flex items-center justify-between px-2 pb-2 mb-1 border-b border-glass">
                 <p className="text-xs uppercase tracking-wider text-text-subtle font-medium">
                   Commands
@@ -283,15 +435,80 @@ export default function InputArea({
                   </motion.button>
                 );
               })}
-            </div>
-          </motion.div>
-        )}
+            </motion.div>
+          )}
 
-        <motion.div
-          className="group relative rounded-3xl bg-glass-elevated backdrop-blur-glass px-3 py-2 flex items-end gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] transition-all duration-200 ease-out"
-          whileFocus={{ scale: 1.01 }}
-          transition={{ duration: 0.2, ease: "easeOut" }}
-        >
+          {showMetadataDropdown && (
+            <motion.div
+              className="rounded-lg border border-glass bg-glass-elevated backdrop-blur-glass shadow-elevated p-2 max-h-[50vh] overflow-y-auto shadow-inset-border"
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+            >
+              <div className="flex items-center justify-between px-2 pb-2 mb-1 border-b border-glass">
+                <p className="text-xs uppercase tracking-wider text-text-subtle font-medium">
+                  Suggestions
+                </p>
+                <p className="text-[11px] text-text-subtle font-medium">
+                  ↑↓ · Enter · Esc to dismiss
+                </p>
+              </div>
+              {metadataSuggestions.map((suggestion, index) => {
+                const descriptor = getSuggestionDescriptors(suggestion);
+                const isSelected = index === metadataIndex;
+                return (
+                  <motion.button
+                    key={`${suggestion.kind}-${descriptor.title}-${index}`}
+                    onClick={() => handleMetadataSelect(suggestion)}
+                    onMouseEnter={() => setMetadataIndex(index)}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: duration.fast, ease: easing.default }}
+                    className={cn(
+                      "w-full text-left px-2.5 py-2 rounded transition-colors flex items-center gap-3",
+                      isSelected
+                        ? "bg-glass-hover text-text-primary shadow-inset-border"
+                        : "hover:bg-glass-hover text-text-muted",
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{descriptor.title}</p>
+                      {descriptor.subtitle && (
+                        <p className="text-xs text-text-muted truncate">{descriptor.subtitle}</p>
+                      )}
+                    </div>
+                    {descriptor.badge && (
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                        {descriptor.badge}
+                      </span>
+                    )}
+                  </motion.button>
+                );
+              })}
+              {metadataLoading && (
+                <div className="text-center text-xs text-text-muted py-2">Fetching suggestions…</div>
+              )}
+              {metadataError && (
+                <div className="text-center text-xs text-amber-300 py-2">
+                  Suggestions unavailable: {metadataError}
+                </div>
+              )}
+              {!metadataLoading && !metadataError && metadataSuggestions.length === 0 && (
+                <div className="text-center text-xs text-text-muted py-2">
+                  Keep typing to refine suggestions.
+                </div>
+              )}
+            </motion.div>
+          )}
+        </div>
+      )}
+
+      <motion.div
+        className="group relative rounded-3xl bg-glass-elevated backdrop-blur-glass px-3 py-2 flex items-end gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] transition-all duration-200 ease-out"
+        whileFocus={{ scale: 1.01 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+      >
           {/* Keyboard shortcut hint tooltip */}
           <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
             <div className="bg-glass-elevated backdrop-blur-glass border border-glass rounded-lg px-2 py-1 text-xs text-text-muted shadow-elevated whitespace-nowrap">
@@ -305,6 +522,7 @@ export default function InputArea({
             onChange={(e) => {
               const newValue = e.target.value;
               setInput(newValue);
+               updateInputCaret(e.currentTarget);
               onValueChange?.(newValue);
             }}
             onKeyDown={handleKeyDown}
@@ -320,6 +538,9 @@ export default function InputArea({
             }}
             aria-label="Message input"
             data-testid="chat-input"
+            onSelect={(e) => updateInputCaret(e.currentTarget)}
+            onKeyUp={(e) => updateInputCaret(e.currentTarget)}
+            onClick={(e) => updateInputCaret(e.currentTarget)}
           />
 
           <div className="flex items-center gap-2">
@@ -473,7 +694,6 @@ export default function InputArea({
             </motion.button>
           </div>
         </motion.div>
-      </div>
     </div>
   );
 }

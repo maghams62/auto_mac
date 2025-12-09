@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
@@ -60,7 +61,7 @@ class QdrantVectorStore:
             payload["timestamp_epoch"] = self._timestamp_epoch(record.get("timestamp"))
             points.append(
                 {
-                    "id": record["event_id"],
+                    "id": self._point_id(record["event_id"]),
                     "vector": embedding,
                     "payload": payload,
                 }
@@ -143,6 +144,13 @@ class QdrantVectorStore:
         except httpx.HTTPStatusError as exc:  # pragma: no cover - network errors
             details = exc.response.text
             raise RuntimeError(f"Qdrant request failed during {log_context}: {details}") from exc
+
+    @staticmethod
+    def _point_id(event_id: str) -> str:
+        """Convert arbitrary event identifiers to UUID strings accepted by Qdrant."""
+        if not event_id:
+            return str(uuid.uuid4())
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, event_id))
 
     @staticmethod
     def _timestamp_epoch(timestamp_str: Optional[str]) -> float:

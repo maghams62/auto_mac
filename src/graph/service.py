@@ -52,6 +52,7 @@ class GraphService:
         self.database: Optional[str] = graph_cfg.get("database")
 
         self._driver: Optional[Driver] = None
+        self._last_query: Optional[Dict[str, Any]] = None
         if self.is_available():
             self._connect()
 
@@ -164,22 +165,58 @@ class GraphService:
 
     def run_query(self, query: str, params: Optional[Dict[str, Any]] = None):
         if not self._driver:
+            self._record_query_metadata(query, params, error="driver_unavailable")
             return []
         try:
             with self._driver.session(database=self.database or None) as session:
                 result = session.run(query, params or {})
-                return [record.data() for record in result]
+                rows = []
+                for record in result:
+                    row = {key: record[key] for key in record.keys()}
+                    rows.append(row)
+                self._record_query_metadata(query, params, row_count=len(rows))
+                return rows
         except Exception as exc:
             logger.error("[GRAPH] Query failed: %s", exc)
+            self._record_query_metadata(query, params, error=str(exc))
             return []
 
     def run_write(self, query: str, params: Optional[Dict[str, Any]] = None):
         if not self._driver:
+            self._record_query_metadata(query, params, error="driver_unavailable")
             return None
         try:
             with self._driver.session(database=self.database or None) as session:
                 result = session.run(query, params or {})
-                return result.consume()
+                summary = result.consume()
+                counters = getattr(summary, "counters", None)
+                row_count = None
+                if counters is not None:
+                    row_count = getattr(counters, "nodes_created", None)
+                self._record_query_metadata(query, params, row_count=row_count)
+                return summary
         except Exception as exc:
             logger.error("[GRAPH] Write query failed: %s", exc)
+            self._record_query_metadata(query, params, error=str(exc))
             return None
+
+    def last_query_metadata(self) -> Optional[Dict[str, Any]]:
+        if not self._last_query:
+            return None
+        return dict(self._last_query)
+
+    def _record_query_metadata(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]],
+        *,
+        row_count: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        self._last_query = {
+            "cypher": query.strip() if isinstance(query, str) else query,
+            "params": params or {},
+            "database": self.database or None,
+            "row_count": row_count,
+            "error": error,
+        }

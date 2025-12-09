@@ -135,6 +135,30 @@ def test_index_chunks_clamps_payload_and_records_metrics(monkeypatch):
     assert payload["collection"] == "test_collection"
 
 
+def test_index_chunks_prefers_entity_id_for_point_id():
+    config = {
+        "vectordb": {
+            "provider": "qdrant",
+            "url": "http://localhost:6333",
+            "collection": "test_collection",
+            "api_key": "",
+            "dimension": 4,
+        }
+    }
+    service = StubQdrantService(config)
+    chunk = ContextChunk(
+        chunk_id="random-chunk-id",
+        entity_id="stable:entity:id",
+        source_type="git",
+        text="hello world",
+        metadata={},
+        collection="test_collection",
+    )
+    assert service.index_chunks([chunk]) is True
+    point = service._http_client.requests[0]["json"]["points"][0]
+    assert point["id"] == chunk.entity_id
+
+
 def test_get_vector_service_returns_none_when_disabled(monkeypatch):
     config = {"vectordb": {"enabled": False}}
     assert get_vector_search_service(config) is None

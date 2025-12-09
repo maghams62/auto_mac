@@ -16,6 +16,11 @@
    - “Recent chatter about `<entity>` (feature, API endpoint, Figma file, etc.).”
 4. **Graph-aware outputs** – explicitly name entities (features, APIs, services, Figma links), people, channels, timestamps, and link URLs so they can become graph facts later.
 
+## Planner / Retrieval Signals
+- Every `/slack` turn now includes a structured `query_plan` (intent, time scope, required outputs, tone, resolved hashtags). Use it to decide whether to fetch live channel history, run Slack search, or issue a semantic/Qdrant lookup across the indexed corpus.
+- Hashtags resolve to canonical repos/components/incidents; echo those labels in your response so graph views can highlight the right nodes.
+- When the plan lacks an explicit channel but references components/incidents, prefer semantic retrieval (vector search + Neo4j highlights) before defaulting to the demo channel.
+
 ## Supported Behaviors
 
 ### A. Channel / Conversation Recap

@@ -1,0 +1,106 @@
+[
+  {
+    "id": "impact:quota-demo:web-dashboard-pricing",
+    "doc_id": "doc:src/pages/Pricing.tsx",
+    "doc_title": "Web Dashboard Pricing",
+    "doc_path": "src/pages/Pricing.tsx",
+    "doc_url": "https://github.com/maghams62/web-dashboard/blob/quota-demo/src/pages/Pricing.tsx",
+    "repo_id": "web-dashboard",
+    "component_ids": [
+      "comp:web-dashboard"
+    ],
+    "service_ids": [
+      "web-dashboard-service"
+    ],
+    "impact_level": "high",
+    "severity": "high",
+    "source": "impact-report",
+    "linked_change": "web-dashboard@quota-demo",
+    "change_context": {
+      "identifier": "web-dashboard@quota-demo",
+      "repo": "web-dashboard",
+      "title": "Quota alignment demo",
+      "source_kind": "git"
+    },
+    "change_title": "Quota misalignment",
+    "summary": "Pricing dashboard still shows 1,000 free requests but backend enforces 300.",
+    "labels": [
+      "free-tier",
+      "quota",
+      "pricing-ui"
+    ],
+    "created_at": "2025-12-03T11:30:16.575289+00:00",
+    "updated_at": "2025-12-03T11:30:16.575289+00:00",
+    "detected_at": "2025-12-03T11:30:16.575289+00:00",
+    "state": "open"
+  },
+  {
+    "id": "impact:quota-demo:docs-portal-free-tier",
+    "doc_id": "doc:docs/pricing/free_tier.md",
+    "doc_title": "Docs Portal Free Tier",
+    "doc_path": "docs/pricing/free_tier.md",
+    "doc_url": "https://github.com/maghams62/docs-portal/blob/quota-demo/docs/pricing/free_tier.md",
+    "repo_id": "docs-portal",
+    "component_ids": [
+      "comp:docs-portal"
+    ],
+    "service_ids": [
+      "docs-portal"
+    ],
+    "impact_level": "high",
+    "severity": "high",
+    "source": "impact-report",
+    "linked_change": "docs-portal@quota-demo",
+    "change_context": {
+      "identifier": "docs-portal@quota-demo",
+      "repo": "docs-portal",
+      "title": "Quota alignment demo",
+      "source_kind": "git"
+    },
+    "change_title": "Quota misalignment",
+    "summary": "Docs portal free tier page promises 1,000 calls/month even though services throttle at 300.",
+    "labels": [
+      "free-tier",
+      "quota",
+      "api-docs"
+    ],
+    "created_at": "2025-12-03T11:30:16.575289+00:00",
+    "updated_at": "2025-12-03T11:30:16.575289+00:00",
+    "detected_at": "2025-12-03T11:30:16.575289+00:00",
+    "state": "open"
+  },
+  {
+    "id": "impact:quota-demo:core-api-meta",
+    "doc_id": "doc:docs/core-api-meta.md",
+    "doc_title": "Core Api Meta",
+    "doc_path": "docs/core-api-meta.md",
+    "doc_url": "https://github.com/maghams62/core-api/blob/quota-demo/docs/core-api-meta.md",
+    "repo_id": "core-api",
+    "component_ids": [
+      "comp:core-api"
+    ],
+    "service_ids": [
+      "core-api-service"
+    ],
+    "impact_level": "medium",
+    "severity": "medium",
+    "source": "impact-report",
+    "linked_change": "core-api@quota-demo-core-api-20251203111516",
+    "change_context": {
+      "identifier": "core-api@quota-demo-core-api-20251203111516",
+      "repo": "core-api",
+      "title": "Quota alignment demo",
+      "source_kind": "git"
+    },
+    "change_title": "Quota misalignment",
+    "summary": "Free tier quota definitions are inconsistent between services (300) and docs/UI (1,000).",
+    "labels": [
+      "free-tier",
+      "plan-consistency"
+    ],
+    "created_at": "2025-12-03T11:30:16.575289+00:00",
+    "updated_at": "2025-12-03T11:30:16.575289+00:00",
+    "detected_at": "2025-12-03T11:30:16.575289+00:00",
+    "state": "open"
+  }
+]

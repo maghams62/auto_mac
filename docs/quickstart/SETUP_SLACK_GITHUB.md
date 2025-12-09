@@ -37,7 +37,7 @@ This guide will walk you through setting up the enhanced Git and Slack integrati
 2. Click **"Install to Workspace"**
 3. Review permissions and click **"Allow"**
 4. Copy the **"Bot User OAuth Token"** (starts with `xoxb-`)
-   - This is your `SLACK_BOT_TOKEN`
+   - This is your `SLACK_TOKEN` (legacy name: `SLACK_BOT_TOKEN`)
 
 ### Step 4: Get Channel IDs
 
@@ -58,7 +58,7 @@ You need the channel ID for any channels you want to search or monitor:
 Add to your `.env` file:
 
 ```bash
-SLACK_BOT_TOKEN=xoxb-1234567890123-1234567890123-abcdefghijklmnopqrstuvwx
+SLACK_TOKEN=xoxb-1234567890123-1234567890123-abcdefghijklmnopqrstuvwx
 SLACK_CHANNEL_ID=C0123456789
 ```
 
@@ -68,7 +68,7 @@ Edit `config.yaml` to add monitored channels:
 
 ```yaml
 slack:
-  bot_token: "${SLACK_BOT_TOKEN}"
+  bot_token: "${SLACK_TOKEN}"
   default_channel_id: "${SLACK_CHANNEL_ID}"
 
   monitored_channels:
@@ -187,7 +187,7 @@ For production, replace the ngrok URL with your actual domain:
 
 ---
 
-## Part 3: Oqoqo Activity Reasoning (Optional, powers `/oq`)
+## Part 3: Cerebros Activity Reasoning (Optional, powers `/cerebros`)
 
 ### Step 1: Request API Access
 
@@ -212,7 +212,7 @@ activity:
     dataset: "${OQOQO_DATASET:-production}"
 ```
 
-With those values in place, `/oq` (and the multi-source reasoning engine) can correlate Slack discussions with GitHub PRs using live data.
+With those values in place, `/cerebros` (and the multi-source reasoning engine) can correlate Slack discussions with GitHub PRs using live data.
 
 ---
 
@@ -277,7 +277,7 @@ With those values in place, `/oq` (and the multi-source reasoning engine) can co
 ### Slack Issues
 
 **Error: "Slack credentials not configured"**
-- Check that `SLACK_BOT_TOKEN` is set in `.env`
+- Check that `SLACK_TOKEN` is set in `.env` (or provide the legacy `SLACK_BOT_TOKEN`)
 - Verify the token starts with `xoxb-`
 
 **Error: "missing_scope" or "not_allowed"**
@@ -312,6 +312,22 @@ With those values in place, `/oq` (and the multi-source reasoning engine) can co
 - Monitor via response headers: `X-RateLimit-Remaining`
 - Tools automatically fall back to webhook cache if API rate limited
 
+### Brain Explorer renders an empty graph
+
+When the Brain Explorer page cannot load `/api/brain/universe`, the canvas now shows a **Graph Request Status** panel. Use it to copy the exact `curl` command the UI is firing and follow this checklist:
+
+1. **Backend health:** run `curl http://localhost:8000/health` (or the health URL shown in the panel). Fix the backend before debugging the UI.
+2. **Network tab:** reload `http://localhost:3000/brain/universe` with DevTools → Network open. You should see `GET /api/brain/universe?...`. If it never appears, `NEXT_PUBLIC_API_URL` is pointing to the wrong place or the browser blocked the request (VPN/proxy/extension).
+3. **Server logs:** watch `logs/master-start/backend.log` (or your FastAPI console). Every successful page load logs an entry like `GET /api/brain/universe ... 200`. No log entry means the request never reached the backend.
+4. **Hard refresh:** once the API responds, Shift+Reload the page so React replays the fetch. The status panel will clear as soon as data lands.
+
+### Brain Explorer layout + focus controls
+
+- The graph now renders as a fixed Neo4j-style canvas (no physics). Nodes are placed deterministically by modality, so screenshots line up with what the backend returns.
+- Clicking a modality chip filters down to that source and auto-zooms to it. Click the chip again to return to “All”.
+- Use the **Reset view** button if you’ve panned/zoomed around and want to recenter everything.
+- Timeline controls appear only when the backend includes timestamp metadata; otherwise the replay button and slider stay hidden to avoid confusion.
+
 ---
 
 ## Configuration Reference
@@ -320,7 +336,7 @@ With those values in place, `/oq` (and the multi-source reasoning engine) can co
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `SLACK_BOT_TOKEN` | Slack bot OAuth token | `xoxb-123...` |
+| `SLACK_TOKEN` | Slack bot OAuth token | `xoxb-123...` |
 | `SLACK_CHANNEL_ID` | Default Slack channel ID | `C0123456789` |
 | `GITHUB_TOKEN` | GitHub personal access token | `ghp_abc...` |
 | `GITHUB_WEBHOOK_SECRET` | Webhook signature secret | Random hex string |
@@ -333,7 +349,7 @@ With those values in place, `/oq` (and the multi-source reasoning engine) can co
 #### Slack Configuration
 ```yaml
 slack:
-  bot_token: "${SLACK_BOT_TOKEN}"
+  bot_token: "${SLACK_TOKEN}"
   default_channel_id: "${SLACK_CHANNEL_ID}"
   monitored_channels:
     - "C0123456789"  # Channel IDs to search
@@ -400,6 +416,32 @@ python scripts/ingest_synthetic_graph.py
 ```
 
 The `check_backends.py` script exits with a non-zero status if an enabled backend is unreachable. The indexer/ingester commands now log which backend/collection they touch, so you can confirm the data really landed in Qdrant/Neo4j. After all three commands succeed, start the Cerebros API and run `/slack` or `/git` in the UI to exercise the live pipelines.
+
+### Graph-only demo mode (no live GitHub reads)
+
+The documentation prioritization demo ships in a "graph-only" profile so `/git`, `/slash_cerebros`, and the dashboard never hit the GitHub API on read paths. To keep the graph warm:
+
+1. **Require graph mode in config**  
+   ```yaml
+   slash_git:
+     data_mode: "graph"
+     graph_mode:
+       enabled: true
+       require: true
+       max_results: 80
+   ```
+
+2. **Populate Neo4j/Qdrant via ingest** (runs outside the UI request path):
+   ```bash
+   # Pull the latest Git/Slack/doc activity into Neo4j + Qdrant
+   python scripts/run_activity_ingestion.py --sources git slack doc_issues
+   ```
+
+3. **Keep `SLASH_GIT_USE_LIVE_DATA` unset (or false)** so fallback code never calls GitHub, and set `SLASH_GIT_DATA_MODE=graph` if you need to override config at runtime.
+
+4. **Avoid GitAgent fallbacks** – in graph-only mode the Slash Git assistant blocks `list_recent_prs`, `list_repository_branches`, etc. Run ingest again if you need fresher data instead of querying GitHub directly.
+
+If you temporarily need live GitHub reads (e.g., for branch drift checks), set `SLASH_GIT_DATA_MODE=live` or flip `slash_git.graph_mode.require=false` and restart the API. Remember to turn it back on before demos.
 
 #### Oqoqo / Activity Configuration
 ```yaml

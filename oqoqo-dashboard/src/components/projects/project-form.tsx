@@ -48,6 +48,10 @@ const defaultRepoRow = {
   supportTags: "",
 };
 
+const repoUrlPlaceholder = `https://github.com/${
+  process.env.NEXT_PUBLIC_LIVE_GIT_ORG ?? process.env.NEXT_PUBLIC_GIT_ORG ?? "your-org"
+}/repo-name`;
+
 const toFormValues = (project?: Project): ProjectFormValues => {
   if (!project) {
     return {
@@ -262,7 +266,7 @@ export function ProjectForm({ project, onSubmit, submitLabel = "Save project" }:
                       <FormItem className="md:col-span-2">
                         <FormLabel>Repository URL</FormLabel>
                         <FormControl>
-                          <Input placeholder="https://github.com/oqoqo/atlas-core-api" {...field} />
+                        <Input placeholder={repoUrlPlaceholder} {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

@@ -33,6 +33,8 @@ from src.agent.agent_registry import AgentRegistry
 from src.memory import SessionManager
 from src.ui import ChatUI
 from src.ui.slash_commands import create_slash_command_handler
+from src.services.slack_metadata import SlackMetadataService
+from src.services.git_metadata import GitMetadataService
 
 
 logger = logging.getLogger(__name__)
@@ -77,8 +79,18 @@ def main():
         # Initialize LangGraph agent with session support
         agent = AutomationAgent(config, session_manager=session_manager)
 
+        # Shared metadata services for live autocomplete
+        slack_metadata_service = SlackMetadataService(config=config)
+        git_metadata_service = GitMetadataService(config)
+
         # Initialize slash command handler with session support and config
-        slash_handler = create_slash_command_handler(agent_registry, session_manager, config)
+        slash_handler = create_slash_command_handler(
+            agent_registry,
+            session_manager,
+            config,
+            slack_metadata_service=slack_metadata_service,
+            git_metadata_service=git_metadata_service,
+        )
 
         # Initialize chat UI with session support
         ui = ChatUI(slash_command_handler=slash_handler, session_manager=session_manager)

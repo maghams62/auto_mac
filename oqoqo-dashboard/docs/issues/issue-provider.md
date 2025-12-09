@@ -55,7 +55,7 @@ Response:
   "issues": [
     {
       "id": "issue_atlas_001",
-      "componentId": "comp_atlas_core",
+      "componentId": "comp:atlas-core",
       "severity": "high",
       "status": "triage",
       "dashboardUrl": "/projects/project_atlas/issues/issue_atlas_001",

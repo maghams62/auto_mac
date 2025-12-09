@@ -15,9 +15,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
 import httpx
 
+from ..config.qdrant import get_qdrant_collection_name
 from .context_chunk import ContextChunk
 
 logger = logging.getLogger(__name__)
@@ -124,7 +126,7 @@ class QdrantVectorSearchService(VectorSearchService):
         self.enabled = vectordb_config.get("enabled", True)
         self.base_url = (vectordb_config.get("url") or "").rstrip("/")
         self.api_key = (vectordb_config.get("api_key") or "").strip() or None
-        self.collection = vectordb_config.get("collection", "oqoqo_context")
+        self.collection = get_qdrant_collection_name(vectordb_config.get("collection"))
         self.timeout = vectordb_config.get("timeout_seconds", 6.0)
         self.default_top_k = vectordb_config.get("default_top_k", 12)
         self.default_min_score = vectordb_config.get("min_score", 0.35)
@@ -191,9 +193,10 @@ class QdrantVectorSearchService(VectorSearchService):
                     chunk.entity_id,
                 )
                 continue
+            point_id = self._normalize_point_id(chunk)
             points.append(
                 {
-                    "id": chunk.chunk_id,
+                    "id": point_id,
                     "vector": embedding,
                     "payload": self._chunk_to_payload(chunk, text_override=safe_text),
                 }
@@ -230,6 +233,19 @@ class QdrantVectorSearchService(VectorSearchService):
                 latency_ms,
             )
             return True
+        except httpx.HTTPStatusError as exc:
+            sample_point = points[0] if points else {}
+            logger.error(
+                "[VECTOR SEARCH] Qdrant upsert failed (status=%s collection=%s payload_kb=%.1f). "
+                "Sample point id=%s vector_dim=%s error=%s",
+                exc.response.status_code,
+                self.collection,
+                payload_bytes / 1024.0,
+                sample_point.get("id"),
+                len(sample_point.get("vector") or []),
+                exc.response.text,
+            )
+            return False
         except Exception as exc:
             logger.error(f"[VECTOR SEARCH] Failed to index chunks: {exc}")
             return False
@@ -442,3 +458,15 @@ class QdrantVectorSearchService(VectorSearchService):
             return None
 
         return {"must": must_clauses}
+
+    def _normalize_point_id(self, chunk: ContextChunk) -> str:
+        candidate = chunk.entity_id or chunk.chunk_id
+        if candidate:
+            candidate_str = str(candidate)
+            try:
+                UUID(candidate_str)
+                return candidate_str
+            except ValueError:
+                pass
+            return str(uuid5(NAMESPACE_URL, candidate_str))
+        return str(uuid4())

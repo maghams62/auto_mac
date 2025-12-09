@@ -5,6 +5,7 @@ import { createContext, useContext, ReactNode, useState, useEffect } from "react
 interface BootContextType {
   bootPhase: "assets" | "websocket" | "ready" | "error";
   assetsLoaded: boolean;
+  bootError: string | null;
   signalBootComplete: () => void;
   signalBootError: (error: string) => void;
 }
@@ -26,6 +27,7 @@ interface BootProviderProps {
 export function BootProvider({ children }: BootProviderProps) {
   const [bootPhase, setBootPhase] = useState<"assets" | "websocket" | "ready" | "error">("assets");
   const [assetsLoaded, setAssetsLoaded] = useState(false);
+  const [bootError, setBootError] = useState<string | null>(null);
 
   // Boot sequence using promise-based gates
   useEffect(() => {
@@ -51,20 +53,35 @@ export function BootProvider({ children }: BootProviderProps) {
     initializeBoot();
   }, []);
 
+  // Fail gracefully if websocket boot takes too long
+  useEffect(() => {
+    if (bootPhase !== "websocket") {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setBootError("Timed out connecting to Cerebros. Ensure api_server.py and npm run dev are running.");
+      setBootPhase("error");
+    }, 15000);
+    return () => clearTimeout(timeout);
+  }, [bootPhase]);
+
   // Signal when boot is complete (called by ChatInterface when WebSocket connects)
   const signalBootComplete = () => {
+    setBootError(null);
     setBootPhase("ready");
   };
 
   // Signal boot error (called by ChatInterface when WebSocket fails permanently)
   const signalBootError = (error: string) => {
     console.error("Boot error:", error);
+    setBootError(error);
     setBootPhase("error");
   };
 
   const value = {
     bootPhase,
     assetsLoaded,
+    bootError,
     signalBootComplete,
     signalBootError,
   };

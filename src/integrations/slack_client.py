@@ -28,7 +28,12 @@ class SlackAPIClient:
     BASE_URL = "https://slack.com/api"
 
     def __init__(self, bot_token: Optional[str] = None):
-        self.bot_token = bot_token or os.getenv("SLACK_BOT_TOKEN")
+        self.bot_token = (
+            bot_token
+            or os.getenv("SLACK_TOKEN")
+            or os.getenv("SLACK_BOT_TOKEN")
+        )
+        self.user_token = os.getenv("SLACK_USER_TOKEN")
         self.default_channel_id = os.getenv("SLACK_CHANNEL_ID")
 
         if not self.bot_token:
@@ -39,16 +44,24 @@ class SlackAPIClient:
 
         if not self.bot_token:
             raise SlackAPIError(
-                "Slack credentials not configured. Set SLACK_BOT_TOKEN "
-                "in your environment or slack.bot_token in config.yaml."
+                "Slack credentials not configured. Set SLACK_TOKEN (or legacy "
+                "SLACK_BOT_TOKEN) in your environment or slack.bot_token in config.yaml."
             )
 
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {self.bot_token}",
+        self.session = self._build_session(self.bot_token)
+        self.user_session = self._build_session(self.user_token) if self.user_token else self.session
+        self._warning_log: List[str] = []
+
+    @staticmethod
+    def _build_session(token: Optional[str]) -> requests.Session:
+        session = requests.Session()
+        if token:
+            session.headers.update({
+                "Authorization": f"Bearer {token}",
             "Content-Type": "application/json; charset=utf-8",
             "User-Agent": "MacAutomationAssistant/SlackIntegration",
         })
+        return session
 
     @staticmethod
     def _load_config_fallback() -> Optional[Dict[str, Any]]:
@@ -147,7 +160,8 @@ class SlackAPIClient:
         self,
         limit: int = 100,
         exclude_archived: bool = True,
-        types: str = "public_channel,private_channel"
+        types: str = "public_channel,private_channel",
+        cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         List channels in the workspace.
@@ -165,9 +179,33 @@ class SlackAPIClient:
             "exclude_archived": exclude_archived,
             "types": types,
         }
+        if cursor:
+            params["cursor"] = cursor
         response = self._get("conversations.list", params=params)
         data = response.json()
         self._raise_for_error(data, "list_channels")
+        return data
+
+    def list_users(
+        self,
+        limit: int = 200,
+        cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        List users in the workspace for autocomplete use cases.
+
+        Args:
+            limit: Maximum number of users to return
+            cursor: Pagination cursor from previous response
+        """
+        params = {
+            "limit": max(1, min(limit, 200)),
+        }
+        if cursor:
+            params["cursor"] = cursor
+        response = self._get("users.list", params=params)
+        data = response.json()
+        self._raise_for_error(data, "list_users")
         return data
 
     def get_user_info(self, user: str) -> Dict[str, Any]:
@@ -184,6 +222,20 @@ class SlackAPIClient:
         response = self._get("users.info", params=params)
         data = response.json()
         self._raise_for_error(data, "get_user_info")
+        return data
+
+    def auth_test(self, *, use_user_token: bool = False) -> Dict[str, Any]:
+        """
+        Retrieve identity details (team/workspace, user) for the current token.
+
+        Args:
+            use_user_token: When True and a user token is configured, issue the request
+                as the user token instead of the bot token.
+        """
+        session = self.user_session if (use_user_token and self.user_session is not None) else self.session
+        response = self._post("auth.test", session=session)
+        data = response.json()
+        self._raise_for_error(data, "auth_test")
         return data
 
     def search_messages(
@@ -230,7 +282,7 @@ class SlackAPIClient:
         }
 
         try:
-            response = self._get("search.messages", params=params)
+            response = self._get("search.messages", params=params, session=self.user_session)
             data = response.json()
             self._raise_for_error(data, "search_messages")
 
@@ -275,7 +327,11 @@ class SlackAPIClient:
         except SlackAPIError as e:
             # If search.messages fails (permission issue), try fallback
             logger.warning(f"search.messages failed: {e}, attempting fallback to conversations.history")
-            return self._search_fallback(query, channel, limit)
+            fallback = self._search_fallback(query, channel, limit)
+            warnings = fallback.setdefault("warnings", [])
+            warnings.append(f"search.messages error: {e}")
+            self._warning_log.append(f"search.messages error: {e}")
+            return fallback
 
     def _search_fallback(
         self,
@@ -298,7 +354,9 @@ class SlackAPIClient:
         """
         if not channel:
             logger.error("Fallback search requires a channel ID")
-            return {"matches": [], "total": 0}
+            warning = "fallback search missing channel"
+            self._warning_log.append(warning)
+            return {"matches": [], "total": 0, "warnings": [warning]}
 
         # Fetch recent messages from the channel
         try:
@@ -328,26 +386,31 @@ class SlackAPIClient:
             return {
                 "matches": matches,
                 "total": len(matches),
+                "warnings": [],
             }
 
         except Exception as e:
-            logger.error(f"Fallback search also failed: {e}")
-            return {"matches": [], "total": 0}
+            warning = f"fallback search failed: {e}"
+            logger.error(warning)
+            self._warning_log.append(warning)
+            return {"matches": [], "total": 0, "warnings": [warning]}
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> requests.Response:
+    def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None, *, session: Optional[requests.Session] = None) -> requests.Response:
         """Make a GET request to the Slack API."""
         url = f"{self.BASE_URL}/{endpoint}"
-        response = self.session.get(url, params=params, timeout=30)
+        session = session or self.session
+        response = session.get(url, params=params, timeout=30)
         response.raise_for_status()
         return response
 
-    def _post(self, endpoint: str, json: Optional[Dict[str, Any]] = None) -> requests.Response:
+    def _post(self, endpoint: str, json: Optional[Dict[str, Any]] = None, *, session: Optional[requests.Session] = None) -> requests.Response:
         """Make a POST request to the Slack API."""
         url = f"{self.BASE_URL}/{endpoint}"
-        response = self.session.post(url, json=json, timeout=30)
+        session = session or self.session
+        response = session.post(url, json=json, timeout=30)
         response.raise_for_status()
         return response
 
@@ -362,3 +425,8 @@ class SlackAPIClient:
             error_msg = data.get("error", "unknown_error")
             logger.error("Slack API error during %s: %s", action, error_msg)
             raise SlackAPIError(f"Slack API error during {action}: {error_msg}")
+
+    def consume_warnings(self) -> List[str]:
+        warnings = self._warning_log[:]
+        self._warning_log.clear()
+        return warnings

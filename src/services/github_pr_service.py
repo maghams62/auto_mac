@@ -8,6 +8,7 @@ Used by the Oqoqo self-evolving docs system to detect when monitored files
 import os
 import logging
 import base64
+import time
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
@@ -15,16 +16,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Configuration from environment (with POC defaults)
-# Set these environment variables or update config.yaml for your repo
-# For testing, we default to the public FastAPI repo which has many branches
+# Configuration from environment (with demo-friendly defaults)
+# NOTE: All secrets (including GITHUB_TOKEN) must be provided via environment
+#       or config and are never hardcoded.
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "tiangolo")
 GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "fastapi")
 GITHUB_MONITORED_FILE = os.getenv("GITHUB_MONITORED_FILE", "fastapi/applications.py")
 GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "master")
 
-GITHUB_API_BASE = "https://api.github.com"
+# Allow overriding GitHub API base for enterprise installs or testing.
+GITHUB_API_BASE = os.getenv("GITHUB_API_URL", "https://api.github.com")
 
 
 @dataclass
@@ -84,10 +86,18 @@ class GitHubPRService:
             self.monitored_file = monitored_file or GITHUB_MONITORED_FILE
             self.base_branch = base_branch or GITHUB_BASE_BRANCH
         
-        # Build headers
+        # Build base headers for all requests
+        github_config = (config or {}).get("github", {}) if config else {}
+        user_agent = (
+            github_config.get("user_agent")
+            or os.getenv("GITHUB_USER_AGENT")
+            or "cerebros-slash-git/1.0"
+        )
         self.headers = {
             "Accept": "application/vnd.github.v3+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            # Required by GitHub and useful for debugging/demo identification.
+            "User-Agent": user_agent,
         }
         if self.token:
             self.headers["Authorization"] = f"Bearer {self.token}"
@@ -105,28 +115,68 @@ class GitHubPRService:
         method: str = "GET",
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        max_retries: int = 2,
     ) -> Any:
-        """Make an authenticated request to GitHub API."""
+        """
+        Make an authenticated request to GitHub API.
+
+        All GitHub traffic is backend-only and uses a Personal Access Token (PAT)
+        supplied via environment or config. If no token is configured, we fail
+        fast with a clear error instead of falling back to anonymous limits.
+        """
+        if not self.token:
+            raise GitHubAPIError(
+                "GitHub token not configured. Set GITHUB_TOKEN to enable Git features."
+            )
+
         url = f"{GITHUB_API_BASE}{endpoint}"
         request_headers = self.headers.copy()
         if headers:
             request_headers.update(headers)
 
+        backoff_seconds = 1.0
         with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            response = client.request(method, url, headers=request_headers, params=params)
-            
-            if response.status_code == 404:
-                raise GitHubAPIError(f"Resource not found: {endpoint}")
-            elif response.status_code == 401:
-                raise GitHubAPIError("Authentication failed. Check GITHUB_TOKEN.")
-            elif response.status_code == 403:
-                # Check for rate limiting
-                remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
-                raise GitHubAPIError(f"Access forbidden. Rate limit remaining: {remaining}")
-            elif response.status_code >= 400:
-                raise GitHubAPIError(f"GitHub API error {response.status_code}: {response.text}")
-            
-            return response.json()
+            for attempt in range(max_retries + 1):
+                response = client.request(method, url, headers=request_headers, params=params)
+
+                # Fast-path success
+                if response.status_code < 400:
+                    return response.json()
+
+                # Not found / auth errors are not retried.
+                if response.status_code == 404:
+                    raise GitHubAPIError(f"Resource not found: {endpoint}")
+                if response.status_code == 401:
+                    raise GitHubAPIError("Authentication failed. Check GITHUB_TOKEN.")
+
+                # Handle rate limiting with a small exponential backoff for demos.
+                if response.status_code == 403:
+                    remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
+                    reset_at = response.headers.get("X-RateLimit-Reset")
+                    logger.warning(
+                        "[GITHUB PR SERVICE] 403 from GitHub (remaining=%s, reset_at=%s, attempt=%s)",
+                        remaining,
+                        reset_at,
+                        attempt,
+                    )
+                    # If we still have attempts left and remaining is not explicitly zero,
+                    # backoff briefly and retry; otherwise surface a clear error.
+                    if attempt < max_retries and remaining not in {"0", "0.0"}:
+                        time.sleep(backoff_seconds)
+                        backoff_seconds *= 2
+                        continue
+                    raise GitHubAPIError(
+                        f"Access forbidden. Rate limit remaining: {remaining or 'unknown'}"
+                    )
+
+                if response.status_code >= 400:
+                    raise GitHubAPIError(
+                        f"GitHub API error {response.status_code}: {response.text}"
+                    )
+
+            # Defensive fallback; loop should have returned or raised.
+            raise GitHubAPIError("Unexpected GitHub API failure after retries.")
 
     def _repo_endpoint(self, suffix: str) -> str:
         """Helper to build repo-scoped endpoints."""
@@ -572,6 +622,72 @@ class GitHubPRService:
 
         logger.info("[GITHUB PR SERVICE] Retrieved %s commits", len(commits))
         return commits
+
+    def list_review_comments(
+        self,
+        pr_number: int,
+        *,
+        per_page: int = 100,
+    ) -> List[Dict[str, Any]]:
+        comments: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            params = {"per_page": max(1, min(per_page, 100)), "page": page}
+            endpoint = self._repo_endpoint(f"/pulls/{pr_number}/comments")
+            data = self._make_request(endpoint, params=params)
+            if not isinstance(data, list):
+                break
+            comments.extend(data)
+            if len(data) < per_page:
+                break
+            page += 1
+        normalized: List[Dict[str, Any]] = []
+        for comment in comments:
+            normalized.append(
+                {
+                    "id": comment.get("id"),
+                    "body": comment.get("body"),
+                    "user": (comment.get("user") or {}).get("login"),
+                    "created_at": comment.get("created_at"),
+                    "updated_at": comment.get("updated_at"),
+                    "html_url": comment.get("html_url"),
+                    "path": comment.get("path"),
+                    "position": comment.get("position"),
+                }
+            )
+        return normalized
+
+    def list_issue_comments(
+        self,
+        issue_number: int,
+        *,
+        per_page: int = 100,
+    ) -> List[Dict[str, Any]]:
+        comments: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            params = {"per_page": max(1, min(per_page, 100)), "page": page}
+            endpoint = self._repo_endpoint(f"/issues/{issue_number}/comments")
+            data = self._make_request(endpoint, params=params)
+            if not isinstance(data, list):
+                break
+            comments.extend(data)
+            if len(data) < per_page:
+                break
+            page += 1
+        normalized: List[Dict[str, Any]] = []
+        for comment in comments:
+            normalized.append(
+                {
+                    "id": comment.get("id"),
+                    "body": comment.get("body"),
+                    "user": (comment.get("user") or {}).get("login"),
+                    "created_at": comment.get("created_at"),
+                    "updated_at": comment.get("updated_at"),
+                    "html_url": comment.get("html_url"),
+                }
+            )
+        return normalized
 
     def search_commits_by_message(
         self,

@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { useParams } from "next/navigation";
 
-import { AskOqoqoCard } from "@/components/common/ask-oqoqo";
 import { ContextSourceBadge } from "@/components/context/context-source-badge";
+import { LinkChip } from "@/components/common/link-chip";
 import { IssueDetailBody } from "@/components/issues/issue-detail";
 import { LiveRecency } from "@/components/live/live-recency";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ export default function IssueDetailPage() {
   const issueSelector = useMemo(() => selectIssueById(projectId, issueId), [projectId, issueId]);
   const project = useDashboardStore(projectSelector);
   const issue = useDashboardStore(issueSelector);
+  const modePreference = useDashboardStore((state) => state.modePreference);
 
   const component = project?.components.find((item) => item.id === issue?.componentId);
   const repo = project?.repos.find((item) => item.id === issue?.repoId);
@@ -119,7 +120,7 @@ export default function IssueDetailPage() {
     }
     let cancelled = false;
     dispatchContext({ type: "LOADING" });
-    requestContextSnippets({ projectId, issueId: issue.id })
+    requestContextSnippets({ projectId, issueId: issue.id }, { mode: modePreference })
       .then((response) => {
         if (!cancelled) {
           dispatchContext({ type: "SUCCESS", data: response });
@@ -136,7 +137,7 @@ export default function IssueDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, issue?.id]);
+  }, [projectId, issue?.id, modePreference]);
 
   if (!project || !issue) {
     return <div className="text-sm text-destructive">Issue not found.</div>;
@@ -192,7 +193,7 @@ export default function IssueDetailPage() {
       <div className="grid gap-6 lg:grid-cols-[1.3fr,1.3fr,1fr]">
         <Card className="border-border/60 bg-card/80">
           <CardContent className="p-6">
-            <IssueDetailBody issue={issue} project={project} showAskCard={false} showDeepLinkButton={false} />
+            <IssueDetailBody issue={issue} project={project} showDeepLinkButton={false} />
           </CardContent>
         </Card>
 
@@ -285,13 +286,16 @@ export default function IssueDetailPage() {
               </CardContent>
             ) : null}
           </Card>
-
-          <AskOqoqoCard context="issue" title={issue.title} summary={issue.summary} />
         </div>
       </div>
     </div>
   );
 }
+
+const resolveSourceToken = (source: ContextSnippet["source"] | SignalSource) => {
+  const normalized = (source === "ticket" ? "tickets" : source) as SignalSource;
+  return signalSourceTokens[normalized];
+};
 
 const ContextSnippetItem = ({
   snippet,
@@ -300,7 +304,7 @@ const ContextSnippetItem = ({
   snippet: ContextSnippet;
   onDismiss: (snippetId: string) => void;
 }) => {
-  const token = signalSourceTokens[snippet.source];
+  const token = resolveSourceToken(snippet.source);
   return (
     <div className="rounded-2xl border border-border/50 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -315,9 +319,14 @@ const ContextSnippetItem = ({
       </div>
       <p className="py-2 text-sm text-foreground">{snippet.summary}</p>
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        <a href={snippet.link} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
-          Open source
-        </a>
+        <LinkChip
+          label="Open source"
+          href={snippet.link}
+          variant="ghost"
+          size="sm"
+          className="h-auto px-2 text-primary underline-offset-2 hover:underline"
+        />
+        {!snippet.link ? <span className="text-muted-foreground/70">Source unavailable</span> : null}
         <span>{Math.round(snippet.confidence * 100)}% confident</span>
       </div>
     </div>
@@ -325,7 +334,7 @@ const ContextSnippetItem = ({
 };
 
 const TimelineItem = ({ event, isLast }: { event: TimelineEvent; isLast: boolean }) => {
-  const token = signalSourceTokens[event.source];
+  const token = resolveSourceToken(event.source);
   return (
     <div className="relative pl-8">
       {!isLast && <span className="absolute left-3 top-4 h-full w-px bg-border/60" />}

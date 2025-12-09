@@ -517,6 +517,60 @@ class SpotifyAPIClient:
             params['device_id'] = device_id
         return self._make_request('POST', f"{self.BASE_URL}/me/player/previous", params=params)
 
+    def set_volume(self, volume_percent: int, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Adjust the current playback volume.
+
+        Args:
+            volume_percent: Desired volume level (0-100)
+            device_id: Optional device ID to control
+
+        Returns:
+            Success response
+        """
+        params = {
+            'volume_percent': max(0, min(100, volume_percent))
+        }
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player/volume", params=params)
+
+    def seek_position(self, position_ms: int, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Seek to a specific position in the currently playing track.
+
+        Args:
+            position_ms: Position in milliseconds
+            device_id: Optional device ID to control
+
+        Returns:
+            Success response
+        """
+        params = {
+            'position_ms': max(0, position_ms)
+        }
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player/seek", params=params)
+
+    def set_shuffle(self, state: bool, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Toggle shuffle mode for the current playback context.
+
+        Args:
+            state: True to enable shuffle, False to disable
+            device_id: Optional device ID to control
+
+        Returns:
+            Success response
+        """
+        params = {
+            'state': 'true' if state else 'false'
+        }
+        if device_id:
+            params['device_id'] = device_id
+        return self._make_request('PUT', f"{self.BASE_URL}/me/player/shuffle", params=params)
+
     def get_devices(self) -> List[Dict[str, Any]]:
         """
         Get information about available devices.

@@ -1,41 +1,178 @@
 commits:
-  - sha: "abc1234"
-    message: "Synthetic commit touching payments charge logic"
-    author: "synthetic-bot"
-    date: "2025-11-20T12:00:00Z"
-    files:
-      - filename: "src/payments/charge.py"
-        status: "modified"
-        additions: 20
-        deletions: 5
-      - filename: "src/payments/validation.py"
-        status: "modified"
-        additions: 15
-        deletions: 3
-  - sha: "def5678"
-    message: "Synthetic commit touching auth oauth code"
-    author: "synthetic-bot"
-    date: "2025-11-20T13:00:00Z"
-    files:
-      - filename: "src/auth/oauth.py"
-        status: "modified"
-        additions: 30
-        deletions: 10
-
+- sha: coreapi-require-vat
+  message: 'feat!: require vat_code for EU payments'
+  author: alice
+  date: '2025-12-05T09:00:00+00:00'
+  files:
+  - filename: core-api/src/payments.py
+    status: modified
+    additions: 64
+    deletions: 18
+  - filename: core-api/openapi/payments.yaml
+    status: modified
+    additions: 20
+    deletions: 4
+- sha: billing-honor-vat
+  message: 'feat: update billing checkout to send vat_code'
+  author: bob
+  date: '2025-12-05T17:00:00+00:00'
+  files:
+  - filename: billing-service/src/checkout.py
+    status: modified
+    additions: 48
+    deletions: 12
+  - filename: billing-service/src/core_api_client.py
+    status: modified
+    additions: 16
+    deletions: 2
+- sha: docs-portal-vat-refresh
+  message: 'docs: refresh payments API guide with vat_code details'
+  author: eve
+  date: '2025-12-05T21:00:00+00:00'
+  files:
+  - filename: docs-portal/docs/payments_api.md
+    status: modified
+    additions: 32
+    deletions: 6
+  - filename: docs-portal/docs/billing_flows.md
+    status: modified
+    additions: 18
+    deletions: 3
+- sha: billing-guardrails
+  message: 'fix: respect dynamic quota config'
+  author: carol
+  date: '2025-12-06T07:30:00+00:00'
+  files:
+  - filename: billing-service/src/pricing/plan_config.py
+    status: modified
+    additions: 28
+    deletions: 6
+  - filename: billing-service/src/checkout.py
+    status: modified
+    additions: 12
+    deletions: 3
+- sha: notifications-template-version
+  message: 'feat!: require template_version for receipt notifications'
+  author: dave
+  date: '2025-12-06T03:00:00+00:00'
+  files:
+  - filename: notifications-service/src/notifications.py
+    status: modified
+    additions: 44
+    deletions: 10
+  - filename: notifications-service/src/scheduler.py
+    status: modified
+    additions: 10
+    deletions: 2
+- sha: docs-template-gap
+  message: 'docs: backlog TODO for template_version rollout'
+  author: eve
+  date: '2025-12-06T05:00:00+00:00'
+  files:
+  - filename: docs-portal/docs/notification_playbook.md
+    status: modified
+    additions: 15
+    deletions: 1
+  - filename: docs-portal/docs/changelog.md
+    status: modified
+    additions: 6
+    deletions: 0
+- sha: coreapi-plan-config
+  message: 'chore: tweak free tier defaults to match growth plan'
+  author: quota-demo-bot
+  date: '2025-12-04T23:00:00+00:00'
+  files:
+  - filename: core-api/config/plans/free_tier.yaml
+    status: modified
+    additions: 8
+    deletions: 8
 pull_requests:
-  - number: 501
-    title: "Synthetic PR: payments retry logic"
-    author: "synthetic-bot"
-    state: "merged"
-    merged_at: "2025-11-20T14:00:00Z"
-    url: "https://example.com/pr/501"
-    files:
-      - filename: "src/payments/charge.py"
-        status: "modified"
-        additions: 50
-        deletions: 20
-      - filename: "docs/api/payments.md"
-        status: "modified"
-        additions: 5
-        deletions: 2
-
+- number: 2041
+  title: 'feat!: enforce vat_code in core API'
+  author: alice
+  state: merged
+  merged_at: '2025-12-05T19:00:00+00:00'
+  url: https://example.com/pr/2041
+  description: Breaking change for EU merchants. Downstream services must send vat_code.
+  files:
+  - filename: core-api/src/payments.py
+    status: modified
+    additions: 64
+    deletions: 18
+  - filename: core-api/openapi/payments.yaml
+    status: modified
+    additions: 20
+    deletions: 4
+- number: 3120
+  title: 'fix: stop hard-coding free tier quota'
+  author: carol
+  state: open
+  merged_at: '2025-12-06T08:00:00+00:00'
+  url: https://example.com/pr/3120
+  description: Pull quota from config service so UI + backend align.
+  files:
+  - filename: billing-service/src/pricing/plan_config.py
+    status: modified
+    additions: 28
+    deletions: 6
+  - filename: billing-service/src/checkout.py
+    status: modified
+    additions: 12
+    deletions: 3
+- number: 4102
+  title: 'feat: template version enforcement'
+  author: dave
+  state: merged
+  merged_at: '2025-12-06T03:30:00+00:00'
+  url: https://example.com/pr/4102
+  description: Enforce template_version to unblock compliance auditing.
+  files:
+  - filename: notifications-service/src/notifications.py
+    status: modified
+    additions: 44
+    deletions: 10
+  - filename: notifications-service/src/scheduler.py
+    status: modified
+    additions: 10
+    deletions: 2
+issues:
+- number: 9832
+  title: Docs still suggest vat_code optional
+  body: Payments docs still say vat_code is optional which contradicts new release.
+  state: open
+  labels:
+  - docs
+  - bug
+  reactions: 4
+  comments: 3
+  updated_at: '2025-12-06T00:00:00+00:00'
+  created_at: '2025-12-05T22:00:00+00:00'
+  url: https://example.com/issues/9832
+  author: synthetic-user
+- number: 9931
+  title: Customers hitting 429 despite upgraded plan
+  body: Quota mismatch causing premium customers to throttle at 300 requests.
+  state: open
+  labels:
+  - bug
+  - priority
+  reactions: 6
+  comments: 5
+  updated_at: '2025-12-06T05:30:00+00:00'
+  created_at: '2025-12-06T03:30:00+00:00'
+  url: https://example.com/issues/9931
+  author: synthetic-user
+- number: 10011
+  title: Docs missing template_version guidance
+  body: Notification playbook never mentions template_version, causing integrators
+    to fail.
+  state: open
+  labels:
+  - documentation
+  - notifications
+  reactions: 2
+  comments: 1
+  updated_at: '2025-12-06T05:30:00+00:00'
+  created_at: '2025-12-06T03:30:00+00:00'
+  url: https://example.com/issues/10011
+  author: synthetic-user

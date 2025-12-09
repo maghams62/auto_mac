@@ -3,24 +3,56 @@ services:
   - billing-service
   - notifications-service
   - docs-portal
+  - web-dashboard-service
 
 components:
+  - comp:payments
+  - comp:auth
+  - comp:analytics
+  - comp:mobile
+  - comp:notifications
+  - comp:docs
+  - comp:ledger
+  - comp:fastapi-core
+  - comp:fastapi-examples
+  - comp:starlette-core
+  - comp:httpx-core
+  - comp:core-api
+  - comp:billing-service
+  - comp:web-dashboard
+  - comp:docs-portal
   - core.payments
   - core.webhooks
   - billing.checkout
-  - notifications.dispatch
   - docs.payments
+  - notifications.dispatch
   - docs.notifications
 
 apis:
   - /v1/payments/create
   - /v1/notifications/send
+  - /routing
 
 docs:
   - docs/payments_api.md
   - docs/billing_flows.md
+  - docs/rate_limits.md
   - docs/notification_playbook.md
   - docs/api_usage.md
   - docs/billing_onboarding.md
   - docs/changelog.md
+  - docs/quickstart.md
+  - docs/async.md
+  - docs/index.md
+  - docs/responses.md
+  - docs/pricing/free_tier.md
+  - src/pages/Pricing.tsx
+
+evidence_id_schemas:
+  slack_thread: "slack:{workspace_id}:{channel_id}:{thread_ts}"
+  slack_message: "slack:{workspace_id}:{channel_id}:{message_ts}"
+  git_pr: "git:{repo}:{pr_number}"
+  git_commit: "git:{repo}:{sha}"
+  doc_fragment: "doc:{repo}:{path}#{line_range}"
+  ticket: "ticket:{system}:{ticket_id}"
 

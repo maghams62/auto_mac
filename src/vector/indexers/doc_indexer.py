@@ -101,10 +101,19 @@ class DocVectorIndexer:
         return vector_event
 
     def _resolve_doc_path(self, doc_rel_path: str) -> Optional[Path]:
+        """
+        Resolve a canonical doc path (from canonical_ids.yaml) to a concrete file.
+
+        We only ever return real files – not directories – to avoid crashes when a
+        path like 'src/pages/Pricing.tsx' happens to exist as a directory in a
+        built site tree (e.g. docs-portal/site/src/pages/Pricing.tsx).
+        """
         candidate = self.docs_root / doc_rel_path
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
-        matches = list(self.docs_root.glob(f"**/{doc_rel_path}"))
+
+        # Fallback: search recursively, but only return files.
+        matches = [path for path in self.docs_root.glob(f"**/{doc_rel_path}") if path.is_file()]
         return matches[0] if matches else None
 
     @staticmethod

@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 
 import type { ContextRequest } from "@/lib/context/types";
 import { getContextProvider, syntheticContextProvider } from "@/lib/context/providers";
+import { parseLiveMode } from "@/lib/mode";
 
 export async function POST(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const forcedMode = parseLiveMode(searchParams.get("mode"));
+
   let payload: ContextRequest;
   try {
     payload = await request.json();
@@ -15,7 +19,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
   }
 
-  const provider = getContextProvider();
+  const provider = getContextProvider(forcedMode === "synthetic" ? "synthetic" : null);
 
   try {
     const response = await provider.fetchContext(payload);
@@ -34,7 +38,7 @@ export async function POST(request: Request) {
         console.error("[context] fallback provider also failed", fallbackError);
       }
     }
-    return NextResponse.json({ error: "Unable to load context snippets" }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load context snippets" }, { status: 502 });
   }
 }
 

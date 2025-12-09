@@ -1,11 +1,22 @@
 "use client";
 
-import React from "react";
-import { SlashSlackPayload, SlashSlackDecision, SlashSlackTask, SlashSlackTopic, SlashSlackQuestion, SlashSlackReference } from "@/lib/useWebSocket";
-import { cn } from "@/lib/utils";
+import React, { useState } from "react";
+import {
+  SlashSlackPayload,
+  SlashSlackDecision,
+  SlashSlackTask,
+  SlashSlackTopic,
+  SlashSlackQuestion,
+  SlashSlackReference,
+  SlashQueryPlan,
+  SlackSourceItem,
+} from "@/lib/useWebSocket";
+import { useToast } from "@/lib/useToast";
+import { openExternalUrl, copyToClipboard } from "@/lib/externalLinks";
 
 interface SlashSlackSummaryCardProps {
   summary: SlashSlackPayload;
+  queryPlan?: SlashQueryPlan;
 }
 
 const SectionContainer = ({
@@ -145,17 +156,203 @@ const SlackHintFooter = ({ graph }: { graph?: Record<string, any> }) => {
   );
 };
 
-const SlashSlackSummaryCard: React.FC<SlashSlackSummaryCardProps> = ({ summary }) => {
-  const { message, sections = {}, context, graph } = summary;
+const PlanBadge = ({ label, value }: { label: string; value: string }) => (
+  <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] text-white/70">
+    <span className="uppercase text-[9px] tracking-wide text-white/40">{label}: </span>
+    {value}
+  </span>
+);
+
+const SlackSourcesSection = ({
+  sources,
+  scopeLabels,
+  emptyCopy,
+  onOpen,
+  onCopy,
+}: {
+  sources: SlackSourceItem[];
+  scopeLabels: string[];
+  emptyCopy: string;
+  onOpen: (source: SlackSourceItem) => void;
+  onCopy: (permalink?: string) => void;
+}) => {
+  const hasSources = sources.length > 0;
+  return (
+    <div className="mt-4 rounded-2xl border border-white/15 bg-white/5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xl text-[#36C5F0]">#</span>
+          <div>
+            <p className="text-sm font-semibold text-white">Sources from Slack</p>
+            <p className="text-[11px] uppercase tracking-wide text-white/50">Click to open in Slack</p>
+          </div>
+        </div>
+        {scopeLabels.length > 0 && (
+          <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[11px] text-white/70">
+            Scoped to {scopeLabels.join(", ")}
+          </span>
+        )}
+      </div>
+      {hasSources ? (
+        <div className="mt-4 space-y-3">
+          {sources.map((source, idx) => (
+            <SlackSourceCard key={source.id || `${source.channel}-${idx}`} source={source} onOpen={onOpen} onCopy={onCopy} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-white/60">{emptyCopy}</p>
+      )}
+    </div>
+  );
+};
+
+const SlackSourceCard = ({
+  source,
+  onOpen,
+  onCopy,
+}: {
+  source: SlackSourceItem;
+  onOpen: (source: SlackSourceItem) => void;
+  onCopy: (permalink?: string) => void;
+}) => {
+  const formattedTime = formatSlackTimestamp(source.iso_time, source.ts);
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">{source.channel || "Slack"}</p>
+          <p className="text-[11px] text-white/50">
+            {source.author || "Unknown"} · {formattedTime}
+          </p>
+        </div>
+        {source.rank && (
+          <span className="text-[10px] uppercase tracking-wide text-white/40">Source {source.rank}</span>
+        )}
+      </div>
+      {source.snippet && <p className="mt-2 text-sm text-white/80">{source.snippet}</p>}
+      {source.permalink && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onOpen(source)}
+            className="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 text-xs font-semibold text-white/80 transition hover:border-white/40 hover:text-white"
+          >
+            Open in Slack
+            <span aria-hidden="true">↗</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onCopy(source.permalink)}
+            className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] font-medium text-white/70 transition hover:border-white/30 hover:text-white"
+          >
+            Copy link
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+function formatSlackTimestamp(isoTime?: string, ts?: string): string {
+  if (isoTime) {
+    const date = new Date(isoTime);
+    if (!isNaN(date.getTime())) {
+      return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    }
+  }
+  if (ts) {
+    const numeric = parseFloat(ts);
+    if (!Number.isNaN(numeric)) {
+      const date = new Date(numeric * 1000);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      }
+    }
+  }
+  return "Unknown time";
+}
+
+const SlashSlackSummaryCard: React.FC<SlashSlackSummaryCardProps> = ({ summary, queryPlan }) => {
+  const { addToast } = useToast();
+  const { message, sections = {}, context, graph, debug } = summary;
   const channelLabel = context?.channel_label || context?.channel_name || "Slack";
   const timeLabel = context?.time_window_label;
   const mode = context?.mode;
+  const [showEvidence, setShowEvidence] = useState(false);
+  const planTargets =
+    queryPlan?.targets
+      ?.map((target) => target.label || target.identifier || target.raw)
+      .filter((target): target is string => Boolean(target)) || [];
+  const scopeLabels = Array.isArray(context?.channel_scope_labels)
+    ? (context?.channel_scope_labels as string[])
+    : [];
+  const sources = summary.sources || [];
+  const sourceEmptyCopy = scopeLabels.length
+    ? `No Slack messages found for this query in ${scopeLabels.join(", ")}.`
+    : "No Slack messages found for this query.";
+  const planBadges: Array<{ label: string; value: string }> = [];
+  if (planTargets.length) {
+    planBadges.push({ label: "Targets", value: planTargets.join(", ") });
+  }
+  if (queryPlan?.time_scope && typeof queryPlan.time_scope === "object") {
+    const scopeLabel = (queryPlan.time_scope as Record<string, any>).label;
+    if (scopeLabel && typeof scopeLabel === "string") {
+      planBadges.push({ label: "Window", value: scopeLabel });
+    }
+  }
+  if (queryPlan?.tone) {
+    planBadges.push({ label: "Tone", value: queryPlan.tone });
+  }
+  if (queryPlan?.intent) {
+    planBadges.push({ label: "Intent", value: queryPlan.intent });
+  }
 
   const hasTopics = Array.isArray(sections.topics) && sections.topics.length > 0;
   const hasDecisions = Array.isArray(sections.decisions) && sections.decisions.length > 0;
   const hasTasks = Array.isArray(sections.tasks) && sections.tasks.length > 0;
   const hasQuestions = Array.isArray(sections.open_questions) && sections.open_questions.length > 0;
   const hasReferences = Array.isArray(sections.references) && sections.references.length > 0;
+  const sampleEvidence = Array.isArray(debug?.sample_evidence) ? debug?.sample_evidence : [];
+  const retrievedCount = typeof debug?.retrieved_count === "number" ? debug?.retrieved_count : null;
+  const canShowEvidence = Boolean(debug && (sampleEvidence.length > 0 || retrievedCount !== null));
+
+  const handleOpenSource = (source: SlackSourceItem) => {
+    const targetUrl = source.deep_link || source.permalink;
+    if (!targetUrl) {
+      addToast("Slack permalink unavailable for this source.", "warning");
+      return;
+    }
+    const opened = openExternalUrl(targetUrl);
+    if (!opened && source.permalink && source.permalink !== targetUrl) {
+      const fallbackOpened = openExternalUrl(source.permalink);
+      if (fallbackOpened) {
+        return;
+      }
+    }
+    if (!opened) {
+      addToast("Unable to open Slack link. Copied to clipboard instead.", "warning");
+      void handleCopyLink(source.permalink, true);
+    }
+  };
+
+  const handleCopyLink = async (permalink?: string, silent?: boolean) => {
+    if (!permalink) {
+      if (!silent) {
+        addToast("Slack permalink unavailable for this source.", "warning");
+      }
+      return;
+    }
+    const copied = await copyToClipboard(permalink);
+    if (copied) {
+      if (!silent) {
+        addToast("Slack link copied to clipboard.", "success");
+      }
+      return;
+    }
+    if (!silent) {
+      addToast("Unable to copy Slack link.", "error");
+    }
+  };
 
   return (
     <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/20">
@@ -171,9 +368,23 @@ const SlashSlackSummaryCard: React.FC<SlashSlackSummaryCardProps> = ({ summary }
         )}
       </div>
 
-      <p className="mt-3 text-base font-semibold text-white leading-relaxed">
-        {message}
-      </p>
+      <p className="mt-3 text-base font-semibold text-white leading-relaxed">{message}</p>
+
+      {planBadges.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {planBadges.map((badge) => (
+            <PlanBadge key={`${badge.label}-${badge.value}`} label={badge.label} value={badge.value} />
+          ))}
+        </div>
+      )}
+
+      <SlackSourcesSection
+        sources={sources}
+        scopeLabels={scopeLabels}
+        emptyCopy={sourceEmptyCopy}
+        onOpen={handleOpenSource}
+        onCopy={handleCopyLink}
+      />
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         {hasTopics && (
@@ -225,9 +436,49 @@ const SlashSlackSummaryCard: React.FC<SlashSlackSummaryCardProps> = ({ summary }
       <div className="mt-4 text-xs text-white/50">
         <SlackHintFooter graph={graph} />
       </div>
+
+      {canShowEvidence && (
+        <div className="mt-4 rounded-xl border border-white/15 bg-black/20 p-3">
+          <button
+            type="button"
+            onClick={() => setShowEvidence((prev) => !prev)}
+            className="flex w-full items-center justify-between text-left text-sm font-semibold text-white hover:text-accent-primary"
+          >
+            <span>{showEvidence ? "Hide evidence" : "View evidence"}</span>
+            <span className="text-xs uppercase tracking-wide text-white/50">
+              {showEvidence ? "▲" : "▼"}
+            </span>
+          </button>
+          <div className="mt-1 text-[11px] text-white/50">
+            {retrievedCount !== null && (
+              <span>
+                {retrievedCount} message{retrievedCount === 1 ? "" : "s"} scanned
+              </span>
+            )}
+            {retrievedCount !== null && debug?.status && " • "}
+            {debug?.status && <span>Status: {debug.status}</span>}
+            {!retrievedCount && !debug?.status && <span>Evidence mode enabled</span>}
+          </div>
+          {showEvidence && (
+            <div className="mt-3 space-y-3">
+              {sampleEvidence.length > 0 ? (
+                sampleEvidence.map((entry, idx) => (
+                  <div key={`${entry.channel || "channel"}-${idx}`} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-white/50">
+                      {entry.channel || "Channel"}
+                    </div>
+                    <p className="mt-1 text-sm text-white/80">{entry.snippet || "Snippet unavailable."}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-white/70">No snippet captured for this result, but evidence metadata is available.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
 export default SlashSlackSummaryCard;
-

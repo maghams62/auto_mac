@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertTriangle, Check, RefreshCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { fetchApiEnvelope } from "@/lib/http/api-response";
 import { useDashboardStore } from "@/lib/state/dashboard-store";
 import { logClientEvent } from "@/lib/logging";
 import { shortDate } from "@/lib/utils";
@@ -25,36 +26,30 @@ export function ManualRefreshButton() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/activity?manual=1", { cache: "no-store" });
-      if (!response.ok) {
-        let message = response.statusText;
-        try {
-          const payload = await response.json();
-          if (payload?.error) {
-            message = payload.error;
-          }
-        } catch {
-          // ignore JSON errors
-        }
-        throw new Error(message || "Failed to refresh live activity");
-      }
-
-      const payload = (await response.json()) as {
-        snapshot?: LiveActivitySnapshot;
-        projects?: Project[];
-        mode?: LiveMode;
-      };
-      if (!payload?.snapshot || !Array.isArray(payload.projects)) {
+      const payload = await fetchApiEnvelope<{ snapshot?: LiveActivitySnapshot; projects?: Project[] }>(
+        "/api/activity?manual=1",
+        { cache: "no-store" },
+      );
+      const data = payload.data;
+      if (!data?.snapshot || !Array.isArray(data.projects)) {
         throw new Error("Live payload missing data");
       }
 
-      applyLiveProjects(payload.projects, payload.snapshot, payload.mode);
+      applyLiveProjects(data.projects as Project[], data.snapshot as LiveActivitySnapshot, payload.mode);
+      const message = describeLiveFallback(payload.status, payload.fallbackReason, payload.error?.message);
+      if (message) {
+        setLiveStatus({
+          mode: payload.mode ?? liveStatus.mode,
+          lastUpdated: data.snapshot.generatedAt,
+          message,
+        });
+      }
       logClientEvent("live.manual-refresh.success", {
         mode: payload.mode ?? "unknown",
-        generatedAt: payload.snapshot.generatedAt,
+        generatedAt: data.snapshot.generatedAt,
       });
       setState("success");
-      const timestamp = payload.snapshot.generatedAt ?? new Date().toISOString();
+      const timestamp = data.snapshot.generatedAt ?? new Date().toISOString();
       setLastManualRefresh(timestamp);
       setTimeout(() => setState("idle"), 2500);
     } catch (error) {
@@ -120,5 +115,18 @@ export function ManualRefreshButton() {
       {renderStatus()}
     </div>
   );
+}
+
+function describeLiveFallback(status: string, fallbackReason?: string, errorMessage?: string) {
+  if (status === "OK") {
+    return undefined;
+  }
+  if (fallbackReason === "cerebros_unavailable") {
+    return "Cerebros unavailable, showing fallback snapshot";
+  }
+  if (fallbackReason === "synthetic_fallback") {
+    return "Synthetic fixtures in use";
+  }
+  return errorMessage ?? "Live ingest degraded";
 }
 

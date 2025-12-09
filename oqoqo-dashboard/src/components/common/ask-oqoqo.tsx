@@ -34,7 +34,7 @@ export function AskOqoqoCard({ context, title, summary }: AskOqoqoCardProps) {
       <div className="flex items-center gap-2">
         <Badge variant="outline" className="rounded-full border-primary/40 text-primary">
           <Sparkles className="mr-1 h-3.5 w-3.5" />
-          Ask Oqoqo
+          Ask OQOQO
         </Badge>
         <span className="text-xs uppercase tracking-wide text-muted-foreground">LLM assist (stub)</span>
       </div>

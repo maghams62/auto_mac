@@ -13,6 +13,50 @@ export interface SlashCommandDefinition {
   commandType?: "immediate" | "with_input";
 }
 
+const SLASH_ALIAS_MAP: Record<string, string> = {
+  "/oq": "/cerebros",
+};
+
+const SLASH_ALIAS_TOKEN_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(SLASH_ALIAS_MAP).map(([alias, canonical]) => [
+    alias.slice(1),
+    canonical.slice(1),
+  ]),
+);
+
+const getCanonicalSlashToken = (token: string): string | undefined => {
+  if (!token) return undefined;
+  return SLASH_ALIAS_TOKEN_MAP[token.toLowerCase()];
+};
+
+export function normalizeSlashCommandInput(value: string): string {
+  if (!value.startsWith("/")) {
+    return value;
+  }
+
+  const match = value.match(/^\/([^\s]+)/);
+  if (!match) {
+    return value;
+  }
+
+  const canonicalToken = getCanonicalSlashToken(match[1]);
+  if (!canonicalToken) {
+    return value;
+  }
+
+  const canonicalCommand = `/${canonicalToken}`;
+  if (match[0] === canonicalCommand) {
+    return value;
+  }
+
+  return canonicalCommand + value.slice(match[0].length);
+}
+
+export function canonicalizeSlashCommandId(id: string): string {
+  const canonicalToken = getCanonicalSlashToken(id);
+  return canonicalToken || id;
+}
+
 /**
  * Canonical list of supported slash commands.
  * Only commands listed here should appear in the dropdown and command palette.
@@ -43,6 +87,19 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     telemetryKey: "email",
     placeholder: "e.g. follow up with Sarah about the onboarding deck...",
     keywords: ["email", "mail", "send", "inbox"],
+    commandType: "with_input",
+  },
+  {
+    command: "/setup",
+    label: "Setup",
+    description: "Show Cerebros search configuration and modality health",
+    category: "System",
+    emoji: "🛠️",
+    kind: "chat",
+    priority: 0.95,
+    telemetryKey: "setup",
+    placeholder: "e.g. /setup detail youtube",
+    keywords: ["setup", "config", "search", "status"],
     commandType: "with_input",
   },
   {
@@ -188,6 +245,32 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     telemetryKey: "index",
     placeholder: "Optional: specify folders or leave blank for config defaults",
     keywords: ["index", "reindex", "documents"],
+    commandType: "with_input",
+  },
+  {
+    command: "/cerebros",
+    label: "Cerebros Search",
+    description: "Run universal semantic search across Slack, Git, files, and YouTube",
+    category: "Knowledge",
+    emoji: "🧠",
+    kind: "chat",
+    priority: 2.41,
+    telemetryKey: "cerebros",
+    placeholder: "Ask across all indexed sources…",
+    keywords: ["cerebros", "search", "brain", "universal"],
+    commandType: "with_input",
+  },
+  {
+    command: "/youtube",
+    label: "YouTube",
+    description: "Index or query YouTube transcripts with timestamps",
+    category: "Knowledge",
+    emoji: "🎬",
+    kind: "chat",
+    priority: 2.42,
+    telemetryKey: "youtube",
+    placeholder: "e.g. /youtube https://youtu.be/... what is chapter 3 about?",
+    keywords: ["youtube", "video", "transcript"],
     commandType: "with_input",
   },
 
@@ -490,6 +573,31 @@ const SCOPE_MAP: Record<SlashCommandScope, SlashCommandDefinition[]> = {
 const cloneCommands = (list: SlashCommandDefinition[]) =>
   list.map((cmd) => ({ ...cmd }));
 
+const COMMAND_SPLIT_REGEX = /[\s,]+/;
+
+const sanitizeToken = (value: string) =>
+  value
+    .replace(/[“”"']/g, "")
+    .trim()
+    .toLowerCase();
+
+export function getSlashQueryMetadata(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("/")) {
+    return { commandToken: "", normalizedQuery: "", tokens: [] };
+  }
+  const normalizedQuery = trimmed.slice(1).toLowerCase();
+  const tokens = normalizedQuery
+    .split(COMMAND_SPLIT_REGEX)
+    .map(sanitizeToken)
+    .filter(Boolean);
+  return {
+    commandToken: tokens[0] || "",
+    normalizedQuery,
+    tokens,
+  };
+}
+
 /**
  * Get commands sorted by priority for display in dropdown/palette
  */
@@ -525,6 +633,15 @@ export function filterSlashCommands(
     return commands;
   }
 
+  const tokens = normalized
+    .split(COMMAND_SPLIT_REGEX)
+    .map(sanitizeToken)
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return commands;
+  }
+
   return commands.filter((cmd) => {
     const searchable = [
       cmd.command.replace(/^\//, ""),
@@ -537,6 +654,6 @@ export function filterSlashCommands(
       .join(" ")
       .toLowerCase();
 
-    return searchable.includes(normalized);
+    return tokens.some((token) => searchable.includes(token));
   });
 }

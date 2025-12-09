@@ -11,6 +11,7 @@ from ..canonical_ids import CanonicalIdRegistry
 from ..embedding_provider import EmbeddingProvider
 from ..vector_event import VectorEvent
 from ..vector_store_factory import create_vector_store
+from ...utils.slack_links import build_slack_permalink
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,9 @@ class SlackVectorIndexer:
             config=config,
         )
         self.registry = canonical_registry or CanonicalIdRegistry.from_file()
+        slash_slack_cfg = (config.get("slash_slack") or {})
+        self._workspace_url = slash_slack_cfg.get("workspace_url") or os.getenv("SLACK_WORKSPACE_URL")
+        self._team_id = os.getenv("SLACK_TEAM_ID") or slash_slack_cfg.get("team_id")
         backend = os.getenv("VECTOR_BACKEND") or (config.get("vectordb") or {}).get("backend") or "local"
         backend = backend.strip().lower()
         target = getattr(self.vector_store, "collection", str(self.output_path))
@@ -109,6 +113,7 @@ class SlackVectorIndexer:
             "component_ids": component_ids,
             "apis": apis,
             "labels": labels,
+            "permalink": raw.get("permalink") or self._build_permalink(raw),
         }
 
         human_header = self._human_context(raw)
@@ -153,4 +158,16 @@ class SlackVectorIndexer:
         user = raw.get("user") or raw.get("user_name") or ""
         ts = raw.get("timestamp") or raw.get("message_ts") or ""
         return f"[Slack] {channel} :: {user} @ {ts}"
+
+    def _build_permalink(self, raw: Dict) -> Optional[str]:
+        channel_id = raw.get("channel_id") or raw.get("channel")
+        message_ts = raw.get("message_ts") or raw.get("thread_ts")
+        if not channel_id or not message_ts:
+            return None
+        return build_slack_permalink(
+            channel_id,
+            str(message_ts),
+            workspace_url=self._workspace_url,
+            team_id=self._team_id,
+        )
 

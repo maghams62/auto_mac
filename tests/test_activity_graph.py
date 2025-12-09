@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
+from src.activity_graph.models import TimeWindow
+from src.activity_graph.signals import GitSignalsExtractor
 from src.graph.analytics_service import GraphAnalyticsService
 from src.ingestion.git_activity_ingestor import GitActivityIngestor
+from src.slash_git.models import GitTargetComponent, GitTargetRepo
 
 
 class DummyGraphService:
@@ -127,4 +132,43 @@ def test_component_activity_includes_docs_and_dissatisfaction():
     assert result["doc_count"] == 3
     assert result["dissatisfaction_score"] == 1.2
     graph_service.run_query.assert_called_once()
+
+
+def test_git_signals_extractor_prefers_live_log(tmp_path):
+    log_path = tmp_path / "git_log.jsonl"
+    now = datetime.now(timezone.utc).isoformat()
+    entries = [
+        {"component_ids": ["comp:docs"], "event_type": "pr", "timestamp": now},
+        {"component_ids": ["comp:docs"], "event_type": "commit", "timestamp": now},
+        {"component_ids": ["comp:other"], "event_type": "commit", "timestamp": now},
+    ]
+    log_path.write_text("\n".join(json.dumps(entry) for entry in entries), encoding="utf-8")
+
+    repo = GitTargetRepo(
+        id="fastapi",
+        name="FastAPI",
+        repo_owner="tiangolo",
+        repo_name="fastapi",
+        default_branch="master",
+        aliases=[],
+        synthetic_root=None,
+        components={},
+    )
+    component = GitTargetComponent(
+        id="comp:docs",
+        name="Docs",
+        repo_id="fastapi",
+        aliases=[],
+        paths=[],
+        topics=[],
+        topic_aliases=[],
+        metadata={},
+    )
+    repo.components[component.id] = component
+
+    extractor = GitSignalsExtractor(MagicMock(), log_path=log_path)
+    counts = extractor.count_events(repo, component, TimeWindow.last_days(7))
+
+    assert counts.prs == 1
+    assert counts.commits == 1
 

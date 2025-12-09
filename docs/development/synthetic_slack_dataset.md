@@ -17,7 +17,7 @@ SLACK_BASE_TIME=2025-11-26T09:00:00
 SLACK_CHANNEL_MAP={"#incidents":"C123INCIDENTS","#billing-dev":"C123BILLING","#docs":"C123DOCS","#support":"C123SUPPORT","#core-api":"C123COREAPI","#notifications":"C123NOTIFY"}
 SLACK_CONFIG_PATH=/Users/you/auto_mac/config.yaml
 # Standard Slack creds used elsewhere in the app
-SLACK_BOT_TOKEN=xoxb-your-token
+SLACK_TOKEN=xoxb-your-token
 SLACK_CHANNEL_ID=C0123456789
 ```
 

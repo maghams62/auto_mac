@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass, field
 
 from .github_pr_service import GitHubPRService, GitHubAPIError, get_github_pr_service
+from src.settings.git import resolve_repo_branch
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class BranchWatcherService:
         # Branch tracking
         self.watched_branches: Dict[str, BranchState] = {}
         self.pending_drift_reports: Dict[str, PendingDriftReport] = {}  # branch -> report
+        self.target_branches: Set[str] = self._resolve_target_branches()
         
         # Branches to exclude from watching
         self.excluded_branches = {"main", "master", "develop", "HEAD"}
@@ -149,13 +151,31 @@ class BranchWatcherService:
                 
         except Exception as e:
             logger.warning(f"[BRANCH WATCHER] Failed to save persistent state: {e}")
+
+    def _resolve_target_branches(self) -> Set[str]:
+        """Return the set of branches configured as primary sources."""
+        owner = self.github_config.get("repo_owner") or self.github_config.get("owner")
+        name = self.github_config.get("repo_name") or self.github_config.get("name")
+        if not owner or not name:
+            return set()
+        project_id = self.github_config.get("project_id")
+        repo_full = f"{owner}/{name}"
+        branch = resolve_repo_branch(
+            repo_full,
+            project_id=project_id,
+            fallback_branch=self.github_config.get("base_branch"),
+        )
+        return {branch} if branch else set()
     
     async def _fetch_branches(self) -> List[str]:
         """Fetch list of branches from GitHub."""
         try:
             branches = await asyncio.to_thread(self.github_service.list_branches)
             # Filter out excluded branches
-            return [b for b in branches if b not in self.excluded_branches]
+            branch_list = [b for b in branches if b not in self.excluded_branches]
+            if self.target_branches:
+                branch_list = [b for b in branch_list if b in self.target_branches]
+            return branch_list
         except GitHubAPIError as e:
             logger.error(f"[BRANCH WATCHER] Failed to fetch branches: {e}")
             return []

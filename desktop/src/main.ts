@@ -690,14 +690,18 @@ async function logPortDiagnostics(port: number, context: string) {
  * Check if a server is already running on a given URL
  * Uses retry logic and Node's http module for reliability
  */
-async function isServerRunning(url: string): Promise<boolean> {
+type ServerCheckOptions = {
+  allow404?: boolean;
+};
+
+async function isServerRunning(url: string, options: ServerCheckOptions = {}): Promise<boolean> {
   const log = logger ? logger : { debug: () => {} };
   
   // Try up to 2 times with retry delay
   for (let retry = 0; retry < 2; retry++) {
     try {
       const response = await httpGet(url, 3000);
-      if (response.ok) {
+      if (response.ok || (options.allow404 && response.status === 404)) {
         return true;
       }
     } catch (error: any) {
@@ -712,6 +716,126 @@ async function isServerRunning(url: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+const DESKTOP_PING_ATTEMPTS = 8;
+const DESKTOP_PING_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildExpandedPlaceholderHtml(options: { headline: string; subhead?: string }): string {
+  const { headline, subhead } = options;
+  return `
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cerebros Desktop</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #141414, #050505);
+        color: #f5f5f5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+      .card {
+        text-align: center;
+        padding: 32px;
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        width: 320px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      }
+      h1 {
+        margin-bottom: 12px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0;
+        font-size: 14px;
+        color: rgba(255,255,255,0.75);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>${headline}</h1>
+      <p>${subhead ?? "Preparing the desktop workspace..."}</p>
+    </div>
+  </body>
+</html>
+`.trim();
+}
+
+function loadExpandedPlaceholderWindow(windowRef: BrowserWindow | null, options: { headline: string; subhead?: string }) {
+  if (!windowRef || windowRef.isDestroyed()) {
+    return;
+  }
+  const html = buildExpandedPlaceholderHtml(options);
+  void windowRef.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+function buildDesktopUrlWithState(state: 'ready' | 'pending' | 'error', attempts: number): string {
+  const desktopUrl = new URL(getFrontendUrl('/desktop'));
+  desktopUrl.searchParams.set('state', state);
+  desktopUrl.searchParams.set('attempts', String(attempts));
+  desktopUrl.searchParams.set('ts', Date.now().toString());
+  return desktopUrl.toString();
+}
+
+async function loadExpandedDesktopWindow(windowRef: BrowserWindow | null): Promise<void> {
+  if (!windowRef || windowRef.isDestroyed()) {
+    return;
+  }
+
+  if (!isDev) {
+    const prodUrl = `file://${path.join(process.resourcesPath, 'app', 'frontend', 'out', 'desktop.html')}`;
+    await windowRef.loadURL(prodUrl);
+    return;
+  }
+
+  const log = logger ?? undefined;
+
+  for (let attempt = 1; attempt <= DESKTOP_PING_ATTEMPTS; attempt++) {
+    if (!windowRef || windowRef.isDestroyed()) {
+      return;
+    }
+
+    const url = buildDesktopUrlWithState('ready', attempt);
+    try {
+      log?.info('[EXPANDED] Attempting to load desktop route', { attempt, url });
+      await windowRef.loadURL(url);
+      log?.info('[EXPANDED] Desktop route loaded', { attempt });
+      return;
+    } catch (error: any) {
+      const message = error instanceof Error ? error.message : String(error);
+      log?.warn('[EXPANDED] Failed to load desktop route', { attempt, url, error: message });
+
+      if (attempt < DESKTOP_PING_ATTEMPTS) {
+        loadExpandedPlaceholderWindow(windowRef, {
+          headline: 'Preparing Cerebros Desktop',
+          subhead: `Retrying connection (${attempt}/${DESKTOP_PING_ATTEMPTS})…`,
+        });
+        const retryDelay = DESKTOP_PING_DELAY_MS * attempt;
+        await sleep(retryDelay);
+      }
+    }
+  }
+
+  if (windowRef && !windowRef.isDestroyed()) {
+    loadExpandedPlaceholderWindow(windowRef, {
+      headline: 'Desktop view unavailable',
+      subhead: 'Start the frontend dev server (npm run dev) and try again.',
+    });
+  }
 }
 
 /**
@@ -945,9 +1069,14 @@ async function startBackend() {
   const spawnTimestamp = new Date().toISOString();
   log.info('Spawning Python backend process', { timestamp: spawnTimestamp, venvPython, apiServer, workingDir });
 
+  const backendEnv = { ...process.env };
+  if (!backendEnv.CEREBROS_FAST_STARTUP) {
+    backendEnv.CEREBROS_FAST_STARTUP = '1';
+  }
+
   pythonProcess = spawn(venvPython, [apiServer], {
     cwd: workingDir,
-    env: { ...process.env },
+    env: backendEnv,
   });
 
   const pid = pythonProcess.pid;
@@ -1608,7 +1737,7 @@ function toggleWindow(source: ToggleSource = 'system') {
 /**
  * Open expanded desktop view (ChatGPT-style full window)
  */
-function openExpandedWindow() {
+async function openExpandedWindow() {
   const log = getLogger();
   
   // If expanded window already exists, focus it
@@ -1645,13 +1774,35 @@ function openExpandedWindow() {
     },
   });
 
-  // Load the desktop route
-  const frontendUrl = isDev
-    ? getFrontendUrl('/desktop')
-    : `file://${path.join(process.resourcesPath, 'app', 'frontend', 'out', 'desktop.html')}`;
+  // Immediately show a placeholder so users see progress
+  loadExpandedPlaceholderWindow(expandedWindow, {
+    headline: 'Preparing Cerebros Desktop',
+    subhead: isDev ? 'Connecting to the Next.js dev server…' : 'Loading workspace assets…',
+  });
 
-  log?.info('[EXPANDED] Loading desktop URL', { url: frontendUrl });
-  expandedWindow.loadURL(frontendUrl);
+  expandedWindow.webContents.on('did-start-loading', () => {
+    log?.debug('[EXPANDED] Renderer started loading', {
+      url: expandedWindow?.webContents.getURL(),
+    });
+  });
+
+  expandedWindow.webContents.on('did-finish-load', () => {
+    log?.info('[EXPANDED] Renderer finished loading', {
+      url: expandedWindow?.webContents.getURL(),
+    });
+  });
+
+  expandedWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log?.error('[EXPANDED] Renderer failed to load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+    loadExpandedPlaceholderWindow(expandedWindow, {
+      headline: 'Desktop view unavailable',
+      subhead: 'Start the frontend dev server (npm run dev) and try again.',
+    });
+  });
 
   // Show when ready
   expandedWindow.once('ready-to-show', () => {
@@ -1665,6 +1816,8 @@ function openExpandedWindow() {
     log?.info('[EXPANDED] Window closed');
     expandedWindow = null;
   });
+
+  await loadExpandedDesktopWindow(expandedWindow);
 
   // Handle blur - don't hide expanded window on blur (it's a regular window)
   // Only spotlight window has hide-on-blur behavior
@@ -1767,7 +1920,7 @@ function setupIPC() {
   ipcMain.on('open-expanded-window', () => {
     const log = getLogger();
     log?.info('[LAUNCHER] Opening expanded desktop window');
-    openExpandedWindow();
+    void openExpandedWindow();
   });
 
   // Collapse back to spotlight view

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick smoke test runner for slash commands (Slack, GitHub, Oqoqo).
+Quick smoke test runner for slash commands (Slack, GitHub, Cerebros).
 
 Usage examples:
     python scripts/run_slash_smoke_tests.py \
@@ -58,11 +58,25 @@ def run_command(base_url: str, session_id: str, command: str) -> None:
 
 def build_command_list(args: argparse.Namespace) -> List[str]:
     """Assemble the slash commands to run based on CLI inputs."""
-    commands = [
-        "/slack list channels",
-        "/git list open PRs on main",
-        "/oq Summarize the latest Slack and GitHub activity",
-    ]
+    commands: List[str] = []
+
+    if not args.skip_setup:
+        commands.append("/setup")
+
+    if not args.skip_index:
+        index_targets = (args.index_targets or "").strip()
+        if index_targets and index_targets.lower() != "all":
+            commands.append(f"/index {index_targets}")
+        else:
+            commands.append("/index")
+
+    commands.extend(
+        [
+            "/slack list channels",
+            "/git list open PRs on main",
+            "/cerebros Summarize the latest Slack and GitHub activity",
+        ]
+    )
 
     if args.slack_channel:
         commands.append(f"/slack fetch {args.slack_channel} limit {args.slack_limit}")
@@ -73,31 +87,46 @@ def build_command_list(args: argparse.Namespace) -> List[str]:
     if args.slack_query:
         commands.append(f"/slack search {args.slack_query}")
 
-    if args.oq_question:
-        commands.append(f"/oq {args.oq_question}")
+    if args.cerebros_question:
+        commands.append(f"/cerebros {args.cerebros_question}")
 
     return commands
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run smoke tests for Slack/GitHub/Oq slash commands.",
+        description="Run smoke tests for Slack/GitHub/Cerebros slash commands.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(
             """
             Examples:
               python scripts/run_slash_smoke_tests.py --slack-channel C0123456789
-              python scripts/run_slash_smoke_tests.py --pr-number 128 --oq-question "What's the status of onboarding?"
+              python scripts/run_slash_smoke_tests.py --pr-number 128 --cerebros-question "What's the status of onboarding?"
             """
         ),
     )
     parser.add_argument("--base-url", default="http://localhost:8000", help="API server base URL")
     parser.add_argument("--session-id", default="slash-smoke", help="Session ID to use for the requests")
+    parser.add_argument(
+        "--skip-setup",
+        action="store_true",
+        help="Skip running /setup as part of the smoke suite",
+    )
+    parser.add_argument(
+        "--skip-index",
+        action="store_true",
+        help="Skip running /index as part of the smoke suite",
+    )
+    parser.add_argument(
+        "--index-targets",
+        default="slack",
+        help="Space-separated modalities to pass to /index (use 'all' for every modality)",
+    )
     parser.add_argument("--slack-channel", help="Slack channel ID (C123...) to fetch history for")
     parser.add_argument("--slack-limit", type=int, default=20, help="Number of Slack messages to fetch when using --slack-channel")
     parser.add_argument("--slack-query", help="Additional Slack search query to run")
     parser.add_argument("--pr-number", type=int, help="Specific PR number to summarize via /pr")
-    parser.add_argument("--oq-question", help="Custom /oq question to ask")
+    parser.add_argument("--cerebros-question", help="Custom /cerebros question to ask")
     args = parser.parse_args()
 
     commands = build_command_list(args)

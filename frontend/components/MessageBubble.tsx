@@ -2,7 +2,7 @@
 
 import React, { memo, useMemo, useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { Message, PlanState } from "@/lib/useWebSocket";
+import { Message, PlanState, EvidenceItem, SlackSourceItem, DocPriority, IncidentCandidate } from "@/lib/useWebSocket";
 import { formatTimestamp } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { messageEntrance } from "@/lib/motion";
@@ -19,6 +19,13 @@ import ApidocsDriftCard from "./ApidocsDriftCard";
 import { useToast } from "@/lib/useToast";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 import SlashSlackSummaryCard from "./SlashSlackSummaryCard";
+import SlashGitSummaryCard from "./SlashGitSummaryCard";
+import SlashCerebrosSummaryCard from "./SlashCerebrosSummaryCard";
+import YouTubeSummaryCard from "./YouTubeSummaryCard";
+import { CreateDocIssueModal } from "./CreateDocIssueModal";
+import { buildDashboardComponentUrl } from "@/lib/dashboardLinks";
+import { openExternalUrl, copyToClipboard } from "@/lib/externalLinks";
+import { IncidentCTA } from "./IncidentCTA";
 
 interface MessageBubbleProps {
   message: Message;
@@ -94,6 +101,8 @@ function renderMessageWithLinks(text: string, isUser: boolean): React.ReactNode 
 const MessageBubble = memo(function MessageBubble({ message, index, planState }: MessageBubbleProps) {
   const { addToast } = useToast();
   const [isCanvasOpen, setIsCanvasOpen] = useState(false);
+  const [showDocIssueModal, setShowDocIssueModal] = useState(false);
+  const [showExplainability, setShowExplainability] = useState(false);
   const toastShownRef = useRef<Set<string>>(new Set());
   
   // DEBUG: Log files prop to verify it's received
@@ -118,6 +127,13 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
   const isBlueskyNotification = message.type === "bluesky_notification";
   const isApidocsDrift = message.type === "apidocs_drift";
   const isAssistant = !isUser && !isSystem && !isError && !isStatus && !isPlan && !isBlueskyNotification && !isApidocsDrift;
+  const evidenceEntries = message.evidence ?? [];
+  const dashboardUrl = buildDashboardComponentUrl(message.componentIds?.[0]);
+  const explainAvailable =
+    isAssistant &&
+    ((message.evidence && message.evidence.length > 0) || (message.toolRuns && message.toolRuns.length > 0));
+  const canFileDocIssue = Boolean(message.investigationId && message.componentIds?.length && evidenceEntries.length);
+  const hasDashboardComponent = Boolean(message.componentIds?.length);
   
   // Detect if message contains a summary (has separator pattern)
   const summaryData = useMemo(() => {
@@ -158,6 +174,50 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     
     return null;
   }, [message.message, isUser, isPlan]);
+
+  const isYouTubeMessage = isAssistant && (message.command === "youtube" || message.agent === "youtube" || Boolean(message.youtube));
+  const cerebrosAnswer = message.cerebrosAnswer;
+  const cerebrosOptionLabel = useMemo(() => {
+    const option = cerebrosAnswer?.option;
+    if (option === "activity_graph") {
+      return "Option 1 · documentation health";
+    }
+    if (option === "cross_system_context") {
+      return "Option 2 · cross-system impact";
+    }
+    return null;
+  }, [cerebrosAnswer?.option]);
+  const docPriorities = cerebrosAnswer?.doc_priorities;
+
+  const youtubeDetails = useMemo(() => {
+    if (!isYouTubeMessage || !message.details) {
+      return null;
+    }
+    const lines = message.details
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) {
+      return null;
+    }
+    let metaLine: string | null = null;
+    const references: Array<{ timestamp?: string; text: string }> = [];
+    for (const line of lines) {
+      if (line.startsWith("-")) {
+        const match = line.match(/-\s*\(~([^)]*)\)\s*(.+)/);
+        if (match) {
+          references.push({ timestamp: match[1], text: match[2].trim() });
+        } else {
+          references.push({ text: line.replace(/^-+\s*/, "").trim() });
+        }
+      } else if (!metaLine) {
+        metaLine = line;
+      } else {
+        references.push({ text: line });
+      }
+    }
+    return { metaLine, references };
+  }, [isYouTubeMessage, message.details]);
 
   // Memoize delivery status to prevent unnecessary recalculations
   const deliveryStatus = useMemo(() => {
@@ -257,7 +317,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
     return null;
   }
 
-  return (
+  const bubble = (
     <motion.div
       className={cn("flex w-full mb-2 group", isUser ? "justify-end" : "justify-start")}
       initial={{ y: 12, opacity: 0, filter: "blur(12px)" }}
@@ -336,6 +396,37 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
             >
               {renderMessageWithLinks(message.message || "", isUser)}
             </CollapsibleMessage>
+
+            {isAssistant && cerebrosOptionLabel && !message.slash_cerebros ? (
+              <div className="mt-3 inline-flex items-center rounded-full border border-white/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/70">
+                {cerebrosOptionLabel}
+              </div>
+            ) : null}
+
+            {isAssistant && !message.slash_cerebros && docPriorities && docPriorities.length > 0 ? (
+              <DocPriorityList priorities={docPriorities} />
+            ) : null}
+
+            {isYouTubeMessage && message.youtube && (
+              <div className="mt-4">
+                <YouTubeSummaryCard payload={message.youtube} />
+              </div>
+            )}
+            {isYouTubeMessage && !message.youtube && (
+              <div className="mt-3 space-y-2 text-sm text-slate-200">
+                {youtubeDetails?.metaLine && <p className="text-xs uppercase tracking-wide text-slate-400">{youtubeDetails.metaLine}</p>}
+                {youtubeDetails?.references?.length ? (
+                  <ul className="space-y-1">
+                    {youtubeDetails.references.map((reference, index) => (
+                      <li key={`${reference.text}-${index}`} className="flex items-start gap-2 text-slate-200">
+                        {reference.timestamp && <span className="font-mono text-[11px] text-cyan-300">{reference.timestamp}</span>}
+                        <span className="flex-1 text-xs text-slate-300">{reference.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
             
             {/* Summary Canvas Button */}
             {summaryData && isAssistant && (
@@ -370,9 +461,38 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           </div>
         )}
 
+        {/* Slack quick link tile */}
+        {isAssistant && message.slash_slack?.sources?.length ? (
+          <SlackQuickLinkTile sources={message.slash_slack.sources} addToast={addToast} />
+        ) : null}
+
+        {isAssistant && !message.slash_cerebros && message.incidentCandidate ? (
+          <>
+            <IncidentStructuredSummary candidate={message.incidentCandidate} />
+            <IncidentCTA
+              candidate={message.incidentCandidate}
+              incidentId={message.incidentId}
+              investigationId={message.investigationId}
+              className="mt-4"
+            />
+          </>
+        ) : null}
+
         {/* Task Completion Card - Rich feedback for completed actions */}
         {isAssistant && message.slash_slack && (
-          <SlashSlackSummaryCard summary={message.slash_slack} />
+          <SlashSlackSummaryCard summary={message.slash_slack} queryPlan={message.queryPlan} />
+        )}
+
+        {isAssistant && message.slash_git && (
+          <SlashGitSummaryCard summary={message.slash_git} queryPlan={message.queryPlan} />
+        )}
+
+        {isAssistant && message.slash_cerebros && (
+          <SlashCerebrosSummaryCard
+            summary={message.slash_cerebros}
+            queryPlan={message.queryPlan}
+            hideAnswerText={Boolean(message.message)}
+          />
         )}
 
         {/* Task Completion Card - Rich feedback for completed actions */}
@@ -382,8 +502,84 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           />
         )}
 
+        {isAssistant && (message.brainTraceUrl || message.brainUniverseUrl) && (
+          <div className="mt-4 flex flex-wrap gap-3">
+            {message.brainTraceUrl && (
+              <a
+                href={message.brainTraceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/90 transition hover:border-white/40 hover:text-white"
+              >
+                View reasoning path
+                <span aria-hidden="true">↗</span>
+              </a>
+            )}
+            {message.brainUniverseUrl && (
+              <a
+                href={message.brainUniverseUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/90 transition hover:border-white/40 hover:text-white"
+              >
+                Open in Brain Universe
+                <span aria-hidden="true">↗</span>
+              </a>
+            )}
+          </div>
+        )}
+
+        {isAssistant && explainAvailable ? (
+          <div className="mt-4 space-y-2">
+            <button
+              className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:border-white/40 hover:text-white"
+              onClick={() => setShowExplainability((prev) => !prev)}
+            >
+              {showExplainability ? "Hide why this answer" : "Why this answer?"}
+            </button>
+            {showExplainability ? (
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+                <EvidenceList evidence={message.evidence} />
+                <ToolRunList toolRuns={message.toolRuns} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {isAssistant && (canFileDocIssue || hasDashboardComponent) ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {canFileDocIssue ? (
+              <button
+                className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:border-white/40 hover:text-white"
+                onClick={() => setShowDocIssueModal(true)}
+              >
+                Create doc issue
+              </button>
+            ) : null}
+            {dashboardUrl ? (
+              <a
+                href={dashboardUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:border-white/40 hover:text-white"
+              >
+                Open dashboard
+              </a>
+            ) : hasDashboardComponent ? (
+              <button
+                className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:border-white/40 hover:text-white"
+                onClick={() =>
+                  addToast("Dashboard base URL is not configured; set NEXT_PUBLIC_DASHBOARD_BASE_URL to enable deep links.", "warning")
+                }
+              >
+                Dashboard link unavailable
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Bluesky Notification Card - Interactive notification display */}
-        {(isSystem || isAssistant) && message.type === "bluesky_notification" && message.bluesky_notification && (
+      {(isSystem || isAssistant) && message.type === "bluesky_notification" && message.bluesky_notification && (
           <BlueskyNotificationCard
             notification={message.bluesky_notification}
             onAction={(action, uri, url) => {
@@ -489,8 +685,24 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           </div>
         )}
       </motion.div>
+    </motion.div>
+  );
 
-      {/* Summary Canvas */}
+  return (
+    <>
+      {bubble}
+
+      {canFileDocIssue ? (
+        <CreateDocIssueModal
+          isOpen={showDocIssueModal}
+          onClose={() => setShowDocIssueModal(false)}
+          investigationId={message.investigationId}
+          componentIds={message.componentIds}
+          evidence={evidenceEntries}
+          defaultSummary={message.message}
+        />
+      ) : null}
+
       {summaryData && (
         <SummaryCanvas
           isOpen={isCanvasOpen}
@@ -523,8 +735,326 @@ const MessageBubble = memo(function MessageBubble({ message, index, planState }:
           message={summaryData.message}
         />
       )}
-    </motion.div>
+    </>
   );
 });
 
 export default MessageBubble;
+
+const INCIDENT_SIGNAL_DESCRIPTORS: Record<
+  string,
+  {
+    label: string;
+    prefix: string;
+  }
+> = {
+  git_events: { label: "Git", prefix: "🔥" },
+  git_items: { label: "Git", prefix: "🔥" },
+  slack_threads: { label: "Slack threads", prefix: "💬" },
+  slack_conversations: { label: "Slack", prefix: "💬" },
+  slack_complaints: { label: "Complaints", prefix: "😡" },
+  support_complaints: { label: "Support", prefix: "😡" },
+  doc_issues: { label: "Doc issues", prefix: "📄" },
+  issues: { label: "Tickets", prefix: "📨" },
+};
+
+const IncidentStructuredSummary = ({ candidate }: { candidate: IncidentCandidate }) => {
+  const resolutionPlan = normalizeIncidentPlan(candidate.resolution_plan);
+  const scopeSummary = [
+    candidate.counts?.components ? `${candidate.counts.components} components` : null,
+    candidate.counts?.docs ? `${candidate.counts.docs} docs` : null,
+    candidate.counts?.issues ? `${candidate.counts.issues} tickets` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const hasSignals = Boolean(
+    (candidate.activity_signals && Object.keys(candidate.activity_signals).length) ||
+      (candidate.dissatisfaction_signals && Object.keys(candidate.dissatisfaction_signals).length),
+  );
+
+  return (
+    <div
+      className="mt-4 space-y-3 rounded-2xl border border-white/15 bg-white/5 p-4 shadow-inner shadow-black/20"
+      data-testid="incident-structured-summary"
+    >
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-white/60">Incident preview</p>
+          {candidate.impact_summary ? (
+            <p className="text-sm text-white/80">{candidate.impact_summary}</p>
+          ) : scopeSummary ? (
+            <p className="text-sm text-white/70">{scopeSummary}</p>
+          ) : null}
+        </div>
+        <div className="inline-flex items-center rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white/80">
+          {candidate.severity} · {Math.round(candidate.blast_radius_score ?? 0)}
+        </div>
+      </div>
+      {candidate.root_cause_explanation ? (
+        <p className="text-sm text-white/90">{candidate.root_cause_explanation}</p>
+      ) : null}
+      {candidate.recency_info?.hours_since !== undefined ? (
+        <p className="text-[11px] uppercase tracking-wide text-white/40">
+          Last signal {candidate.recency_info.hours_since}h ago
+        </p>
+      ) : null}
+      {resolutionPlan?.length ? (
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-white/50">Next steps</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-white/80">
+            {resolutionPlan.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {hasSignals ? (
+        <div className="flex flex-wrap gap-2">
+          {renderIncidentSignalChips(candidate.activity_signals, "activity")}
+          {renderIncidentSignalChips(candidate.dissatisfaction_signals, "dissatisfaction")}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+function normalizeIncidentPlan(value: IncidentCandidate["resolution_plan"]): string[] | undefined {
+  if (!value) return undefined;
+  if (Array.isArray(value)) {
+    const normalized = value.map((entry) => entry?.trim()).filter(Boolean) as string[];
+    return normalized.length ? normalized : undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : undefined;
+  }
+  return undefined;
+}
+
+function renderIncidentSignalChips(
+  signals?: Record<string, number>,
+  variant: "activity" | "dissatisfaction" = "activity",
+) {
+  if (!signals) return null;
+  return Object.entries(signals)
+    .filter(([, value]) => typeof value === "number" && value > 0)
+    .map(([key, value]) => {
+      const descriptor = INCIDENT_SIGNAL_DESCRIPTORS[key] || {
+        label: key.replace(/_/g, " "),
+        prefix: variant === "activity" ? "🔥" : "😡",
+      };
+      return (
+        <span
+          key={`${variant}-${key}`}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+            variant === "activity" ? "border-emerald-400/40 text-emerald-50" : "border-rose-400/40 text-rose-100",
+          )}
+        >
+          {descriptor.prefix} {descriptor.label} <span className="font-bold">{value}</span>
+        </span>
+      );
+    });
+}
+
+const DocPriorityList = ({ priorities }: { priorities: DocPriority[] }) => {
+  if (!priorities?.length) {
+    return null;
+  }
+
+  const entries = priorities.slice(0, 3);
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-white/60">Top docs to update</h4>
+      <div className="mt-2 space-y-2">
+        {entries.map((priority, index) => {
+          const title = priority.doc_title || priority.doc_id || `Document ${index + 1}`;
+          return (
+            <div key={`${priority.doc_id || title}-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {priority.doc_url ? (
+                  <a href={priority.doc_url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-white hover:underline">
+                    {title}
+                  </a>
+                ) : (
+                  <span className="text-sm font-semibold text-white">{title}</span>
+                )}
+                <div className="flex items-center gap-2">
+                  {priority.severity ? (
+                    <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                      {priority.severity}
+                    </span>
+                  ) : null}
+                  <span className="text-xs font-semibold text-white/70">{priority.score.toFixed(2)}</span>
+                </div>
+              </div>
+              {priority.reason ? (
+                <p className="mt-1 text-xs text-white/70">{priority.reason}</p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const SlackQuickLinkTile = ({
+  sources,
+  addToast,
+}: {
+  sources: SlackSourceItem[];
+  addToast: (message: string, variant?: "success" | "warning" | "error") => void;
+}) => {
+  if (!sources?.length) {
+    return null;
+  }
+  const primary = sources.find((source) => source.permalink) ?? sources[0];
+  if (!primary) {
+    return null;
+  }
+
+  const timestampLabel = formatSlackSourceTimestamp(primary.iso_time, primary.ts);
+  const channelLabel = primary.channel || "#slack";
+
+  const handleOpen = async () => {
+    const targetUrl = primary.deep_link || primary.permalink;
+    if (!targetUrl) {
+      addToast("Slack link unavailable for this source.", "warning");
+      return;
+    }
+    const opened = openExternalUrl(targetUrl);
+    if (!opened && primary.permalink && primary.permalink !== targetUrl) {
+      const fallbackOpened = openExternalUrl(primary.permalink);
+      if (fallbackOpened) {
+        return;
+      }
+    }
+    if (!opened && primary.permalink) {
+      const copied = await copyToClipboard(primary.permalink);
+      if (copied) {
+        addToast("Couldn't open Slack, copied link instead.", "warning");
+        return;
+      }
+    }
+    if (!opened) {
+      addToast("Unable to open Slack link.", "error");
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!primary.permalink) {
+      addToast("Slack link unavailable to copy.", "warning");
+      return;
+    }
+    const copied = await copyToClipboard(primary.permalink);
+    if (copied) {
+      addToast("Slack link copied to clipboard.", "success");
+    } else {
+      addToast("Unable to copy Slack link.", "error");
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-[#131722] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.45)]">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/50">Slack conversation</p>
+          <p className="text-base font-semibold text-white">{channelLabel}</p>
+          <p className="text-xs text-white/70">{primary.author ?? "Unknown author"}</p>
+          {timestampLabel ? <p className="text-[11px] text-white/50">{timestampLabel}</p> : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleOpen}
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition hover:border-white/40 hover:text-white/90"
+          >
+            Open Slack conversation
+            <span aria-hidden="true">↗</span>
+          </button>
+          <button
+            onClick={handleCopy}
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/80 transition hover:border-white/30 hover:text-white"
+          >
+            Copy link
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function formatSlackSourceTimestamp(isoTime?: string, ts?: string): string | null {
+  const iso = isoTime || (ts ? new Date(parseFloat(ts) * 1000).toISOString() : null);
+  if (!iso) {
+    return null;
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+const EvidenceList = ({ evidence }: { evidence?: EvidenceItem[] }) => (
+  <div className="space-y-2">
+    <h4 className="text-xs font-semibold uppercase tracking-wide text-white/60">Evidence</h4>
+    {evidence && evidence.length ? (
+      <div className="flex flex-wrap gap-2">
+        {evidence.map((item, index) => {
+          const key = item.evidence_id || `${item.title || item.source || "evidence"}-${index}`;
+          const label = item.title || item.source || item.url || key;
+          if (item.url) {
+            return (
+              <a
+                key={key}
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border border-white/20 px-3 py-1 text-xs text-white/80 hover:border-white/40 hover:text-white"
+              >
+                {label}
+              </a>
+            );
+          }
+          return (
+            <span key={key} className="rounded-full border border-white/15 px-3 py-1 text-xs text-white/70">
+              {label}
+            </span>
+          );
+        })}
+      </div>
+    ) : (
+      <p className="text-xs text-white/70">Evidence pending or not recorded.</p>
+    )}
+  </div>
+);
+
+const ToolRunList = ({ toolRuns }: { toolRuns?: ToolRun[] }) => (
+  <div className="space-y-2">
+    <h4 className="text-xs font-semibold uppercase tracking-wide text-white/60">Tool runs</h4>
+    {toolRuns && toolRuns.length ? (
+      <div className="space-y-1 text-xs text-white/80">
+        {toolRuns.map((run, index) => (
+          <div key={run.step_id ?? `${run.tool}-${index}`} className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-white">{run.tool}</p>
+              <p className="uppercase tracking-wide text-white/60">{run.status ?? "completed"}</p>
+            </div>
+            {run.output_preview ? (
+              <p className="max-w-xs text-[11px] italic text-white/70">{run.output_preview}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    ) : (
+      <p className="text-xs text-white/70">No external tools recorded.</p>
+    )}
+  </div>
+);

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2025-11-30T08:56:42.375065",
+  "last_updated": "2025-12-08T17:29:09.534291",
   "tests": {
     "fix": {
       "last_run": "2025-11-12T09:11:18.140768",
@@ -120,20 +120,20 @@
       "error_message": null
     },
     "slash_git": {
-      "last_run": "2025-11-30T08:56:42.374670",
+      "last_run": "2025-12-06T19:12:33.231147",
       "status": "passed",
       "pass_count": 1,
       "fail_count": 0,
-      "result_file": "slash_git_20251130_085642.json",
+      "result_file": "slash_git_20251206_191233.json",
       "execution_time": null,
       "error_message": null
     },
     "slash_slack_orchestrator": {
-      "last_run": "2025-11-30T08:56:42.364946",
+      "last_run": "2025-12-05T18:13:10.409004",
       "status": "passed",
       "pass_count": 1,
       "fail_count": 0,
-      "result_file": "slash_slack_orchestrator_20251130_085642.json",
+      "result_file": "slash_slack_orchestrator_20251205_181310.json",
       "execution_time": null,
       "error_message": null
     },
@@ -224,6 +224,564 @@
       "pass_count": 1,
       "fail_count": 0,
       "result_file": "doc_drift_prompt_behavior_20251129_223216.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "executor": {
+      "last_run": "2025-11-30T19:53:44.878905",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "executor_20251130_195344.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "planner": {
+      "last_run": "2025-11-30T19:53:44.892842",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "planner_20251130_195344.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "formatter": {
+      "last_run": "2025-11-30T19:53:44.883000",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "formatter_20251130_195344.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "service": {
+      "last_run": "2025-12-02T18:53:24.777032",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "service_20251202_185324.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "contracts": {
+      "last_run": "2025-12-01T17:22:25.102436",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "contracts_20251201_172225.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "dependency_graph": {
+      "last_run": "2025-11-30T19:45:49.020632",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "dependency_graph_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "evidence_graph": {
+      "last_run": "2025-11-30T19:45:49.028206",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "evidence_graph_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "impact_analyzer": {
+      "last_run": "2025-11-30T19:45:49.033683",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "impact_analyzer_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "pipeline": {
+      "last_run": "2025-11-30T19:45:49.048294",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "pipeline_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "doc_issues": {
+      "last_run": "2025-11-30T19:45:49.027249",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "doc_issues_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "graph_writer": {
+      "last_run": "2025-11-30T19:45:49.031090",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "graph_writer_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "notifications": {
+      "last_run": "2025-11-30T19:45:49.040568",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "notifications_20251130_194549.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "ttl_cache": {
+      "last_run": "2025-11-30T19:36:04.370037",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "ttl_cache_20251130_193604.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "metadata_routes": {
+      "last_run": "2025-11-30T20:14:28.856776",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "metadata_routes_20251130_201428.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_slack_metadata": {
+      "last_run": "2025-11-30T20:14:28.859981",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_slack_metadata_20251130_201428.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_git_branch_validation": {
+      "last_run": "2025-11-30T20:14:28.877039",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_git_branch_validation_20251130_201428.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "config_validator_metadata": {
+      "last_run": "2025-11-30T20:38:07.862453",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "config_validator_metadata_20251130_203807.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "metadata_services": {
+      "last_run": "2025-11-30T20:39:40.787836",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "metadata_services_20251130_203940.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "qdrant_client": {
+      "last_run": "2025-11-30T20:44:25.161066",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "qdrant_client_20251130_204425.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_slack_llm_formatter": {
+      "last_run": "2025-11-30T21:14:46.713467",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_slack_llm_formatter_20251130_211446.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_git_graph_context": {
+      "last_run": "2025-12-06T04:48:24.922348",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_git_graph_context_20251206_044824.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "control_input_guard": {
+      "last_run": "2025-11-30T21:25:35.298603",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "control_input_guard_20251130_212535.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "low_signal_classifier": {
+      "last_run": "2025-11-30T21:25:35.305353",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "low_signal_classifier_20251130_212535.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_parser": {
+      "last_run": "2025-11-30T21:25:35.308289",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_parser_20251130_212535.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "settings_manager": {
+      "last_run": "2025-11-30T22:35:42.506502",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "settings_manager_20251130_223542.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "traceability_flow": {
+      "last_run": "2025-11-30T23:27:24.283732",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "traceability_flow_20251130_232724.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "tool_coverage": {
+      "last_run": "2025-12-04T16:28:10.229348",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "tool_coverage_20251204_162810.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "investigation_eval": {
+      "last_run": "2025-11-30T23:27:24.258462",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "investigation_eval_20251130_232724.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "cross_repo_impact": {
+      "last_run": "2025-12-02T18:53:24.785219",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "cross_repo_impact_20251202_185324.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_git_catalog": {
+      "last_run": "2025-12-02T12:50:23.743033",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_git_catalog_20251202_125023.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "planner_stock_validation": {
+      "last_run": "2025-12-02T15:58:29.803443",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "planner_stock_validation_20251202_155829.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "seed_quota_demo": {
+      "last_run": "2025-12-03T02:11:04.756084",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "seed_quota_demo_20251203_021104.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_slack_and_git": {
+      "last_run": "2025-12-06T20:30:31.058413",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_slack_and_git_20251206_203031.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "conversation_history": {
+      "last_run": "2025-12-04T20:20:35.325693",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "conversation_history_20251204_202035.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "utils": {
+      "last_run": "2025-12-04T02:44:38.290014",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "utils_20251204_024438.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "vector_indexer": {
+      "last_run": "2025-12-05T14:48:32.768810",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "vector_indexer_20251205_144832.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_youtube_assistant": {
+      "last_run": "2025-12-05T14:48:31.358090",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_youtube_assistant_20251205_144831.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "youtube_endpoints": {
+      "last_run": "2025-12-04T23:41:57.078294",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "youtube_endpoints_20251204_234157.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "config": {
+      "last_run": "2025-12-04T09:23:58.547412",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "config_20251204_092358.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "schema": {
+      "last_run": "2025-12-04T09:23:58.552122",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "schema_20251204_092358.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "registry": {
+      "last_run": "2025-12-04T10:44:10.591546",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "registry_20251204_104410.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "search_commands": {
+      "last_run": "2025-12-05T10:24:15.989940",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "search_commands_20251205_102415.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "youtube_ingest": {
+      "last_run": "2025-12-05T14:48:32.735779",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "youtube_ingest_20251205_144832.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "universal_nodes": {
+      "last_run": "2025-12-05T14:48:32.789909",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "universal_nodes_20251205_144832.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "brain_trace": {
+      "last_run": "2025-12-04T16:20:00.297552",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "brain_trace_20251204_162000.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "query_planner": {
+      "last_run": "2025-12-04T10:44:10.586789",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "query_planner_20251204_104410.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "files_modality": {
+      "last_run": "2025-12-04T11:17:17.518461",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "files_modality_20251204_111717.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "brain_universe": {
+      "last_run": "2025-12-07T07:24:28.755485",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "brain_universe_20251207_072428.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "response_payloads": {
+      "last_run": "2025-12-04T22:45:58.465334",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "response_payloads_20251204_224558.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "activity_chunks": {
+      "last_run": "2025-12-05T10:24:16.042865",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "activity_chunks_20251205_102416.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "activity_prioritization": {
+      "last_run": "2025-12-06T02:33:25.148727",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "activity_prioritization_20251206_023325.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "cerebros_graph_reasoner": {
+      "last_run": "2025-12-07T05:52:58.392760",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "cerebros_graph_reasoner_20251207_055258.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_cerebros": {
+      "last_run": "2025-12-08T12:06:48.123916",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_cerebros_20251208_120648.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slack_links": {
+      "last_run": "2025-12-06T16:52:09.232617",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slack_links_20251206_165209.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "slash_slack_tooling": {
+      "last_run": "2025-12-06T16:52:09.235263",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "slash_slack_tooling_20251206_165209.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "multi_source_reasoner": {
+      "last_run": "2025-12-08T17:29:09.532689",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "multi_source_reasoner_20251208_172909.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "git_urls": {
+      "last_run": "2025-12-06T20:29:16.490618",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "git_urls_20251206_202916.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "incidents": {
+      "last_run": "2025-12-07T05:52:58.378728",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "incidents_20251207_055258.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "doc_issues_retriever": {
+      "last_run": "2025-12-07T00:06:33.969879",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "doc_issues_retriever_20251207_000633.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "doc_issues_modality": {
+      "last_run": "2025-12-07T00:06:33.971778",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "doc_issues_modality_20251207_000633.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "seed_incidents": {
+      "last_run": "2025-12-07T06:00:06.621363",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "seed_incidents_20251207_060006.json",
+      "execution_time": null,
+      "error_message": null
+    },
+    "context_resolution_service": {
+      "last_run": "2025-12-07T09:38:46.404722",
+      "status": "passed",
+      "pass_count": 1,
+      "fail_count": 0,
+      "result_file": "context_resolution_service_20251207_093846.json",
       "execution_time": null,
       "error_message": null
     }

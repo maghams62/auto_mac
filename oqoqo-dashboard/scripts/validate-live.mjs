@@ -53,6 +53,10 @@ async function main() {
   const projects = Array.isArray(payload?.projects) ? payload.projects : [];
   if (payload?.mode) {
     console.log(`Mode: ${payload.mode}`);
+    if (payload.mode !== "atlas") {
+      console.error("Expected /api/activity to return mode=atlas. Refusing to treat synthetic data as live.");
+      process.exitCode = 1;
+    }
   }
   if (!projects.length) {
     console.warn("No projects returned by /api/activity.");
@@ -113,6 +117,46 @@ async function main() {
     console.table(expanded);
   } else {
     console.log("\nNo live issues detected for the selected project(s).");
+  }
+
+  await validateDocIssues(activityProjectId(filteredProjects, options.project), options.url);
+}
+
+function activityProjectId(projects, explicit) {
+  if (explicit) return explicit;
+  return projects[0]?.id ?? null;
+}
+
+async function validateDocIssues(projectId, activityUrl) {
+  if (!projectId) {
+    console.warn("Skipping /api/doc-issues validation (project id unknown).");
+    return;
+  }
+  const activityEndpoint = new URL(activityUrl);
+  const base = `${activityEndpoint.protocol}//${activityEndpoint.host}`;
+  const docIssuesUrl = `${base}/api/doc-issues?projectId=${encodeURIComponent(projectId)}`;
+  console.log(`\nChecking doc issues at ${docIssuesUrl} ...`);
+
+  try {
+    const response = await fetch(docIssuesUrl);
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    const payload = await response.json();
+    if (payload?.mode !== "atlas") {
+      throw new Error(`Expected doc issue mode=atlas, received ${payload?.mode ?? "unknown"}`);
+    }
+    const issues = Array.isArray(payload?.issues) ? payload.issues : [];
+    const placeholderLinks = issues
+      .map((issue) => issue.githubUrl)
+      .filter((url) => typeof url === "string" && url.includes("github.com/oqoqo/"));
+    if (placeholderLinks.length) {
+      throw new Error(`DocIssues still reference github.com/oqoqo: ${placeholderLinks.join(", ")}`);
+    }
+    console.log(`Doc issues OK (${issues.length} issues, live mode)`);
+  } catch (error) {
+    console.error("Doc issue validation failed:", error.message);
+    process.exitCode = 1;
   }
 }
 

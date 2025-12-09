@@ -31,6 +31,7 @@ Available Commands:
     /                      - Show slash command palette
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -39,11 +40,34 @@ from collections import defaultdict
 
 from ..utils.screenshot import get_screenshot_dir
 from ..services.explain_pipeline import ExplainPipeline
+from ..services.git_metadata import GitMetadataService
+from ..services.hashtag_resolver import HashtagResolver
+from ..services.slack_metadata import SlackMetadataService
+from ..services.slash_query_plan import SlashQueryPlan, SlashQueryPlanner
 from ..utils.performance_monitor import get_performance_monitor
 from ..agent.slash_git_assistant import SlashGitAssistant
+from ..agent.slash_youtube_assistant import SlashYouTubeAssistant
 from ..orchestrator.slash_slack import SlashSlackOrchestrator
+from ..commands.setup_command import SetupCommand
+from ..commands.index_command import IndexCommand
+from ..commands.cerebros_command import CerebrosCommand
+from ..search import build_search_system
+from ..search.query_trace import QueryTraceStore
+from ..agent.cerebros_entrypoint import build_search_slash_cerebros_payload, run_slash_cerebros_query
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ACTIVITY_GRAPH_CONFIG = {
+    "slack_graph_path": "data/logs/slash/slack_graph.jsonl",
+    "git_graph_path": "data/logs/slash/git_graph.jsonl",
+    "doc_issues_path": "data/live/doc_issues.json",
+    "impact_events_path": "data/logs/impact_events.jsonl",
+    "cache": {
+        "enabled": True,
+        "ttl_seconds": 45,
+        "backend": "memory",
+    },
+}
 
 
 class SlashPromptContextLoader:
@@ -68,6 +92,10 @@ class SlashPromptContextLoader:
             },
             "pr": {
                 "path": self.base_dir / "slash_git" / "context.md",
+                "tier": "tier2",
+            },
+            "youtube": {
+                "path": self.base_dir / "slash_youtube" / "context.md",
                 "tier": "tier2",
             },
         }
@@ -245,8 +273,11 @@ class SlashCommandParser:
         "reddit": "reddit",
         "twitter": "twitter",
         "x": "twitter",  # Quick alias for Twitter summaries
+        "youtube": "youtube",
+        "yt": "youtube",
         "bluesky": "bluesky",
         "sky": "bluesky",
+        "sl": "slack",
         "slack": "slack",
         "git": "git",
         "github": "git",
@@ -275,6 +306,9 @@ class SlashCommandParser:
         "daily": "daily_overview",
         "recurring": "recurring",
         "schedule": "recurring",
+        "setup": "setup",
+        "index": "index",
+        "cerebros": "cerebros",
     }
 
     # Special system commands (not agent-related)
@@ -285,6 +319,9 @@ class SlashCommandParser:
 
     # Quick palette entries (primary commands only)
     COMMAND_TOOLTIPS = [
+        {"command": "/setup", "label": "Setup", "description": "View and configure universal search modalities"},
+        {"command": "/index", "label": "Index", "description": "Run ingestion for enabled modalities"},
+        {"command": "/cerebros", "label": "Cerebros", "description": "Universal semantic search across all sources"},
         {"command": "/files", "label": "File Ops", "description": "Search, organize, zip local files"},
         {"command": "/folder", "label": "Folder Agent", "description": "List & reorganize folders"},
         {"command": "/explain", "label": "Explain", "description": "Explain documents using AI"},
@@ -301,6 +338,7 @@ class SlashCommandParser:
         {"command": "/reddit", "label": "Reddit", "description": "Scan subreddits"},
         {"command": "/twitter", "label": "Twitter", "description": "Summarize lists"},
         {"command": "/x", "label": "X/Twitter", "description": "Quick Twitter summaries"},
+        {"command": "/youtube", "label": "YouTube", "description": "Attach and query YouTube videos"},
         {"command": "/bluesky", "label": "Bluesky", "description": "Search, summarize, and post updates"},
         {"command": "/slack", "label": "Slack", "description": "Fetch and analyze Slack messages"},
         {"command": "/git", "label": "🐙 Git/PR", "description": "Graph-aware Git summaries & PR insights"},
@@ -333,6 +371,7 @@ class SlashCommandParser:
         "discord": "Monitor Discord channels and mentions",
         "reddit": "Scan Reddit for mentions and posts",
         "twitter": "Track Twitter lists and activity",
+        "youtube": "Chat with YouTube videos: attach links, recall titles, ask timestamped questions",
         "bluesky": "Search Bluesky posts, summarize activity, and publish updates",
         "slack": "Search Slack messages, list channels, fetch discussions with LLM-powered Q&A",
         "git": "🐙 Graph-aware Git assistant: repo info, commits, diffs, tags, PRs",
@@ -350,6 +389,19 @@ class SlashCommandParser:
 
     # Example commands
     EXAMPLES = {
+        "setup": [
+            "/setup",
+            "/setup detail slack",
+            "/setup config",
+        ],
+        "index": [
+            "/index",
+            "/index slack git",
+        ],
+        "cerebros": [
+            '/cerebros What is the latest on the auth outage?',
+            '/cerebros Explain mixture-of-experts docs + videos',
+        ],
         "files": [
             '/files Organize my PDFs by topic',
             '/files Create a ZIP of all images',
@@ -377,6 +429,11 @@ class SlashCommandParser:
         "browse": [
             '/browse Search for Python tutorials',
             '/browse Go to github.com and extract the trending repos',
+        ],
+        "youtube": [
+            '/youtube https://youtu.be/dQw4w9WgXcQ summarize the intro',
+            '/youtube @mixture-of-experts what happens around 30 seconds in?',
+            '/youtube Recommend highlights from the transformer lecture',
         ],
         "present": [
             '/present Create a Keynote about AI trends',
@@ -566,6 +623,14 @@ class SlashCommandParser:
                 "task": None
             }
 
+        if stripped in ['/stop', '/cancel']:
+            return {
+                "is_command": True,
+                "command": stripped[1:],
+                "agent": None,
+                "task": None
+            }
+
         # Check for help on specific command
         help_match = re.match(r'^/help\s+(.+)$', message.strip())
         if help_match:
@@ -608,8 +673,13 @@ class SlashCommandParser:
                 command = standalone_match.group(1).lower()
                 # Only treat as a command if it's in our known command map
                 if command not in self.COMMAND_MAP:
-                    # Unknown token - let it fall through to orchestrator
-                    return None
+                    return {
+                        "is_command": True,
+                        "command": "invalid",
+                        "agent": None,
+                        "task": None,
+                        "error": f"I don't recognize '/{command}'. Type '/' to open the command palette."
+                    }
 
                 # Check if it's a command that can execute without a task
                 if command in self.NO_TASK_COMMANDS and command in self.COMMAND_MAP:
@@ -638,8 +708,13 @@ class SlashCommandParser:
 
         # Only treat as a command if it's in our known command map
         if command not in self.COMMAND_MAP:
-            # Unknown token - let it fall through to orchestrator
-            return None
+            return {
+                "is_command": True,
+                "command": "invalid",
+                "agent": None,
+                "task": task,
+                "error": f"I don't recognize '/{command}'. Type '/' to open the command palette."
+            }
 
         # Map command to agent
         agent = self.COMMAND_MAP.get(command)
@@ -973,7 +1048,15 @@ class SlashCommandParser:
 class SlashCommandHandler:
     """Handle execution of slash commands."""
 
-    def __init__(self, agent_registry, session_manager=None, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        agent_registry,
+        session_manager=None,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        slack_metadata_service: Optional[SlackMetadataService] = None,
+        git_metadata_service: Optional[GitMetadataService] = None,
+    ):
         """
         Initialize handler with agent registry.
 
@@ -985,10 +1068,44 @@ class SlashCommandHandler:
         self.registry = agent_registry
         self.session_manager = session_manager
         self.config = config or {}
+        self._ensure_graph_config()
         self.parser = SlashCommandParser()
         self.explain_pipeline = ExplainPipeline(agent_registry)
-        self.git_assistant = SlashGitAssistant(agent_registry, session_manager, self.config)
-        self.slash_slack = SlashSlackOrchestrator(config=self.config)
+        self.slack_metadata_service = slack_metadata_service or SlackMetadataService(config=self.config)
+        self.git_metadata_service = git_metadata_service or GitMetadataService(self.config)
+        self.git_assistant = SlashGitAssistant(
+            agent_registry,
+            session_manager,
+            self.config,
+            metadata_service=self.git_metadata_service,
+        )
+        self.hashtag_resolver = HashtagResolver(
+            config=self.config,
+            slack_metadata_service=self.slack_metadata_service,
+        )
+        self.query_planner = SlashQueryPlanner(
+            config=self.config,
+            hashtag_resolver=self.hashtag_resolver,
+        )
+        self.youtube_assistant = SlashYouTubeAssistant(
+            agent_registry,
+            session_manager,
+            self.config,
+        )
+        # Inject trace store for youtube so answers can expose /brain/trace links
+        try:
+            self.youtube_assistant.query_trace_store = self.query_trace_store
+        except Exception:
+            logger.debug("[SLASH COMMANDS] Unable to attach query_trace_store to youtube assistant")
+        self.search_config, self.search_registry = build_search_system(self.config)
+        self.setup_command = SetupCommand(self.search_config, self.search_registry)
+        self.index_command = IndexCommand(self.search_registry)
+        self.query_trace_store = QueryTraceStore()
+        self.cerebros_command = CerebrosCommand(self.search_registry, trace_store=self.query_trace_store)
+        self.slash_slack = SlashSlackOrchestrator(
+            config=self.config,
+            metadata_service=self.slack_metadata_service,
+        )
         self.prompt_context_loader = SlashPromptContextLoader()
         self._usage_metrics = defaultdict(int)
         logger.info("[SLASH COMMANDS] Handler initialized")
@@ -1059,24 +1176,56 @@ class SlashCommandHandler:
                 "raw_command": message
             }
 
+        if parsed["command"] in {"stop", "cancel"}:
+            return True, {
+                "type": "status",
+                "content": "Okay, stopping here. Let me know when you want to resume."
+            }
+
         if parsed["command"] == "invalid":
-            return True, {"type": "error", "content": parsed.get("error")}
+            error_msg = parsed.get("error") or "Unknown slash command. Type '/' for the palette."
+            return True, {"type": "error", "content": error_msg}
+
+        if parsed["command"] in {"setup", "index", "cerebros"}:
+            result_payload = self._handle_search_command(parsed, session_id)
+            return True, result_payload
 
         # Execute agent command
         original_agent = parsed["agent"]
         agent_name = parsed["agent"]
         task = parsed["task"]
         task_lower = (task or "").lower().strip()
+        plan_context: Optional[SlashQueryPlan] = None
+        if parsed["agent"] in {"slack", "git"}:
+            plan_context = self._build_query_plan(task or "", parsed.get("command"))
 
         if parsed["agent"] == "git":
-            git_payload = self.git_assistant.handle(parsed.get("task") or "", session_id=session_id)
-            formatted = self._format_generic_reply(
-                "git",
-                parsed["command"],
+            git_payload = self.git_assistant.handle(
                 parsed.get("task") or "",
-                git_payload,
                 session_id=session_id,
+                plan=plan_context,
             )
+
+            is_git_summary = isinstance(git_payload, dict) and git_payload.get("type") == "slash_git_summary"
+            if is_git_summary:
+                formatted = git_payload
+            else:
+                formatted = self._format_generic_reply(
+                    "git",
+                    parsed["command"],
+                    parsed.get("task") or "",
+                    git_payload,
+                    session_id=session_id,
+                )
+
+            def _attach_git_metadata(payload: Any) -> None:
+                if isinstance(payload, dict):
+                    metadata = payload.setdefault("metadata", {})
+                    metadata["slash_route"] = "slash_git_assistant"
+
+            _attach_git_metadata(git_payload)
+            _attach_git_metadata(formatted)
+
             git_result = {
                 "type": "result",
                 "agent": "git",
@@ -1089,7 +1238,11 @@ class SlashCommandHandler:
 
         if parsed["agent"] == "slack":
             task_text = parsed.get("task") or ""
-            slack_payload = self.slash_slack.handle(task_text, session_id=session_id)
+            slack_payload = self.slash_slack.handle(
+                task_text,
+                session_id=session_id,
+                plan=plan_context,
+            )
             if slack_payload.get("error"):
                 slack_error = {
                      "type": "error",
@@ -1101,6 +1254,9 @@ class SlashCommandHandler:
                 }
                 return True, self._attach_prompt_context(parsed, slack_error)
 
+            if isinstance(slack_payload, dict):
+                slack_metadata = slack_payload.setdefault("metadata", {})
+                slack_metadata["slash_route"] = "slash_slack_assistant"
             slack_result = {
                 "type": "result",
                 "agent": "slack",
@@ -1110,6 +1266,23 @@ class SlashCommandHandler:
                 "raw": slack_payload,
             }
             return True, self._attach_prompt_context(parsed, slack_result)
+
+        if parsed["agent"] == "youtube":
+            task_text = parsed.get("task") or ""
+            yt_payload = self.youtube_assistant.handle(task_text, session_id=session_id)
+            if isinstance(yt_payload, dict):
+                yt_metadata = yt_payload.setdefault("data", {})
+                if isinstance(yt_metadata, dict):
+                    yt_metadata.setdefault("slash_route", "slash_youtube_assistant")
+            youtube_result = {
+                "type": "result",
+                "agent": "youtube",
+                "original_agent": "youtube",
+                "command": parsed["command"],
+                "result": yt_payload,
+                "raw": yt_payload,
+            }
+            return True, self._attach_prompt_context(parsed, youtube_result)
 
         if original_agent == "folder" and any(
             keyword in task_lower for keyword in ["summarize", "summarise", "summary"]
@@ -1329,11 +1502,17 @@ class SlashCommandHandler:
                 except Exception as e:
                     logger.error(f"[SLASH COMMAND] Tool execution error: {e}", exc_info=True)
                     # Fall back to orchestrator on tool execution error
+                    fallback_reason = (
+                        f"Deterministic tool '{tool_name}' failed with {e.__class__.__name__}"
+                        if tool_name else str(e)
+                    )
                     return True, {
                         "type": "retry_with_orchestrator",
                         "content": f"⚠ Direct /{parsed['command']} execution encountered an issue. Let me try routing through the main assistant...",
                         "original_message": message,
-                        "error": str(e)
+                        "error": str(e),
+                        "reason": fallback_reason,
+                        "agent": agent_name,
                     }
             elif routing_attempted and tool_name is None:
                 # Routing function was called but returned None - use orchestrator
@@ -1341,7 +1520,9 @@ class SlashCommandHandler:
                 return True, {
                     "type": "retry_with_orchestrator",
                     "content": None,  # Silent fallback
-                    "original_message": message
+                    "original_message": message,
+                    "reason": f"No deterministic tool matched /{parsed['command']} request.",
+                    "agent": agent_name,
                 }
             else:
                 # For commands without deterministic routing or special cases, use agent-based execution
@@ -1450,7 +1631,9 @@ class SlashCommandHandler:
                     "type": "retry_with_orchestrator",
                     "content": f"⚠ Direct /{parsed['command']} execution encountered an issue. Let me try routing through the main assistant...",
                     "original_message": message,
-                    "error": str(e)
+                    "error": str(e),
+                    "reason": str(e),
+                    "agent": agent_name,
                 }
             else:
                 # Return regular error
@@ -1954,6 +2137,171 @@ class SlashCommandHandler:
         except Exception as exc:
             logger.warning(f"[SLASH COMMAND] Failed to call reply_to_user: {exc}")
             return None
+
+    def _build_query_plan(self, task_text: str, command: Optional[str]) -> Optional[SlashQueryPlan]:
+        if not getattr(self, "query_planner", None):
+            return None
+        try:
+            return self.query_planner.plan(task_text or "", command=command)
+        except Exception as exc:
+            logger.debug("[SLASH COMMAND] Query planner failed: %s", exc)
+            return None
+
+    def _ensure_graph_config(self) -> None:
+        """
+        Guarantee the graph subsystem is marked enabled so Cerebros always attempts
+        the reasoning pipeline before falling back to legacy search.
+        """
+        graph_cfg = self.config.setdefault("graph", {})
+        if not graph_cfg.get("enabled"):
+            logger.info("[SLASH COMMANDS][CEREBROS] Forcing graph subsystem enabled.")
+            graph_cfg["enabled"] = True
+
+        activity_cfg = self.config.setdefault("activity_graph", {})
+        if not activity_cfg:
+            logger.info("[SLASH COMMANDS][CEREBROS] Hydrating default activity_graph configuration.")
+        for key, value in DEFAULT_ACTIVITY_GRAPH_CONFIG.items():
+            if isinstance(value, dict):
+                target = activity_cfg.setdefault(key, {})
+                if isinstance(target, dict):
+                    for sub_key, sub_value in value.items():
+                        target.setdefault(sub_key, sub_value)
+                else:
+                    activity_cfg.setdefault(key, value)
+            else:
+                activity_cfg.setdefault(key, value)
+
+    def _run_cerebros_search(
+        self,
+        task_text: str,
+        plan_context: Optional[SlashQueryPlan],
+    ) -> Dict[str, Any]:
+        query = (task_text or "").strip()
+        graph_result = self._handle_cerebros_graph(task_text, plan_context)
+        if graph_result.get("status") == "success":
+            return graph_result
+
+        logger.warning(
+            "[SLASH COMMANDS][CEREBROS] Graph pipeline unavailable (%s); falling back to legacy search",
+            graph_result.get("message") or "unknown error",
+        )
+
+        search_result = self.cerebros_command.search(task_text, plan=plan_context)
+        if search_result.get("status") == "success":
+            payload = build_search_slash_cerebros_payload(
+                query=query,
+                search_result=search_result,
+                query_plan=plan_context,
+            )
+            return {"status": "success", "payload": payload}
+        return search_result
+
+    def _handle_cerebros_graph(
+        self,
+        task_text: str,
+        plan_context: Optional[SlashQueryPlan],
+    ) -> Dict[str, Any]:
+        query = (task_text or "").strip()
+        if not query:
+            return {"status": "error", "message": "Ask a question after /cerebros."}
+        try:
+            component_hint = self._component_id_from_plan(plan_context)
+            return {
+                "status": "success",
+                "payload": run_slash_cerebros_query(
+                    config=self.config,
+                    query=query,
+                    component_id=component_hint,
+                    query_plan=plan_context,
+                ),
+            }
+        except Exception as exc:
+            logger.exception("[SLASH COMMANDS][CEREBROS] Graph reasoner failed: %s", exc)
+            return {
+                "status": "error",
+                "message": "Graph reasoner request failed.",
+                "data": {"error": str(exc)},
+            }
+
+    def _component_id_from_plan(self, plan_context: Optional[SlashQueryPlan]) -> Optional[str]:
+        if not plan_context or not getattr(plan_context, "targets", None):
+            return None
+        for target in plan_context.targets:
+            target_type = (getattr(target, "target_type", "") or "").lower()
+            if target_type in {"component", "service"}:
+                identifier = (
+                    getattr(target, "identifier", None)
+                    or (target.metadata or {}).get("component_id")
+                    or target.raw
+                )
+                if identifier:
+                    return identifier
+        return None
+
+    def _handle_search_command(self, parsed_command: Dict[str, Any], session_id: Optional[str]) -> Dict[str, Any]:
+        command = parsed_command["command"]
+        task_text = parsed_command.get("task") or ""
+        plan_context: Optional[SlashQueryPlan] = None
+        if command == "cerebros":
+            plan_context = self._build_query_plan(task_text, command)
+        if command == "setup":
+            result = self.setup_command.run(task_text)
+        elif command == "index":
+            result = self.index_command.run(task_text)
+        elif command == "cerebros":
+            result = self._run_cerebros_search(task_text, plan_context)
+        else:
+            result = {"status": "error", "message": f"Unsupported command '{command}'."}
+
+        if command == "cerebros":
+            if result.get("status") == "success" and result.get("payload"):
+                reply_payload = result["payload"]
+            else:
+                reply_payload = self._format_search_command_reply(command, result, session_id)
+        else:
+            reply_payload = self._format_search_command_reply(command, result, session_id)
+        formatted = {
+            "type": "result",
+            "agent": command,
+            "original_agent": command,
+            "command": parsed_command["command"],
+            "result": reply_payload,
+            "raw": result.get("payload") if command == "cerebros" else result,
+        }
+        return self._attach_prompt_context(parsed_command, formatted)
+
+    def _format_search_command_reply(
+        self,
+        command: str,
+        result: Dict[str, Any],
+        session_id: Optional[str],
+    ) -> Dict[str, Any]:
+        message = result.get("message") or f"{command} completed."
+        details = ""
+        data = result.get("data")
+        if isinstance(data, str):
+            details = data
+        elif data:
+            try:
+                details = json.dumps(data, indent=2)
+            except TypeError:
+                details = str(data)
+        reply = self._format_with_reply(
+            message=message,
+            details=details,
+            artifacts=[],
+            status=result.get("status", "success"),
+            session_id=session_id,
+        )
+        if reply:
+            return reply
+        return {
+            "type": "reply",
+            "message": message,
+            "details": details,
+            "status": result.get("status", "success"),
+        }
+
 
     def _attach_prompt_context(self, parsed_command: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -3591,7 +3939,14 @@ def parse_recurring_task_spec(task_text: str) -> Optional[Dict[str, Any]]:
 
 
 # Convenience function
-def create_slash_command_handler(agent_registry, session_manager=None, config: Optional[Dict[str, Any]] = None):
+def create_slash_command_handler(
+    agent_registry,
+    session_manager=None,
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    slack_metadata_service: Optional[SlackMetadataService] = None,
+    git_metadata_service: Optional[GitMetadataService] = None,
+):
     """
     Create a slash command handler.
 
@@ -3603,4 +3958,10 @@ def create_slash_command_handler(agent_registry, session_manager=None, config: O
     Returns:
         SlashCommandHandler instance
     """
-    return SlashCommandHandler(agent_registry, session_manager, config)
+    return SlashCommandHandler(
+        agent_registry,
+        session_manager,
+        config,
+        slack_metadata_service=slack_metadata_service,
+        git_metadata_service=git_metadata_service,
+    )

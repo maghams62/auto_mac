@@ -393,11 +393,13 @@ def seed_sample_data(ingestor: GraphIngestor) -> None:
         "issue:123",
         component_ids=["comp:payments"],
         endpoint_ids=["api:payments:/charge"],
+        doc_ids=[],
         properties={"title": "Charge endpoint timeout", "status": "open", "severity": "high"}
     )
     ingestor.upsert_issue(
         "issue:124",
         component_ids=["comp:auth"],
+        doc_ids=[],
         properties={"title": "Login rate limiting", "status": "closed", "severity": "medium"}
     )
     print("  ✓ Created: issue:123, issue:124")

@@ -688,21 +688,29 @@ CRITICAL: Return pure JSON only. Do NOT include comments like "// comment". Do N
                         f"Plan should end with reply_to_user to display results."
                     )
 
-        # CRITICAL: Validate stock slideshow workflows
-        # Check if plan contains stock-related actions (get_stock_history, get_stock_price, capture_stock_chart)
-        # AND also contains slideshow actions (create_slide_deck_content, create_keynote)
-        stock_tools = ["get_stock_history", "get_stock_price", "capture_stock_chart", "search_stock_symbol"]
-        slideshow_tools = ["create_slide_deck_content", "create_keynote"]
-        has_stock_tool = any(step.get("action") in stock_tools for step in plan)
-        has_slideshow_tool = any(step.get("action") in slideshow_tools for step in plan)
+        # CRITICAL: Validate stock slideshow workflows follow hybrid rules
+        legacy_stock_tools = {"get_stock_history", "get_stock_price", "capture_stock_chart"}
+        slideshow_tools = {"create_slide_deck_content", "create_keynote", "create_keynote_with_images"}
+        hybrid_tools = {"hybrid_stock_brief"}
+        stock_context_tools = legacy_stock_tools | hybrid_tools | {"hybrid_search_stock_symbol"}
+
+        uses_slideshow = any(step.get("action") in slideshow_tools for step in plan)
+        uses_hybrid = any(step.get("action") in hybrid_tools for step in plan)
+        uses_legacy_stock = [step.get("action") for step in plan if step.get("action") in legacy_stock_tools]
+        uses_stock_context = any(step.get("action") in stock_context_tools for step in plan)
         
-        if has_stock_tool and has_slideshow_tool:
-            # This is a stock slideshow workflow - must use DuckDuckGo, not stock tools
-            issues.append(
-                "Stock slideshow workflows must use google_search (DuckDuckGo) instead of stock tools "
-                "(get_stock_history, get_stock_price, capture_stock_chart). "
-                "Workflow: google_search → synthesize_content → create_slide_deck_content → create_keynote → compose_email → reply_to_user"
-            )
+        if uses_slideshow and uses_stock_context:
+            if not uses_hybrid:
+                issues.append(
+                    "Stock slideshow workflows must include hybrid_stock_brief as the stock data entry point "
+                    "before creating slides or emailing results."
+                )
+            if uses_legacy_stock:
+                issues.append(
+                    "Stock slideshow workflows must not call legacy stock tools directly. "
+                    "Replace these actions with hybrid_stock_brief (found legacy calls: "
+                    f"{', '.join(sorted(set(uses_legacy_stock)))})."
+                )
         
         # CRITICAL: Validate that plans always end with reply_to_user
         if plan and plan[-1].get("action") != "reply_to_user":
