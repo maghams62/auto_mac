@@ -4835,6 +4835,12 @@
       "filename": "83bee0ee-4b1e-4292-8eac-e6ce93e66fd9_20251209_050034.jsonl",
       "created_at": "2025-12-09T05:00:34.237345Z",
       "path": "trajectories/83bee0ee-4b1e-4292-8eac-e6ce93e66fd9_20251209_050034.jsonl"
+    },
+    {
+      "session_id": "83bee0ee-4b1e-4292-8eac-e6ce93e66fd9",
+      "filename": "83bee0ee-4b1e-4292-8eac-e6ce93e66fd9_20251210_024159.jsonl",
+      "created_at": "2025-12-10T02:41:59.444886Z",
+      "path": "trajectories/83bee0ee-4b1e-4292-8eac-e6ce93e66fd9_20251210_024159.jsonl"
     }
   ]
 }
