@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_playlist_navigation_action",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0011329170083627105
+  },
+  "timestamp": "2025-11-12T11:30:33.266429",
+  "test_name": "execution_router"
+}

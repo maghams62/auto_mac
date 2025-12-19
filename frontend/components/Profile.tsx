@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
-
-const API_URL = "http://localhost:8000";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 interface Config {
   email?: {
@@ -43,6 +42,7 @@ interface Config {
 }
 
 export default function Profile() {
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
   const [config, setConfig] = useState<Config>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,13 +51,9 @@ export default function Profile() {
   const [newDomain, setNewDomain] = useState("");
   const [newTwitterList, setNewTwitterList] = useState({ name: "", id: "" });
 
-  useEffect(() => {
-    loadConfig();
-  }, []);
-
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/config`);
+      const response = await fetch(`${apiBaseUrl}/api/config`);
       if (!response.ok) throw new Error("Failed to load config");
       const data = await response.json();
       setConfig(data);
@@ -66,14 +62,18 @@ export default function Profile() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiBaseUrl]);
 
-  const saveConfig = async () => {
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  const saveConfig = useCallback(async () => {
     setSaving(true);
     setMessage(null);
     
     try {
-      const response = await fetch(`${API_URL}/api/config`, {
+      const response = await fetch(`${apiBaseUrl}/api/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ updates: config }),
@@ -94,7 +94,7 @@ export default function Profile() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [apiBaseUrl, config, loadConfig]);
 
   const updateConfig = (path: string[], value: any) => {
     setConfig((prev) => {
@@ -195,7 +195,7 @@ export default function Profile() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-white/80 mb-2">
-              Default Email (for "email to me")
+              Default Email (for &ldquo;email to me&rdquo;)
             </label>
             <input
               type="email"
@@ -515,4 +515,3 @@ export default function Profile() {
     </div>
   );
 }
-

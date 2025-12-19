@@ -1,18 +1,661 @@
-# Mac Automation Assistant Configuration
+# Cerebro OS Configuration
 
 # OpenAI API Configuration
+runtime:
+  # High-level execution mode. You can override this with the CEREBROS_MODE
+  # environment variable (dev, demo, live). When unset, defaults to "dev".
+  mode: "${CEREBROS_MODE:-dev}"
+
 openai:
   api_key: "${OPENAI_API_KEY}"  # Set in environment variable
-  model: "gpt-4o"  # GPT-4o for all LLM tasks
+  model: "gpt-4o"  # Highest generally available reasoning model
   embedding_model: "text-embedding-3-small"
-  temperature: 0.7
+  temperature: 0.2
   max_tokens: 2000
+
+fallbacks:
+  heuristics_only_length: 24
+  short_token_limit: 3
+  enable_low_signal_classifier: true
+  cancel_keywords:
+    - cancel
+    - never mind
+    - stop
+    - abort
+    - hold on
+    - wait
+    - forget it
+    - nvm
+  ack_keywords:
+    - ok
+    - okay
+    - k
+    - thanks
+    - thank you
+    - got it
+    - cool
+  slash_stop_commands:
+    - stop
+    - cancel
+  llm_classifier:
+    model: "gpt-4o-mini"
+    temperature: 0.0
+    max_tokens: 120
+    max_chars: 120
+
+# VectorDB Configuration (Docs/Issues semantic search)
+vectordb:
+  enabled: true
+  provider: "qdrant"  # Future-safe: can swap to pinecone/weaviate/etc.
+  url: "${QDRANT_URL:-${VECTORDB_URL:-http://localhost:6333}}"
+  api_key: "${QDRANT_API_KEY:-${VECTORDB_API_KEY:-}}"
+  collection: "${QDRANT_COLLECTION:-${VECTORDB_COLLECTION:-oqoqo_context}}"
+  embedding_model: "${VECTORDB_EMBEDDING_MODEL:-text-embedding-3-small}"
+  default_top_k: 12
+  min_score: 0.35
+  timeout_seconds: 6.0
+  dimension: 1536
+
+youtube:
+  enabled: true
+  history_path: "data/state/youtube_history.json"
+  max_recent: 8
+  metadata:
+    api_key: "${YOUTUBE_API_KEY:-}"
+    oembed_timeout_seconds: 4.0
+  transcript:
+    preferred_languages:
+      - "en"
+    fallback_languages:
+      - "en-US"
+      - "en-GB"
+    max_retries: 3
+    retry_delay_seconds: 2.0
+  vectordb:
+    max_chunk_chars: 1200
+    chunk_overlap_seconds: 2.0
+  transcript_cache:
+    path: "data/state/youtube_videos"
+  clipboard:
+    enabled: true
+    max_candidates: 5
+
+search:
+  enabled: true
+  workspace_id: "${SEARCH_WORKSPACE_ID:-default_workspace}"
+  defaults:
+    max_results_per_modality: 5
+    timeout_ms_per_modality: 2000
+    web_fallback_weight: 0.6
+  # Document/vector search scoring
+  top_k: 5
+  similarity_threshold: 0.45
+  planner:
+    enabled: true
+    rules:
+      - name: code
+        keywords:
+          - "stack trace"
+          - ".py"
+          - "exception"
+          - "error code"
+          - "traceback"
+        include:
+          - "git"
+          - "files"
+      - name: chat
+        keywords:
+          - "slack"
+          - "dm"
+          - "channel"
+          - "thread"
+          - "conversation"
+        include:
+          - "slack"
+      - name: video
+        keywords:
+          - "video"
+          - "youtube"
+          - "talk"
+          - "lecture"
+          - "watch"
+        include:
+          - "youtube"
+  modalities:
+    slack:
+      enabled: true
+      channels:
+        - "#all-cerebros"
+        - "#support"
+      weight: 1.0
+      timeout_ms: 2500
+    git:
+      enabled: true
+      repos:
+        - "core-api"
+        - "docs-portal"
+      weight: 1.1
+      timeout_ms: 2500
+    doc_issues:
+      enabled: true
+      weight: 1.2
+      timeout_ms: 2500
+      max_results: 5
+      scope:
+        path: "${DOC_ISSUES_PATH:-data/live/doc_issues.json}"
+    files:
+      enabled: true
+      roots:
+        - "docs/"
+        - "guides/"
+      weight: 1.0
+      timeout_ms: 2000
+    youtube:
+      enabled: true
+      video_ids: []
+      weight: 0.9
+      timeout_ms: 2000
+    web_search:
+      enabled: true
+      fallback_only: true
+      weight: 0.6
+      timeout_ms: 3000
+
+mongo:
+  enabled: false
+  uri: "${MONGO_URI:-mongodb://127.0.0.1:27017}"
+  database: "${MONGO_DB:-oqoqo}"
+  chat_collection: "${MONGO_CHAT_COLLECTION:-chat_messages}"
+  ttl_days: 30
+  cache:
+    max_messages_per_session: 75
+    disk_path: "data/cache/chat_sessions"
+
+# Live metadata cache controls (Slack/Git)
+metadata_cache:
+  slack:
+    ttl_seconds: 600          # Cache lifetime for channel/user inventories
+    max_items: 2000           # Soft cap for cached channel/user entries
+    log_metrics: false        # Emit cache hit/miss logs
+  git:
+    repo_ttl_seconds: 900     # Cache lifetime for repo metadata
+    branch_ttl_seconds: 300   # Cache lifetime for branch listings
+    max_branches_per_repo: 500
+    log_metrics: false        # Emit cache hit/miss logs
+
+traceability:
+  enabled: true
+  investigations_path: "data/live/investigations.jsonl"
+  max_entries: 500
+  retention_days: 30
+  max_file_bytes: 5242880  # 5 MB
+  missing_evidence_threshold: 5
+  missing_evidence_window_seconds: 3600
+  neo4j:
+    enabled: false
+
+# Graph / Neo4j Configuration
+graph:
+  enabled: true
+  uri: "${NEO4J_URI:-bolt://localhost:7687}"
+  username: "${NEO4J_USERNAME:-neo4j}"
+  password: "${NEO4J_PASSWORD:-}"
+  database: "${NEO4J_DATABASE:-neo4j}"
+  ingest_batch_size: 100
+
+activity_ingest:
+  state_dir: "data/state/activity_ingest"
+  slack:
+    enabled: true
+    batch_limit: 200
+    workspace_url: "${SLACK_WORKSPACE_URL:-}"
+    fixture_path: "tests/fixtures/activity/slack_activity.yaml"
+    dissatisfaction_keywords:
+      - "fail"
+      - "error"
+      - "broken"
+      - "down"
+    negative_reactions:
+      - "thumbsdown"
+      - "rage"
+      - "angry"
+    channels:
+      - id: "C09V8AFDLUF"
+        name: "#all-cerebros"
+        components:
+          - "comp:payments"
+        endpoint_ids:
+          - "api:payments:/charge"
+        tags:
+          - "payments"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+        dissatisfaction_keywords:
+          - "timeout"
+          - "failure"
+      - id: "C0A0APQMGAF"
+        name: "#channel-C0A0APQMGAF"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A01N5EVEK"
+        name: "#channel-C0A01N5EVEK"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A0LNN7HQC"
+        name: "#channel-C0A0LNN7HQC"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      - id: "C0A2GNUPW3E"
+        name: "demo1"
+        components:
+          - "docs.payments"
+          - "core.payments"
+          - "comp:payments"
+          - "comp:core-api"
+        tags:
+          - "incidents"
+          - "issues"
+          - "rate limits"
+        recency_half_life_hours: 72
+        base_weight: 1.0
+      # - id: "C0A0DNAHK2R"
+      #   name: "incidents"
+      #   components:
+      #     - "docs.payments"
+      #     - "core.payments"
+      #     - "comp:payments"
+      #     - "comp:core-api"
+      #   tags:
+      #     - "incidents"
+      #     - "vat"
+      #   recency_half_life_hours: 72
+      #   base_weight: 1.0
+  git:
+    enabled: true
+    fixture_path: "tests/fixtures/activity/git_activity.yaml"
+    default_branch: "main"
+    lookback_hours: 168
+    include_issues: true
+    comments_enabled: true
+    max_issues: 15
+    issue_labels:
+      - "bug"
+      - "documentation"
+    issue_dissatisfaction_labels:
+      - "bug"
+      - "docs"
+      - "documentation"
+    default_issue_components:
+      - "comp:docs"
+    issue_component_map:
+      - labels:
+          - "documentation"
+          - "docs"
+        keywords:
+          - "guide"
+          - "tutorial"
+        components:
+          - "comp:docs"
+      - labels:
+          - "bug"
+        components:
+          - "comp:payments"
+    repos:
+      - owner: "maghams62"
+        name: "core-api"
+        project_id: "project_core_api"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
+        default_components:
+          - "comp:payments"
+        default_issue_components:
+          - "comp:docs"
+        component_map:
+          - match: "contracts/"
+            components:
+              - "comp:payments"
+          - match: "services/payments"
+            components:
+              - "comp:payments"
+          - match: "config/plans/"
+            components:
+              - "comp:core-api"
+          - match: "docs/"
+            components:
+              - "comp:docs"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+          - labels:
+              - "bug"
+            components:
+              - "comp:payments"
+      - owner: "maghams62"
+        name: "billing-service"
+        project_id: "project_billing_service"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
+        default_components:
+          - "comp:mobile"
+        default_issue_components:
+          - "comp:mobile"
+        component_map:
+          - match: "src/"
+            components:
+              - "comp:mobile"
+          - match: "src/pricing/"
+            components:
+              - "comp:billing-service"
+          - match: "docs/"
+            components:
+              - "comp:docs"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+          - labels:
+              - "bug"
+            components:
+              - "comp:mobile"
+      - owner: "maghams62"
+        name: "docs-portal"
+        project_id: "project_docs_portal"
+        include_prs: true
+        include_commits: true
+        include_issues: true
+        branch: "main"
+        max_prs: 25
+        max_commits: 40
+        max_issues: 20
+        default_components:
+          - "comp:docs"
+        default_issue_components:
+          - "comp:docs"
+        component_map:
+          - match: "docs/"
+            components:
+              - "comp:docs"
+        issue_component_map:
+          - labels:
+              - "documentation"
+              - "docs"
+            components:
+              - "comp:docs"
+  doc_issues:
+    enabled: true
+    path: "data/live/doc_issues.json"
+    default_component: "comp:docs"
+
+quota_demo:
+  scenario_id: "free_tier_quota"
+  quotas:
+    legacy_free_tier: 1000
+    updated_free_tier: 300
+  synthetic:
+    slack_fixture_path: "data/synthetic_slack/slack_events.json"
+    git_events_path: "data/synthetic_git/git_events.json"
+    git_prs_path: "data/synthetic_git/git_prs.json"
+    doc_issues_path: "data/synthetic_git/quota_doc_issues.json"
+  slack:
+    channel_id: "${QUOTA_DEMO_SLACK_CHANNEL_ID:-C123SUPPORT}"
+    channel_name: "${QUOTA_DEMO_SLACK_CHANNEL_NAME:-#support}"
+    workspace: "${QUOTA_DEMO_SLACK_WORKSPACE:-acme-quota}"
+    default_thread_ts: "quota-demo-thread"
+    participants:
+      - handle: "csm"
+        user_id: "${QUOTA_DEMO_CSM_USER_ID:-U_csm}"
+        display_name: "Customer Success"
+        component_ids:
+          - "comp:web-dashboard"
+      - handle: "se"
+        user_id: "${QUOTA_DEMO_SE_USER_ID:-U_se}"
+        display_name: "Support Engineer"
+        component_ids:
+          - "comp:core-api"
+      - handle: "billing"
+        user_id: "${QUOTA_DEMO_BILLING_USER_ID:-U_billing}"
+        display_name: "Billing Lead"
+        component_ids:
+          - "comp:billing-service"
+      - handle: "docs"
+        user_id: "${QUOTA_DEMO_DOCS_USER_ID:-U_docs}"
+        display_name: "Docs Lead"
+        component_ids:
+          - "comp:docs-portal"
+      - handle: "pm"
+        user_id: "${QUOTA_DEMO_PM_USER_ID:-U_pm}"
+        display_name: "Product Manager"
+        component_ids:
+          - "comp:core-api"
+          - "comp:web-dashboard"
+  git:
+    repos:
+      core-api:
+        repo_id: "core-api"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${CORE_API_REPO:-core-api}"
+        default_branch: "${CORE_API_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_CORE_API_BRANCH:-quota-demo}"
+        component_id: "comp:core-api"
+        service_id: "core-api-service"
+        local_root: "core-api"
+        files:
+          - "config/plans/free_tier.yaml"
+        commit_message: "feat(plans): reduce free tier quota from {legacy} to {updated}"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: true
+      billing-service:
+        repo_id: "billing-service"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${BILLING_SERVICE_REPO:-billing-service}"
+        default_branch: "${BILLING_SERVICE_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_BILLING_BRANCH:-quota-demo}"
+        component_id: "comp:billing-service"
+        service_id: "billing-service"
+        local_root: "billing-service"
+        files:
+          - "src/pricing/plan_config.py"
+        commit_message: "chore(pricing): sync billing free tier quota with core-api"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: true
+      web-dashboard:
+        repo_id: "web-dashboard"
+        owner: "${WEB_DASHBOARD_REPO_OWNER:-maghams62}"
+        name: "${WEB_DASHBOARD_REPO:-web-dashboard}"
+        default_branch: "${WEB_DASHBOARD_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_WEB_BRANCH:-quota-demo}"
+        component_id: "comp:web-dashboard"
+        service_id: "web-dashboard-service"
+        local_root: "web-dashboard"
+        files:
+          - "src/pages/Pricing.tsx"
+        commit_message: "fix: update pricing copy for free tier quota"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: false
+      docs-portal:
+        repo_id: "docs-portal"
+        owner: "${LIVE_GIT_ORG:-maghams62}"
+        name: "${DOCS_PORTAL_REPO:-docs-portal}"
+        default_branch: "${DOCS_PORTAL_BRANCH:-main}"
+        demo_branch: "${QUOTA_DEMO_DOCS_BRANCH:-quota-demo}"
+        component_id: "comp:docs-portal"
+        service_id: "docs-portal"
+        local_root: "docs-portal"
+        files:
+          - "docs/pricing/free_tier.md"
+        commit_message: "docs: refresh free tier quota copy"
+        api_ids:
+          - "/v1/payments/create"
+        live_mutation: false
+  doc_issues:
+    templates:
+      - key: "web-dashboard-pricing"
+        component_id: "comp:web-dashboard"
+        repo_id: "web-dashboard"
+        doc_path: "src/pages/Pricing.tsx"
+        severity: "high"
+        tags:
+          - "free-tier"
+          - "quota"
+          - "pricing-ui"
+        summary_template: "Pricing dashboard still shows {legacy} free requests but backend enforces {updated}."
+      - key: "docs-portal-free-tier"
+        component_id: "comp:docs-portal"
+        repo_id: "docs-portal"
+        doc_path: "docs/pricing/free_tier.md"
+        severity: "high"
+        tags:
+          - "free-tier"
+          - "quota"
+          - "api-docs"
+        summary_template: "Docs portal free tier page promises {legacy} calls/month even though services throttle at {updated}."
+      - key: "core-api-meta"
+        component_id: "comp:core-api"
+        repo_id: "core-api"
+        doc_path: null
+        severity: "medium"
+        tags:
+          - "free-tier"
+          - "plan-consistency"
+        summary_template: "Free tier quota definitions are inconsistent between services ({updated}) and docs/UI ({legacy})."
+  verification:
+    activity_component: "comp:web-dashboard"
+    doc_component: "comp:docs-portal"
+    context_root_component: "comp:core-api"
+    doc_repo_id: "docs-portal"
+
+context_resolution:
+  dependency_files:
+    - "configs/dependency_map.yaml"
+  repo_mode: "polyrepo"  # or "monorepo" to limit blast radius to each repo boundary
+  activity_window_hours: 168
+  impact:
+    default_max_depth: 2
+    include_docs: true
+    include_services: true
+    include_components: true
+    include_slack_threads: true
+    max_recommendations: 5
+    evidence:
+      llm_enabled: true
+      llm_model: "${IMPACT_EVIDENCE_MODEL:-gpt-4o-mini}"
+      max_bullets: 5
+    pipeline:
+      slack_lookup_hours: 72
+      git_lookup_hours: 168
+      notify_slack: false
+    notifications:
+      enabled: false               # Feature flag for downstream alerts (Slack/PR)
+      slack_channel: "#docs-impact" # Optional default channel for mock notifier
+      github_app_id: null          # Placeholder for future GitHub App integration
+      min_impact_level: "high"     # Notify only when issues meet/exceed this level
+
+# Reasoning Trace Configuration (Experimental)
+# Enables persistent reasoning memory across agent executions
+reasoning_trace:
+  enabled: true  # EXPERIMENTAL: Enable reasoning trace (default: false for safety)
+  # When enabled, the system tracks:
+  # - Planning decisions and evidence
+  # - Execution outcomes and artifacts
+  # - Critic corrections and learnings
+  # - Delivery commitments (e.g., send email, attach files)
+  # This reduces reliance on prompt engineering by using actual execution history
+
+# Delivery Intent Configuration (moved from hardcoded logic in agent.py)
+delivery:
+  # Intent detection verbs - when these appear in user request, plan must include compose_email
+  intent_verbs:
+    - email
+    - send
+    - mail
+    - attach
+
+  # Required tool when delivery intent is detected
+  required_tool: compose_email
+
+  # Validation behavior
+  validation:
+    reject_missing_tool: true  # Reject plan if delivery verb present but compose_email missing
+    auto_correct: false  # Do not auto-add compose_email (let planner learn)
+
+  # Map tools to commitments they fulfill (used by reasoning trace)
+  tool_commitments:
+    compose_email:
+      - send_email
+
+# Atomic Prompt Loading Configuration
+atomic_prompts:
+  enabled: true  # Enable atomic prompt loading (default: true)
+  max_tokens: 2000  # Maximum tokens to allocate for examples per request
+  fallback_to_full: true  # Fallback to full examples if atomic loading fails
+  log_usage: true  # Log token usage and example selection
+
+document_directory: "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs"
+
+# Screenshot Configuration
+screenshots:
+  base_dir: "data/screenshots"
+
+# Playback Configuration
+playback:
+  # Intent detection verbs for Spotify playback requests
+  intent_verbs:
+    - play
+    - queue
+    - listen
+    - start
+
+  # Tool that must appear in plans when playback intent detected
+  required_tool: play_song
+
+  # Verification tool to confirm playback before responding
+  verification_tool: get_spotify_status
+  require_status_check: true
+
+  # Force API-based playback for Spotify (no vision automation)
+  use_api: true
+
+  # Disable fallback to automation when API is not available
+  # When true, playback will only work through web API (requires authentication)
+  disable_automation_fallback: true
+
+  # Retry configuration for playback automation (consumed by routers)
+  retry:
+    max_attempts: 3
+    base_delay_seconds: 2
+
+  # Commitments produced by specific tools
+  tool_commitments:
+    play_song:
+      - play_music
+
+  # Messaging used during finalization
+  success_message: "Started playback in Spotify."
+  failure_message: "Unable to confirm Spotify playback. Please ensure Spotify is running and try again."
 
 # Document Configuration
 documents:
   # Folders to index (can add multiple paths)
   folders:
-    - "/Users/siddharthsuresh/Downloads/auto_mac/test_docs"
+    - "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs"
 
 
   # File types to index
@@ -21,22 +664,73 @@ documents:
     - ".docx"
     - ".txt"
 
+  # Image types to index
+  supported_image_types:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".gif"
+    - ".webp"
+
   # Index refresh interval (in seconds, -1 to disable auto-refresh)
   refresh_interval: 3600
 
-# Search Configuration
-search:
-  # Number of top results to return
-  top_k: 5
+# Hosted documentation portal (used for doc issue deep links)
+docs:
+  portal_base_url: "${DOC_PORTAL_BASE_URL:-https://maghams62.github.io/docs-portal}"
+  portal_slug_map:
+    "docs/payments_api.md": "payments_api"
+    "docs/billing_flows.md": "billing_flows"
 
-  # Similarity threshold (0-1, higher = more strict)
-  similarity_threshold: 0.45
+# Search Configuration
+# Images Configuration
+images:
+  # Enable/disable image indexing and search
+  enabled: true
+
+  # Caption generation model (for MVP, we'll use a simple approach)
+  caption_model: "blip-base"  # Options: blip-base, blip-large, or openai-vision
+
+  # Embedding model for semantic search
+  embedding_model: "clip-vit-base-patch32"  # CLIP model for vision-text alignment
+
+  # Thumbnail settings
+  thumbnail:
+    max_size: 256  # Maximum thumbnail dimension in pixels
+    quality: 85    # JPEG quality (1-100)
+    cache_dir: "data/cache/thumbnails"
+
+  # Search settings
+  search:
+    top_k: 5  # Number of image results to return
+
+# Universal Search Configuration
+universal_search:
+  # Enable/disable the Command-K universal search feature
+  enabled: true
+
+  # Maximum results to return (default: 10)
+  max_results: 10
+
+  # Frontend debounce delay in milliseconds (default: 200)
+  debounce_ms: 200
+
+  # Maximum characters in snippet context (default: 150)
+  highlight_context: 150
+
+  # Security settings
+  security:
+    # Rate limit per second per client
+    rate_limit_per_second: 10
+    # Only return results from allowed directories
+    allowed_paths_only: true
 
 # Email Configuration
 email:
+  account_email: "Google"  # YOUR email ACCOUNT NAME in Mail.app (not email address) - used for READING emails (SECURITY: only reads from this account)
   default_recipient: "spamstuff062@gmail.com"  # Default email address when user says "email to me"
   default_subject_prefix: "[Auto-generated]"
-  signature: "\n\n---\nSent via Mac Automation Assistant"
+  signature: "\n\n---\nSent via Cerebro OS"
 
 # iMessage Configuration
 imessage:
@@ -78,6 +772,38 @@ maps:
 ui:
   mode: "terminal"  # Options: terminal, gui (future)
   theme: "dark"
+  # Redirect URL configuration
+  # Note: Spotify requires 127.0.0.1 (loopback) for HTTP redirects, not localhost
+  redirect_url: "${REDIRECT_URL:-http://127.0.0.1:3000/redirect}"  # Default redirect URL for OAuth callbacks
+
+# OAuth Configuration
+oauth:
+  # Base redirect URL (used for OAuth callbacks)
+  # Note: Spotify requires 127.0.0.1 (loopback) for HTTP redirects, not localhost
+  redirect_base_url: "${REDIRECT_BASE_URL:-http://127.0.0.1:3000}"
+  redirect_path: "/redirect"  # Path component of redirect URL
+  # Allowed redirect destinations (for security)
+  allowed_redirect_domains:
+    - "localhost"
+    - "127.0.0.1"
+    # Add your production domain here when deploying
+
+# Spotify API Configuration
+spotify_api:
+  # OAuth credentials (set via environment variables)
+  client_id: "${SPOTIFY_CLIENT_ID}"
+  client_secret: "${SPOTIFY_CLIENT_SECRET}"
+  # Redirect URI for Spotify OAuth (must match Spotify Developer Dashboard)
+  # Use 127.0.0.1 (loopback) for local development - Spotify requires this format for HTTP
+  redirect_uri: "${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:3000/redirect}"
+  # Scopes required for Spotify API access
+  scopes:
+    - "user-read-playback-state"
+    - "user-modify-playback-state"
+    - "user-read-currently-playing"
+    - "streaming"
+    - "user-read-email"
+    - "user-read-private"
 
 # Browser/Web Configuration
 browser:
@@ -110,6 +836,32 @@ browser:
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   file: "data/app.log"
+  max_bytes: 10485760  # 10MB - max size before rotation
+  backup_count: 5  # Number of backup log files to keep
+  json_format: true  # Use JSON format for structured logging (true) or human-readable (false)
+
+# Retry Logging Configuration (Experimental)
+# Enables comprehensive logging of failed attempts and reasoning chains for recovery
+retry_logging:
+  enabled: true  # EXPERIMENTAL: Enable retry logging (default: true for better error recovery)
+  # When enabled, the system tracks:
+  # - Failed execution attempts with full context
+  # - Reasoning chains that led to failures
+  # - Critic feedback and suggested fixes
+  # - Recovery patterns and alternative approaches
+  # This enables smarter retries and better LLM handoffs
+
+  # Retry behavior settings
+  max_attempts: 3  # Maximum retry attempts per operation
+  base_delay_seconds: 1.0  # Base delay between retries
+  max_delay_seconds: 30.0  # Maximum delay cap
+  backoff_multiplier: 2.0  # Exponential backoff multiplier
+
+  # Logging settings
+  log_directory: "data/retry_logs"  # Directory for retry logs
+  max_logs_per_interaction: 10  # Maximum log files per interaction
+  compress_old_logs: true  # Compress logs older than retention period
+  retention_days: 7  # Days to keep retry logs
 
 # Twitter Configuration
 twitter:
@@ -127,6 +879,13 @@ bluesky:
   default_search_limit: 10             # Default number of posts to return for search
   default_query: ""                    # Optional fallback query when none provided (leave empty to require explicit query)
 
+  # Notification Service Configuration
+  notifications_enabled: true          # Enable/disable real-time notifications
+  notification_poll_interval_seconds: 60  # How often to poll for new notifications (30-300 recommended)
+  max_notifications_per_poll: 20       # Maximum notifications to fetch per poll cycle
+  enable_timeline_mentions: true       # Monitor timeline for @mentions (may increase API usage)
+  enable_notifications: true           # Monitor official notifications (mentions, replies, likes, follows)
+
 # Voice Configuration
 voice:
   default_voice: "alloy"               # Default TTS voice: alloy, echo, fable, onyx, nova, shimmer
@@ -138,6 +897,18 @@ voice:
 # WhatsApp Configuration
 whatsapp:
   screenshot_dir: "data/screenshots"   # Directory for WhatsApp screenshots
+
+# Weather Configuration
+weather:
+  default_location: "San Francisco, CA"  # Default location for weather queries
+
+# Notes Configuration
+notes:
+  default_folder: "Notes"  # Default folder for creating notes
+
+# Reminders Configuration
+reminders:
+  default_list: "Reminders"  # Default list for creating reminders
 
 # Vision-Assisted UI Navigation
 vision:
@@ -151,3 +922,243 @@ vision:
     - plan_trip_with_stops
     - launch_app
     - send_whatsapp_message
+
+# Writing Agent Configuration
+writing:
+  # Refinement settings
+  max_refinement_passes: 2              # Maximum Self-Refine passes per deliverable
+  max_refinement_tokens: 2000           # Token guardrail for refinement operations
+
+  # Style profiles and defaults
+  default_tones:
+    executive: "professional, strategic, high-level"
+    technical: "precise, detailed, accurate"
+    conversational: "friendly, clear, approachable"
+    formal: "structured, comprehensive, authoritative"
+
+  # Slide deck constraints
+  slide_limits:
+    default: 5                         # Default maximum slides
+    max_with_justification: 7          # Maximum when memory indicates broader scope
+
+  # Quality assurance thresholds
+  rubric_thresholds:
+    email: 0.75                        # Minimum score for email approval
+    report: 0.8                        # Minimum score for report approval
+    summary: 0.7                       # Minimum score for summary approval
+    presentation: 0.75                 # Minimum score for presentation approval
+
+  # Chain-of-Density settings
+  quality_chain_density_score: 0.7     # Target density score for CoD summarization
+
+# Persistent User Memory Configuration
+# Enables long-term memory across sessions with semantic search
+persistent_memory:
+  enabled: true  # Enable persistent memory (default: false for privacy)
+  directory: "data/user_memory"  # Storage directory for user memory data
+  embedding_model: "text-embedding-3-small"  # OpenAI embedding model
+  retention:
+    max_memories_per_user: 1000  # Maximum memories per user
+    default_ttl_days: 365  # Default time-to-live for memories (days)
+    cleanup_interval_days: 30  # How often to clean up expired memories
+  extraction:
+    similarity_threshold: 0.87  # Cosine similarity threshold for deduplication
+    min_confidence: 0.7  # Minimum confidence to store extracted memories
+    max_per_interaction: 3  # Maximum memories to extract per interaction
+  search:
+    top_k_default: 5  # Default number of memories to retrieve
+    min_score_default: 0.7  # Default minimum similarity score
+
+# Knowledge Providers Configuration
+# Enables external knowledge sources for factual information retrieval
+knowledge_providers:
+  enabled: true  # Enable knowledge providers (default: true)
+  wiki_lookup:
+    enabled: true  # Enable Wikipedia lookup (default: true)
+    cache_dir: "data/cache/knowledge"  # Directory for caching knowledge responses
+    cache_ttl_hours: 24  # Cache time-to-live in hours
+    timeout_seconds: 10  # Request timeout for external API calls
+    max_retries: 2  # Maximum retry attempts for failed requests
+
+# Performance Optimization Configuration
+performance:
+  # HTTP Connection Pooling (20-40% faster requests)
+  connection_pooling:
+    enabled: true
+    max_connections: 100  # Maximum total connections
+    max_keepalive: 50     # Maximum keep-alive connections
+    keepalive_expiry: 30  # Keep-alive timeout in seconds
+  
+  # Rate Limiting (prevents API throttling)
+  rate_limiting:
+    enabled: true
+    rpm_limit: 10000      # Requests per minute
+    tpm_limit: 2000000    # Tokens per minute
+    burst_size: 100       # Allow request bursts
+    safety_margin: 0.9    # Use 90% of limits
+  
+  # Parallel Execution (40-60% faster overall)
+  parallel_execution:
+    enabled: true
+    max_parallel_steps: 5          # Maximum concurrent steps
+    max_parallel_llm_calls: 3      # Maximum concurrent LLM calls
+    dependency_analysis: true      # Analyze step dependencies
+  
+  # Batch Processing (30-50% faster embeddings)
+  batch_embeddings:
+    enabled: true
+    batch_size: 100               # Documents per batch
+    max_concurrent_batches: 2     # Concurrent batch requests
+  
+  # Caching (instant responses for repeated queries)
+  caching:
+    tool_catalog: true            # Cache tool catalog
+    prompt_templates: true        # Cache prompt templates
+    embeddings: true              # Cache embeddings (if persistent)
+  
+  # Background Processing
+  background_tasks:
+    verification: true            # Run verification in background
+    memory_updates: true          # Update memory asynchronously
+    logging: true                 # Async logging
+
+# Slack Configuration
+slack:
+  bot_token: "${SLACK_TOKEN}"              # Slack Bot Token (xoxb-...). Also falls back to legacy SLACK_BOT_TOKEN.
+  default_channel_id: "${SLACK_CHANNEL_ID}" # Default channel ID for fetching messages
+
+  # Monitored channels for search (channel IDs)
+  # Example: ["C0123456789", "C9876543210"]
+  monitored_channels: []
+
+  # Search settings
+  search:
+    default_limit: 20    # Default number of messages to return
+    max_limit: 100       # Maximum messages per search request
+
+# Slash-Slack agent configuration
+slash_slack:
+  default_channel_id: "C0A0DNAHK2R" # Hardcoded to #incidents for slash Cerebros demo
+  default_time_window_hours: 24     # Default lookback window for channel recaps
+  workspace_url: ""                 # e.g., https://yourteam.slack.com for permalink construction
+  graph_emit: true                  # Emit graph payloads for Neo4j ingestion hooks
+  graph_log_path: "data/logs/slash/slack_graph.jsonl"
+  empty_channel_fallback_hours: 72  # When no messages match, extend the lookback window (hours)
+  empty_channel_search_limit: 40    # Max messages to retrieve via Slack search fallback
+  doc_drift_keywords:               # Only run doc drift reasoner when these keywords appear
+    - "doc drift"
+    - "drift"
+    - "api drift"
+  debug_block_enabled: ${SLASH_SLACK_DEBUG_BLOCK_ENABLED:-true}
+  debug_source_label: "${SLASH_SLACK_DEBUG_SOURCE_LABEL:-live_slack}"
+
+slash_git:
+  doc_drift_reasoner: true
+  debug_block_enabled: ${SLASH_GIT_DEBUG_BLOCK_ENABLED:-true}
+  debug_source_label: "${SLASH_GIT_DEBUG_SOURCE_LABEL:-live_git}"
+  debug_repo_label: "${SLASH_GIT_DEBUG_REPO_LABEL:-${GITHUB_REPO_NAME:-auto_mac}}"
+  data_mode: "${SLASH_GIT_DATA_MODE:-graph}"
+  target_catalog_path: "config/slash_git_targets.yaml"
+  default_repo_id: "core-api"
+  default_time_window_days: 7
+  component_time_window_days: 7
+  graph_emit_enabled: true
+  graph_log_path: "data/logs/slash/git_graph.jsonl"
+  graph_mode:
+    enabled: true
+    require: true
+    max_results: 80
+  use_live_data: ${SLASH_GIT_USE_LIVE_DATA:-false}
+  synthetic_data:
+    events_path: "data/synthetic_git/git_events.json"
+    prs_path: "data/synthetic_git/git_prs.json"
+
+activity_graph:
+  slack_graph_path: "data/logs/slash/slack_graph.jsonl"
+  git_graph_path: "data/logs/slash/git_graph.jsonl"
+  doc_issues_path: "data/live/doc_issues.json"
+  impact_events_path: "data/logs/impact_events.jsonl"
+  cache:
+    enabled: true
+    ttl_seconds: 45
+    backend: "memory"  # options: memory, redis
+    redis_url: "${ACTIVITY_GRAPH_REDIS_URL:-}"
+  weights:
+    activity:
+      git_events: 1.0
+      slack_conversations: 0.5
+    dissatisfaction:
+      slack_complaints: 1.0
+      doc_issues: 0.7
+  scoring:
+    # Activity Score = (Git commits/PRs * git weights) + (Slack conversations * slack weight)
+    # Dissatisfaction Score = (Slack complaints * complaint weight) + (DocIssues severity weight)
+    # All signal contributions are later scaled by the time decay multipliers below.
+    slack:
+      conversation_weight: 0.4        # lightweight chatter = low weight
+      complaint_weight: 0.9           # tagged complaints carry more impact
+    git:
+      commit_weight: 0.8              # routine commits = medium weight
+      pr_weight: 1.2                  # PRs/merges typically higher-risk
+    doc_issues:
+      severity_weights:               # DocIssues dominate dissatisfaction
+        critical: 3.0
+        high: 2.0
+        medium: 1.2
+        low: 0.5
+    time_decay:
+      buckets:                        # multiplier applied using newest event timestamp
+        "1h": 1.0                     # < 1 hour old -> fully weighted
+        "24h": 0.7                    # < 24 hours old -> medium decay
+        "7d": 0.4                     # < 7 days old -> strong decay
+        "30d": 0.15                   # < 30 days old -> minimal impact
+      default: 0.1                    # anything older than 30d still counts a little
+    trend:
+      baseline_window: "7d"           # compare current window to prior 7d block for trend_delta
+
+# Activity Intelligence / Oqoqo
+activity:
+  oqoqo:
+    api_key: "${OQOQO_API_KEY:-}"               # API key for multi-source reasoning backend
+    base_url: "${OQOQO_BASE_URL:-https://api.oqoqo.ai}"
+    dataset: "${OQOQO_DATASET:-production}"     # Workspace or dataset slug
+
+# GitHub Integration (Oqoqo Self-Evolving Docs + Git Agent)
+# Used for PR/branch-based API documentation drift detection and Git agent tools
+github:
+  token: "${GITHUB_TOKEN}"              # GitHub Personal Access Token
+  repo_owner: "${GITHUB_REPO_OWNER:-maghams62}"   # Repository owner
+  repo_name: "${GITHUB_REPO_NAME:-auto_mac}"      # Repository name
+  monitored_file: "api_server.py"       # File to monitor for API changes
+  base_branch: "${GITHUB_BASE_BRANCH:-main}"      # Base branch to compare against
+
+  # PR webhook filtering
+  webhook:
+    enabled: true                       # Enable webhook event processing
+    filter_by_branch: true              # Only process PRs targeting base_branch
+
+  # PR notification actions to handle
+  notification_actions:
+    - opened                            # New PR opened
+    - ready_for_review                  # PR marked ready for review
+    - closed                            # PR closed or merged
+    - synchronize                       # PR updated with new commits
+    - reopened                          # PR reopened
+
+impact:
+  data_mode: "${IMPACT_DATA_MODE:-live}"
+  auto_from_slash: ${IMPACT_AUTO_FROM_SLASH:-true}
+  endpoint_base: "${IMPACT_ENDPOINT_BASE:-http://127.0.0.1:8000}"
+
+branch_watcher:
+  enabled: false
+  startup_delay_seconds: 8              # Delay before starting GitHub polling (seconds)
+
+synthetic_git:
+  base_dir: "data/synthetic_git"
+  branch: "${SYNTHETIC_GIT_BRANCH:-synthetic-git-dataset}"
+  base_branch: "${SYNTHETIC_GIT_BASE_BRANCH:-main}"
+  remote_url: "${SYNTHETIC_GIT_REMOTE:-}"
+  repo_owner: "${SYNTHETIC_GIT_REPO_OWNER:-maghams62}"
+  repo_name: "${SYNTHETIC_GIT_REPO_NAME:-auto_mac}"
+  commit_message: "chore(synthetic-git): refresh dataset"

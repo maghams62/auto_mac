@@ -1,0 +1,38 @@
+{
+  "session_id": "85328a54-f0fd-4808-a6b0-c8cc6d83a662",
+  "status": "active",
+  "created_at": "2025-11-11T03:11:52.114898",
+  "last_active_at": "2025-11-11T03:12:09.005927",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T03:12:09.005927",
+      "user_request": "❌ **Transcription Error:** Failed to fetch. Please try typing instead.",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: The request involves a transcription error which cannot be resolved using the available tools. The current toolset does not support error correction or transcription services. Please try typing the request instead.",
+        "missing_capabilities": "The request involves a transcription error which cannot be resolved using the available tools. The current toolset does not support error correction or transcription services. Please try typing the request instead."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

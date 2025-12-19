@@ -12,6 +12,7 @@ Uses AppleScript to trigger macOS celebration effects.
 from typing import Dict, Any
 from langchain_core.tools import tool
 import logging
+from ..utils.message_personality import get_confetti_message
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def trigger_confetti() -> Dict[str, Any]:
                 "success": True,
                 "action": "confetti",
                 "status": "celebrated",
-                "message": result.get("message", "Confetti celebration triggered! 🎉")
+                "message": result.get("message", get_confetti_message())
             }
         else:
             return result

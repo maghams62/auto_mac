@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_scroll_position_detection",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_execution_router.TestExecutionRouter testMethod=test_scroll_position_detection>\n\n    def test_scroll_position_detection(self):\n        \"\"\"Test detecting scroll position from vision analysis.\"\"\"\n        from src.automation.vision_spotify_automation import VisionSpotifyAutomation\n    \n        vision_auto = VisionSpotifyAutomation(self.mock_config)\n    \n        # Test \"top of list\" detection\n        ui_state = vision_auto._parse_vision_analysis({\n            \"summary\": \"At the top of the playlist, showing first songs\",\n            \"status\": \"action_required\"\n        }, \"test song\", None)\n    \n        # The current logic sets to \"middle\" if none of the specific keywords match\n        # Let's adjust the test to match current behavior or fix the logic\n        # For now, let's check that the basic scrolling flags are set\n        self.assertTrue(ui_state.can_scroll_down)  # Should be able to scroll down from anywhere initially\n    \n        # Test \"bottom of list\" detection\n        ui_state = vision_auto._parse_vision_analysis({\n            \"summary\": \"At the bottom of the list, showing last songs\",\n            \"status\": \"action_required\"\n        }, \"test song\", None)\n    \n        # Check that scrolling flags are properly set for bottom\n>       self.assertEqual(ui_state.current_scroll_position, \"bottom\")\nE       AssertionError: 'middle' != 'bottom'\nE       - middle\nE       + bottom\n\ntests/test_execution_router.py:456: AssertionError",
+    "duration": 0.0011699580063577741
+  },
+  "timestamp": "2025-11-12T10:43:45.097795",
+  "test_name": "execution_router"
+}

@@ -599,3 +599,732 @@ class FolderTools:
                 "error_message": str(e),
                 "folder_path": folder_path
             }
+
+    def find_duplicates(
+        self,
+        folder_path: Optional[str] = None,
+        recursive: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Find duplicate files by content hash (SHA-256).
+
+        This is a deterministic read-only operation that identifies files
+        with identical content, grouped by hash.
+
+        Args:
+            folder_path: Path to analyze (defaults to sandbox root)
+            recursive: Whether to search subdirectories (default: False)
+
+        Returns:
+            Dictionary with:
+            - duplicates: List of duplicate groups (each group has hash, size, files list)
+            - total_duplicate_files: Count of duplicate files found
+            - total_duplicate_groups: Count of duplicate groups
+            - wasted_space_bytes: Total bytes wasted by duplicates
+            - folder_path: Path that was analyzed
+        """
+        try:
+            import hashlib
+            from collections import defaultdict
+
+            # Default to sandbox root
+            if folder_path is None:
+                folder_path = self.allowed_folder
+
+            # Validate path
+            resolved_path = self._validate_path(folder_path)
+
+            logger.info(f"[FOLDER TOOLS] Finding duplicates in {resolved_path} (recursive={recursive})")
+
+            # Collect all files with their hashes
+            file_hashes = defaultdict(list)
+
+            if recursive:
+                # Recursive search
+                for root, dirs, files in os.walk(resolved_path):
+                    # Skip hidden directories
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+                    for filename in files:
+                        # Skip hidden files
+                        if filename.startswith('.'):
+                            continue
+
+                        file_path = os.path.join(root, filename)
+                        try:
+                            # Get file size
+                            file_size = os.path.getsize(file_path)
+
+                            # Compute SHA-256 hash
+                            sha256 = hashlib.sha256()
+                            with open(file_path, 'rb') as f:
+                                for chunk in iter(lambda: f.read(8192), b''):
+                                    sha256.update(chunk)
+                            file_hash = sha256.hexdigest()
+
+                            # Store file info
+                            file_hashes[file_hash].append({
+                                "path": file_path,
+                                "relative_path": os.path.relpath(file_path, resolved_path),
+                                "name": filename,
+                                "size": file_size
+                            })
+                        except (OSError, IOError) as e:
+                            logger.warning(f"[FOLDER TOOLS] Cannot read {filename}: {e}")
+                            continue
+            else:
+                # Non-recursive (top-level only)
+                try:
+                    entries = os.listdir(resolved_path)
+                except OSError as e:
+                    return {
+                        "error": True,
+                        "error_type": "ListError",
+                        "error_message": f"Cannot list directory: {str(e)}",
+                        "folder_path": resolved_path
+                    }
+
+                for filename in entries:
+                    file_path = os.path.join(resolved_path, filename)
+
+                    # Skip directories and hidden files
+                    if not os.path.isfile(file_path) or filename.startswith('.'):
+                        continue
+
+                    try:
+                        # Get file size
+                        file_size = os.path.getsize(file_path)
+
+                        # Compute SHA-256 hash
+                        sha256 = hashlib.sha256()
+                        with open(file_path, 'rb') as f:
+                            for chunk in iter(lambda: f.read(8192), b''):
+                                sha256.update(chunk)
+                        file_hash = sha256.hexdigest()
+
+                        # Store file info
+                        file_hashes[file_hash].append({
+                            "path": file_path,
+                            "relative_path": os.path.relpath(file_path, resolved_path),
+                            "name": filename,
+                            "size": file_size
+                        })
+                    except (OSError, IOError) as e:
+                        logger.warning(f"[FOLDER TOOLS] Cannot read {filename}: {e}")
+                        continue
+
+            # Filter to only groups with duplicates (2+ files with same hash)
+            duplicate_groups = []
+            total_duplicate_files = 0
+            wasted_space = 0
+
+            for file_hash, files in file_hashes.items():
+                if len(files) > 1:
+                    # Sort by name for consistent ordering
+                    files_sorted = sorted(files, key=lambda x: x['name'])
+
+                    # Calculate wasted space (size * (count - 1))
+                    file_size = files_sorted[0]['size']
+                    wasted = file_size * (len(files_sorted) - 1)
+
+                    duplicate_groups.append({
+                        "hash": file_hash,
+                        "size": file_size,
+                        "count": len(files_sorted),
+                        "wasted_bytes": wasted,
+                        "files": files_sorted
+                    })
+
+                    total_duplicate_files += len(files_sorted)
+                    wasted_space += wasted
+
+            # Sort groups by wasted space (descending)
+            duplicate_groups.sort(key=lambda x: x['wasted_bytes'], reverse=True)
+
+            logger.info(
+                f"[FOLDER TOOLS] Found {len(duplicate_groups)} duplicate groups, "
+                f"{total_duplicate_files} files, {wasted_space} bytes wasted"
+            )
+
+            return {
+                "duplicates": duplicate_groups,
+                "total_duplicate_files": total_duplicate_files,
+                "total_duplicate_groups": len(duplicate_groups),
+                "wasted_space_bytes": wasted_space,
+                "wasted_space_mb": round(wasted_space / (1024 * 1024), 2),
+                "folder_path": resolved_path,
+                "recursive": recursive
+            }
+
+        except FolderSecurityError as e:
+            logger.error(f"[FOLDER TOOLS] Security error in find_duplicates: {e}")
+            return {
+                "error": True,
+                "error_type": "SecurityError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in find_duplicates: {e}")
+            return {
+                "error": True,
+                "error_type": "DuplicateDetectionError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+
+    def summarize_folder(
+        self,
+        folder_path: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate comprehensive folder overview with statistics and insights.
+
+        This is a read-only operation that analyzes folder contents and provides
+        natural language summaries and actionable recommendations.
+        """
+        try:
+            # Get folder contents if not provided
+            if items is None:
+                if folder_path is None:
+                    folder_path = self.allowed_folder
+                listing = self.list_folder(folder_path)
+                if listing.get('error'):
+                    return listing
+                items = listing['items']
+                folder_path = listing['folder_path']
+
+            # Calculate statistics
+            total_files = sum(1 for item in items if item['type'] == 'file')
+            total_folders = sum(1 for item in items if item['type'] == 'dir')
+            total_size = sum(item.get('size', 0) or 0 for item in items if item['type'] == 'file')
+
+            # File type distribution
+            file_types = {}
+            for item in items:
+                if item['type'] == 'file':
+                    ext = item.get('extension', 'no_extension')
+                    file_types[ext] = file_types.get(ext, 0) + 1
+
+            # Age analysis
+            import time
+            current_time = time.time()
+            oldest_item = min((item for item in items if item.get('modified')), key=lambda x: x.get('modified', current_time), default=None)
+            newest_item = max((item for item in items if item.get('modified')), key=lambda x: x.get('modified', 0), default=None)
+
+            # Generate insights
+            insights = []
+            recommendations = []
+
+            if total_files == 0:
+                insights.append("This folder is empty")
+                recommendations.append("Consider adding files or removing the empty folder")
+            else:
+                # Size insights
+                if total_size > 100 * 1024 * 1024:  # > 100MB
+                    insights.append(f"Large folder ({total_size / (1024*1024):.1f} MB total)")
+                    recommendations.append("Consider archiving old files to reduce size")
+
+                # File type insights
+                if len(file_types) > 5:
+                    insights.append(f"Diverse content with {len(file_types)} different file types")
+                elif len(file_types) <= 2:
+                    insights.append(f"Focused content with {len(file_types)} file type(s)")
+
+                # Age insights
+                if oldest_item:
+                    oldest_age_days = (current_time - oldest_item.get('modified', 0)) / (24 * 3600)
+                    if oldest_age_days > 365:
+                        insights.append(f"Contains files over a year old (oldest: {oldest_item['name']})")
+                        recommendations.append("Archive files older than 1 year")
+
+            # Generate natural language summary
+            if total_files == 0:
+                summary = "This folder is empty and contains no files or subfolders."
+            else:
+                type_summary = ", ".join([f"{count} {ext.upper() if ext != 'no_extension' else 'extensionless'}" for ext, count in sorted(file_types.items(), key=lambda x: x[1], reverse=True)[:3]])
+                summary = f"Your {Path(folder_path).name} folder contains {total_files} file{'s' if total_files != 1 else ''} and {total_folders} subfolder{'s' if total_folders != 1 else ''}, totaling approximately {total_size / (1024*1024):.1f} MB of data."
+
+                if type_summary:
+                    summary += f" The files are primarily {type_summary}."
+
+            statistics = {
+                "total_files": total_files,
+                "total_folders": total_folders,
+                "total_size_bytes": total_size,
+                "total_size_mb": round(total_size / (1024 * 1024), 1),
+                "file_types": file_types,
+                "oldest_file": oldest_item['name'] if oldest_item else None,
+                "newest_file": newest_item['name'] if newest_item else None
+            }
+
+            return {
+                "summary": summary,
+                "statistics": statistics,
+                "insights": insights,
+                "recommendations": recommendations,
+                "folder_path": folder_path
+            }
+
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in summarize_folder: {e}")
+            return {
+                "error": True,
+                "error_type": "SummaryError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+
+    def sort_folder_by(
+        self,
+        folder_path: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
+        criteria: str = "name",
+        direction: str = "ascending"
+    ) -> Dict[str, Any]:
+        """
+        Sort folder contents by specified criteria with explanation.
+        """
+        try:
+            # Get folder contents if not provided
+            if items is None:
+                if folder_path is None:
+                    folder_path = self.allowed_folder
+                listing = self.list_folder(folder_path)
+                if listing.get('error'):
+                    return listing
+                items = listing['items']
+                folder_path = listing['folder_path']
+
+            # Sort the items
+            reverse = direction == "descending"
+
+            if criteria == "name":
+                sorted_items = sorted(items, key=lambda x: x['name'].lower(), reverse=reverse)
+                explanation = f"Files sorted alphabetically by name ({direction}). This helps you quickly find specific files or see naming patterns."
+            elif criteria == "date":
+                sorted_items = sorted(items, key=lambda x: x.get('modified', 0), reverse=reverse)
+                explanation = f"Files sorted by modification date ({direction}). Newest files appear first when descending, helping you see recent activity."
+            elif criteria == "size":
+                sorted_items = sorted(items, key=lambda x: x.get('size', 0) or 0, reverse=reverse)
+                explanation = f"Files sorted by size ({direction}). Largest files appear first when descending, helping you identify storage hogs."
+            elif criteria == "type":
+                sorted_items = sorted(items, key=lambda x: x.get('type', 'unknown'), reverse=reverse)
+                explanation = f"Items sorted by type ({direction}). Groups files and folders together for easier organization."
+            elif criteria == "extension":
+                sorted_items = sorted(items, key=lambda x: x.get('extension', ''), reverse=reverse)
+                explanation = f"Files sorted by extension ({direction}). Groups similar file types together for bulk operations."
+            else:
+                sorted_items = sorted(items, key=lambda x: x['name'].lower(), reverse=reverse)
+                explanation = f"Files sorted by name (default criteria, {direction})."
+                criteria = "name"
+
+            # Generate insights
+            insights = []
+            import time
+            current_time = time.time()
+
+            if criteria == "date":
+                recent_count = sum(1 for item in items if item.get('modified', 0) > current_time - (7 * 24 * 3600))
+                old_count = sum(1 for item in items if item.get('modified', 0) < current_time - (365 * 24 * 3600))
+                if recent_count > 0:
+                    insights.append(f"{recent_count} items modified in the last week")
+                if old_count > 0:
+                    insights.append(f"{old_count} items haven't been touched in over a year")
+            elif criteria == "size":
+                large_files = [item for item in items if (item.get('size', 0) or 0) > 10 * 1024 * 1024]  # > 10MB
+                if large_files:
+                    insights.append(f"{len(large_files)} files larger than 10MB found")
+            elif criteria == "extension":
+                extensions = {}
+                for item in items:
+                    if item['type'] == 'file':
+                        ext = item.get('extension', 'no_extension')
+                        extensions[ext] = extensions.get(ext, 0) + 1
+                dominant_ext = max(extensions.items(), key=lambda x: x[1]) if extensions else None
+                if dominant_ext and dominant_ext[1] > len(items) * 0.5:
+                    insights.append(f"Most files are {dominant_ext[0].upper()} ({dominant_ext[1]} files)")
+
+            return {
+                "sorted_items": sorted_items,
+                "criteria": criteria,
+                "direction": direction,
+                "explanation": explanation,
+                "insights": insights,
+                "total_items": len(sorted_items),
+                "folder_path": folder_path
+            }
+
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in sort_folder_by: {e}")
+            return {
+                "error": True,
+                "error_type": "SortError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+
+    def explain_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Explain file content and purpose using cross-agent analysis.
+        """
+        try:
+            # Validate file path
+            resolved_path = self._validate_path(file_path)
+
+            # Get basic file info
+            import os
+            from pathlib import Path
+
+            stat = os.stat(resolved_path)
+            file_size = stat.st_size
+            modified_time = stat.st_mtime
+            file_name = Path(resolved_path).name
+            extension = Path(resolved_path).suffix.lower()
+
+            # Basic explanation
+            explanation = f"This is a {extension.upper() if extension else 'file'} file ({self._format_size(file_size)}) that you modified {self._format_time_ago(modified_time)}."
+
+            # Cross-agent content analysis
+            key_topics = []
+            suggested_actions = []
+            content_summary = ""
+
+            try:
+                # Try to get content preview using file agent
+                from ..agent.agent_registry import AgentRegistry
+                registry = AgentRegistry(self.config)
+                file_agent = registry.get_agent('file')
+
+                if file_agent:
+                    # Search for this specific file
+                    search_result = file_agent.execute('search_documents', {
+                        'query': file_name,
+                        'user_request': f'explain what {file_name} contains'
+                    })
+
+                    if not search_result.get('error') and search_result.get('content_preview'):
+                        content_preview = search_result['content_preview']
+
+                        # Use LLM to analyze content (this would be done by the writing agent in practice)
+                        # For now, provide basic content-based insights
+                        content_summary = f"Content preview: {content_preview[:200]}..."
+
+                        # Extract basic topics (simplified)
+                        if extension == '.pdf':
+                            key_topics.extend(["Document", "PDF", "Report"])
+                        elif extension == '.txt':
+                            key_topics.extend(["Text", "Notes", "Plain text"])
+                        elif extension in ['.docx', '.doc']:
+                            key_topics.extend(["Document", "Word", "Formatted text"])
+                        elif extension in ['.xlsx', '.xls']:
+                            key_topics.extend(["Spreadsheet", "Excel", "Data"])
+
+                        # Action suggestions based on file age and content
+                        import time
+                        age_days = (time.time() - modified_time) / (24 * 3600)
+
+                        if age_days > 365:
+                            suggested_actions.append("Consider archiving this older file")
+                        if "report" in file_name.lower():
+                            suggested_actions.append("This appears to be a report - consider sharing if relevant")
+                        if "meeting" in file_name.lower():
+                            suggested_actions.append("Meeting-related file - review action items if applicable")
+
+            except Exception as e:
+                logger.warning(f"[FOLDER TOOLS] Cross-agent analysis failed: {e}")
+                # Continue with basic explanation
+
+            return {
+                "explanation": explanation,
+                "key_topics": key_topics,
+                "suggested_actions": suggested_actions,
+                "content_summary": content_summary,
+                "file_info": {
+                    "name": file_name,
+                    "size": file_size,
+                    "size_formatted": self._format_size(file_size),
+                    "modified": modified_time,
+                    "modified_ago": self._format_time_ago(modified_time),
+                    "extension": extension
+                }
+            }
+
+        except FolderSecurityError as e:
+            logger.error(f"[FOLDER TOOLS] Security error in explain_file: {e}")
+            return {
+                "error": True,
+                "error_type": "SecurityError",
+                "error_message": str(e),
+                "file_path": file_path
+            }
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in explain_file: {e}")
+            return {
+                "error": True,
+                "error_type": "ExplainError",
+                "error_message": str(e),
+                "file_path": file_path
+            }
+
+    def archive_old_files(
+        self,
+        folder_path: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
+        age_threshold_days: int = 180,
+        dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Archive old files to reduce folder clutter.
+        """
+        try:
+            # Get folder contents if not provided
+            if items is None:
+                if folder_path is None:
+                    folder_path = self.allowed_folder
+                listing = self.list_folder(folder_path)
+                if listing.get('error'):
+                    return listing
+                items = listing['items']
+                folder_path = listing['folder_path']
+
+            # Find old files
+            import time
+            current_time = time.time()
+            threshold_time = current_time - (age_threshold_days * 24 * 3600)
+
+            old_files = []
+            for item in items:
+                if item['type'] == 'file' and item.get('modified', 0) < threshold_time:
+                    old_files.append({
+                        "name": item['name'],
+                        "size": item.get('size', 0),
+                        "modified": item.get('modified', 0),
+                        "reason": f"Not modified in {age_threshold_days} days"
+                    })
+
+            if not old_files:
+                return {
+                    "archive_plan": {
+                        "files_to_archive": [],
+                        "total_files_to_archive": 0,
+                        "total_size_bytes": 0,
+                        "total_size_mb": 0,
+                        "archive_path": None,
+                        "age_threshold_days": age_threshold_days
+                    },
+                    "summary": f"No files found older than {age_threshold_days} days.",
+                    "dry_run": dry_run,
+                    "needs_confirmation": False
+                }
+
+            # Create archive path
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y_%m_%d")
+            archive_name = f"Archive_{timestamp}"
+            archive_path = os.path.join(folder_path, archive_name)
+
+            total_size = sum(f['size'] for f in old_files)
+
+            if dry_run:
+                return {
+                    "archive_plan": {
+                        "files_to_archive": old_files,
+                        "total_files_to_archive": len(old_files),
+                        "total_size_bytes": total_size,
+                        "total_size_mb": round(total_size / (1024 * 1024), 1),
+                        "archive_path": archive_path,
+                        "age_threshold_days": age_threshold_days
+                    },
+                    "summary": f"Found {len(old_files)} files older than {age_threshold_days} days that could be archived, freeing up {round(total_size / (1024 * 1024), 1)} MB.",
+                    "dry_run": True,
+                    "needs_confirmation": True,
+                    "confirmation_message": f"This will create an '{archive_name}' folder and move {len(old_files)} old files there. The files will still be accessible but organized separately. Proceed?"
+                }
+
+            # Execute archiving
+            os.makedirs(archive_path, exist_ok=True)
+            moved_files = []
+
+            for file_info in old_files:
+                source_path = os.path.join(folder_path, file_info['name'])
+                dest_path = os.path.join(archive_path, file_info['name'])
+
+                try:
+                    shutil.move(source_path, dest_path)
+                    moved_files.append({
+                        "file": file_info['name'],
+                        "from": source_path,
+                        "to": dest_path
+                    })
+                except Exception as e:
+                    logger.error(f"[FOLDER TOOLS] Failed to move {file_info['name']}: {e}")
+                    continue
+
+            return {
+                "success": True,
+                "files_moved": moved_files,
+                "archive_created": archive_path,
+                "total_moved": len(moved_files),
+                "space_freed_mb": round(total_size / (1024 * 1024), 1),
+                "dry_run": False
+            }
+
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in archive_old_files: {e}")
+            return {
+                "error": True,
+                "error_type": "ArchiveError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+
+    def organize_by_category(
+        self,
+        folder_path: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
+        categorization: Optional[Dict[str, Any]] = None,
+        dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Organize files into semantic categories based on content analysis.
+        """
+        try:
+            # Get folder contents if not provided
+            if items is None:
+                if folder_path is None:
+                    folder_path = self.allowed_folder
+                listing = self.list_folder(folder_path)
+                if listing.get('error'):
+                    return listing
+                items = listing['items']
+                folder_path = listing['folder_path']
+
+            # Get categorization if not provided (simplified - would use cross-agent analysis)
+            if categorization is None:
+                # Simplified categorization based on filename patterns
+                # In practice, this would use file agent for content analysis
+                categories = {}
+                for item in items:
+                    if item['type'] != 'file':
+                        continue
+
+                    name = item['name'].lower()
+
+                    # Simple rule-based categorization
+                    if any(word in name for word in ['report', 'summary', 'analysis']):
+                        category = "Reports_Analysis"
+                    elif any(word in name for word in ['meeting', 'minutes', 'agenda']):
+                        category = "Meetings"
+                    elif any(word in name for word in ['budget', 'finance', 'cost']):
+                        category = "Financial"
+                    elif any(word in name for word in ['project', 'plan', 'timeline']):
+                        category = "Project_Management"
+                    elif any(word in name for word in ['email', 'message', 'correspondence']):
+                        category = "Correspondence"
+                    else:
+                        category = "General"
+
+                    if category not in categories:
+                        categories[category] = []
+                    categories[category].append({
+                        "name": item['name'],
+                        "size": item.get('size', 0),
+                        "reason": f"File name suggests {category.replace('_', ' ').lower()} content"
+                    })
+
+                categorization = {
+                    "categories": categories,
+                    "method": "filename_pattern_matching"
+                }
+
+            # Prepare organization plan
+            categories = categorization.get('categories', {})
+            new_structure = list(categories.keys())
+
+            if dry_run:
+                total_files = sum(len(files) for files in categories.values())
+                return {
+                    "categories": categories,
+                    "new_structure": new_structure,
+                    "total_files_to_organize": total_files,
+                    "method": categorization.get('method', 'unknown'),
+                    "dry_run": True,
+                    "needs_confirmation": True,
+                    "confirmation_message": f"This will create {len(new_structure)} category folders and organize {total_files} files by content theme. Each file will be moved to the most relevant category folder. Proceed with semantic organization?"
+                }
+
+            # Execute organization
+            created_folders = []
+            moved_files = []
+
+            for category, files in categories.items():
+                category_path = os.path.join(folder_path, category.replace('_', '_'))
+                os.makedirs(category_path, exist_ok=True)
+                created_folders.append(category_path)
+
+                for file_info in files:
+                    source_path = os.path.join(folder_path, file_info['name'])
+                    dest_path = os.path.join(category_path, file_info['name'])
+
+                    try:
+                        shutil.move(source_path, dest_path)
+                        moved_files.append({
+                            "file": file_info['name'],
+                            "category": category,
+                            "from": source_path,
+                            "to": dest_path
+                        })
+                    except Exception as e:
+                        logger.error(f"[FOLDER TOOLS] Failed to move {file_info['name']}: {e}")
+                        continue
+
+            return {
+                "success": True,
+                "folders_created": created_folders,
+                "files_moved": moved_files,
+                "categories": categories,
+                "total_organized": len(moved_files),
+                "dry_run": False
+            }
+
+        except Exception as e:
+            logger.error(f"[FOLDER TOOLS] Error in organize_by_category: {e}")
+            return {
+                "error": True,
+                "error_type": "OrganizeByCategoryError",
+                "error_message": str(e),
+                "folder_path": folder_path
+            }
+
+    def _format_time_ago(self, timestamp: float) -> str:
+        """Format a timestamp as a human-readable time ago string."""
+        import time
+        diff = time.time() - timestamp
+
+        if diff < 60:
+            return "just now"
+        elif diff < 3600:
+            return f"{int(diff / 60)} minutes ago"
+        elif diff < 86400:
+            return f"{int(diff / 3600)} hours ago"
+        elif diff < 604800:
+            return f"{int(diff / 86400)} days ago"
+        elif diff < 2592000:
+            return f"{int(diff / 604800)} weeks ago"
+        elif diff < 31536000:
+            return f"{int(diff / 2592000)} months ago"
+        else:
+            return f"{int(diff / 31536000)} years ago"
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"

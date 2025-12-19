@@ -12,6 +12,7 @@ Provides LLM-driven web browsing capabilities:
 
 import logging
 import asyncio
+import threading
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
@@ -466,15 +467,59 @@ class WebBrowser:
 
 
 # Synchronous wrapper functions for use in LangChain tools
-def run_async(coro):
-    """Run async function synchronously."""
+def run_async(coro, loop: Optional[asyncio.AbstractEventLoop] = None):
+    """
+    Run async function synchronously.
+    
+    Args:
+        coro: Coroutine to run
+        loop: Optional event loop to use. If provided, uses this loop.
+              If None, tries to get current loop or creates a new one.
+    
+    Returns:
+        Result of the coroutine
+    """
+    if loop is not None:
+        # Use provided loop - thread-safe execution via run_coroutine_threadsafe
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
+    
+    # Fallback to original behavior for backward compatibility
     try:
         loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Loop is running, can't use run_until_complete
+            # Create new loop in thread
+            import threading
+            result_container = []
+            exception_container = []
+            
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    result_container.append(new_loop.run_until_complete(coro))
+                except Exception as e:
+                    exception_container.append(e)
+                finally:
+                    new_loop.close()
+            
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            
+            if exception_container:
+                raise exception_container[0]
+            return result_container[0]
+        else:
+            return loop.run_until_complete(coro)
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-    return loop.run_until_complete(coro)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
 
 
 class SyncWebBrowser:
@@ -494,47 +539,77 @@ class SyncWebBrowser:
             session_id=session_id
         )
         self._initialized = False
+        
+        # Create dedicated event loop in a background thread for Playwright operations
+        # This ensures all Playwright operations use the same event loop,
+        # preventing "future belongs to different loop" errors
+        self._loop = None
+        self._loop_thread = None
+        self._loop_ready = threading.Event()
+        self._create_dedicated_loop()
+
+    def _create_dedicated_loop(self):
+        """Create a dedicated event loop in a background thread for Playwright operations."""
+        loop_container = []
+        
+        def run_loop():
+            """Run the event loop in this thread."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop_container.append(loop)
+            self._loop_ready.set()
+            loop.run_forever()
+        
+        self._loop_thread = threading.Thread(target=run_loop, daemon=True)
+        self._loop_thread.start()
+        # Wait for loop to be ready
+        if not self._loop_ready.wait(timeout=5.0):
+            raise RuntimeError("Failed to create dedicated event loop for Playwright")
+        # Now we can safely access the loop
+        self._loop = loop_container[0]
 
     def _ensure_initialized(self):
         if not self._initialized:
-            run_async(self.browser.initialize())
+            # Wait for loop to be ready before initializing
+            self._loop_ready.wait()
+            run_async(self.browser.initialize(), loop=self._loop)
             self._initialized = True
 
     def navigate(self, url: str, wait_until: str = "domcontentloaded") -> Dict[str, Any]:
         self._ensure_initialized()
-        return run_async(self.browser.navigate(url, wait_until=wait_until))
+        return run_async(self.browser.navigate(url, wait_until=wait_until), loop=self._loop)
 
     def google_search(self, query: str, num_results: int = 5) -> Dict[str, Any]:
         self._ensure_initialized()
-        return run_async(self.browser.google_search(query, num_results))
+        return run_async(self.browser.google_search(query, num_results), loop=self._loop)
 
     def extract_content(self) -> Dict[str, Any]:
         self._ensure_initialized()
-        return run_async(self.browser.extract_content())
+        return run_async(self.browser.extract_content(), loop=self._loop)
 
     def take_screenshot(self, path: Optional[str] = None, full_page: bool = False) -> Dict[str, Any]:
         self._ensure_initialized()
-        return run_async(self.browser.take_screenshot(path, full_page))
+        return run_async(self.browser.take_screenshot(path, full_page), loop=self._loop)
 
     def get_page_content(self) -> str:
         """Get the HTML content of the current page."""
         self._ensure_initialized()
-        return run_async(self.browser.page.content())
+        return run_async(self.browser.page.content(), loop=self._loop)
 
     def query_selector(self, selector: str):
         """Query selector on the page."""
         self._ensure_initialized()
-        return run_async(self.browser.page.query_selector(selector))
+        return run_async(self.browser.page.query_selector(selector), loop=self._loop)
 
     def query_selector_all(self, selector: str):
         """Query selector all on the page."""
         self._ensure_initialized()
-        return run_async(self.browser.page.query_selector_all(selector))
+        return run_async(self.browser.page.query_selector_all(selector), loop=self._loop)
 
     def evaluate(self, expression: str):
         """Evaluate JavaScript expression on the page."""
         self._ensure_initialized()
-        return run_async(self.browser.page.evaluate(expression))
+        return run_async(self.browser.page.evaluate(expression), loop=self._loop)
 
     def locator(self, selector: str):
         """Get a locator for the selector."""
@@ -553,6 +628,17 @@ class SyncWebBrowser:
         return self.browser.page
 
     def close(self):
+        """Close browser and cleanup dedicated event loop."""
         if self._initialized:
-            run_async(self.browser.close())
+            run_async(self.browser.close(), loop=self._loop)
             self._initialized = False
+        
+        # Cleanup dedicated event loop
+        if self._loop is not None:
+            # Schedule loop stop
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            # Wait for thread to finish (with timeout)
+            if self._loop_thread and self._loop_thread.is_alive():
+                self._loop_thread.join(timeout=5.0)
+            self._loop = None
+            self._loop_thread = None

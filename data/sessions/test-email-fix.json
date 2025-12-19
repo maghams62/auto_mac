@@ -1,0 +1,37 @@
+{
+  "session_id": "test-email-fix",
+  "status": "active",
+  "created_at": "2025-11-12T08:48:40.457862",
+  "last_active_at": "2025-11-12T08:48:50.323709",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-12T08:48:50.323709",
+      "user_request": "summarize my last 3 emails",
+      "agent_response": {
+        "error": true,
+        "message": "Plan validation failed: the request asked to email the results, but the generated plan omitted the compose_email step. Re-run the request so the planner can include the delivery step."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

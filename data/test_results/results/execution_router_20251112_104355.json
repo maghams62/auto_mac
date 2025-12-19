@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_analyze_screenshot_vision_success",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0021829170000273734
+  },
+  "timestamp": "2025-11-12T10:43:55.999737",
+  "test_name": "execution_router"
+}

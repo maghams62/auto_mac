@@ -1,0 +1,241 @@
+{
+  "session_id": "2132a62e-5750-428f-8a9b-1cfc1cbe3c93",
+  "status": "cleared",
+  "created_at": "2025-11-11T12:44:32.950578",
+  "last_active_at": "2025-11-11T13:02:15.498489",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T12:59:51.437549",
+      "user_request": "Plan a trip from SF to LA and email the link",
+      "agent_response": {
+        "goal": "Plan a trip from San Francisco to Los Angeles and email the link",
+        "steps_executed": 3,
+        "results": {
+          "1": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "stops": [],
+            "departure_time": null,
+            "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "maps_service": "Apple Maps",
+            "num_fuel_stops": 0,
+            "num_food_stops": 0,
+            "message": "Here's your trip, enjoy: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "total_stops": 0,
+            "maps_opened": false,
+            "tool": "plan_trip_with_stops"
+          },
+          "2": {
+            "status": "draft",
+            "message": "Email drafted successfully",
+            "tool": "compose_email"
+          },
+          "3": {
+            "type": "reply",
+            "message": "The trip from San Francisco to Los Angeles has been planned and the link is ready to be emailed.",
+            "details": "An email draft with the trip link has been prepared.",
+            "artifacts": [
+              "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d"
+            ],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 3,
+        "message": "Here's your trip, enjoy: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+        "details": "An email draft with the trip link has been prepared.",
+        "artifacts": [
+          "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d"
+        ]
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "plan_trip_with_stops",
+          "parameters": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "num_fuel_stops": 0,
+            "num_food_stops": 0,
+            "departure_time": null,
+            "use_google_maps": false,
+            "open_maps": false
+          },
+          "dependencies": [],
+          "reasoning": "Plan a direct trip from San Francisco to Los Angeles without any stops and generate a Maps URL.",
+          "expected_output": "Maps URL for the planned route"
+        },
+        {
+          "id": 2,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Trip Plan from SF to LA",
+            "body": "Here is the link to your planned trip from San Francisco to Los Angeles: $step1.maps_url",
+            "recipient": null,
+            "attachments": [],
+            "send": false
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Draft an email with the trip link to be sent to the user.",
+          "expected_output": "Email draft with the trip link"
+        },
+        {
+          "id": 3,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "The trip from San Francisco to Los Angeles has been planned and the link is ready to be emailed.",
+            "details": "An email draft with the trip link has been prepared.",
+            "artifacts": [
+              "$step1.maps_url"
+            ],
+            "status": "success"
+          },
+          "dependencies": [
+            2
+          ],
+          "reasoning": "Inform the user that the trip has been planned and the email draft is ready.",
+          "expected_output": "User receives confirmation of the trip plan and email draft."
+        }
+      ],
+      "step_results": {
+        "1": {
+          "origin": "San Francisco, CA",
+          "destination": "Los Angeles, CA",
+          "stops": [],
+          "departure_time": null,
+          "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "maps_service": "Apple Maps",
+          "num_fuel_stops": 0,
+          "num_food_stops": 0,
+          "message": "Here's your trip, enjoy: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "total_stops": 0,
+          "maps_opened": false,
+          "tool": "plan_trip_with_stops"
+        },
+        "2": {
+          "status": "draft",
+          "message": "Email drafted successfully",
+          "tool": "compose_email"
+        },
+        "3": {
+          "type": "reply",
+          "message": "The trip from San Francisco to Los Angeles has been planned and the link is ready to be emailed.",
+          "details": "An email draft with the trip link has been prepared.",
+          "artifacts": [
+            "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d"
+          ],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Plan a trip from San Francisco to Los Angeles and email the link",
+        "status": "completed"
+      }
+    },
+    {
+      "interaction_id": "int_2",
+      "timestamp": "2025-11-11T13:02:15.498489",
+      "user_request": "Play music.",
+      "agent_response": {
+        "goal": "Play music using Spotify",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "action": "play",
+            "status": "playing",
+            "message": "Music is now playing",
+            "tool": "play_music"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Music is now playing in Spotify.",
+            "details": "Spotify has started playing music as requested.",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Music is now playing in Spotify.",
+        "details": "Spotify has started playing music as requested."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "play_music",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "Start playing music in Spotify as requested by the user.",
+          "expected_output": "Music playback started in Spotify."
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Music is now playing in Spotify.",
+            "details": "Spotify has started playing music as requested.",
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Inform the user that music playback has started successfully.",
+          "expected_output": "User receives confirmation that music is playing."
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "action": "play",
+          "status": "playing",
+          "message": "Music is now playing",
+          "tool": "play_music"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Music is now playing in Spotify.",
+          "details": "Spotify has started playing music as requested.",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Play music using Spotify",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 2,
+    "total_steps_executed": 5,
+    "agents_used": [],
+    "tools_used": [
+      "compose_email",
+      "plan_trip_with_stops",
+      "play_music",
+      "reply_to_user"
+    ],
+    "cleared_at": "2025-11-11T12:59:30.787039",
+    "previous_session_duration": 2
+  }
+}

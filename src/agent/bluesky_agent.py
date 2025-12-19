@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from ..integrations.bluesky_client import BlueskyAPIClient, BlueskyAPIError
+from ..utils.message_personality import get_bluesky_post_message
 from ..utils import load_config
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,11 @@ def _summarize_posts(config: Dict[str, Any], items: List[Dict[str, Any]]) -> str
     if not items:
         return "No posts were available to summarize."
 
-    openai_config = config.get("openai") or {}
-    llm = ChatOpenAI(
-        model=openai_config.get("model", "gpt-4o"),
-        temperature=0.2,
-        max_tokens=700,
-        api_key=openai_config.get("api_key"),
-    )
+    from ..utils import get_llm_params
+
+    # Get LLM parameters that work with both gpt-4o and o4-mini
+    llm_params = get_llm_params(config, default_temperature=0.2, max_tokens=700)
+    llm = ChatOpenAI(**llm_params)
 
     formatted = []
     for idx, item in enumerate(items, start=1):
@@ -98,6 +97,47 @@ def _normalize_post(raw_post: Dict[str, Any]) -> Dict[str, Any]:
         "reply_count": raw_post.get("replyCount", 0),
         "quote_count": raw_post.get("quoteCount", 0),
     }
+
+    # Capture reply/thread metadata for proper conversation handling
+    reply_info = record.get("reply", {})
+    if reply_info:
+        parent = reply_info.get("parent", {})
+        root = reply_info.get("root", {})
+
+        data["parent_uri"] = parent.get("uri")
+        data["parent_cid"] = parent.get("cid")
+        data["reply_root_uri"] = root.get("uri")
+        data["reply_root_cid"] = root.get("cid")
+    else:
+        data["parent_uri"] = None
+        data["parent_cid"] = None
+        data["reply_root_uri"] = None
+        data["reply_root_cid"] = None
+
+    # Capture embed information (images, links, quotes, etc.)
+    embed = record.get("embed", {})
+    if embed:
+        data["embed"] = embed
+        embed_type = embed.get("$type")
+        if embed_type == "app.bsky.embed.images":
+            data["embed_type"] = "images"
+            data["embed_images"] = embed.get("images", [])
+        elif embed_type == "app.bsky.embed.external":
+            data["embed_type"] = "external"
+            data["embed_external"] = embed.get("external", {})
+        elif embed_type == "app.bsky.embed.record":
+            data["embed_type"] = "record"
+            data["embed_record"] = embed.get("record", {})
+        elif embed_type == "app.bsky.embed.recordWithMedia":
+            data["embed_type"] = "recordWithMedia"
+            data["embed_record"] = embed.get("record", {})
+            data["embed_media"] = embed.get("media", {})
+        else:
+            data["embed_type"] = embed_type
+    else:
+        data["embed"] = None
+        data["embed_type"] = None
+
     data["score"] = _score_post(data)
     data["url"] = _post_url(handle, data["uri"] or "")
     return data
@@ -173,18 +213,73 @@ def search_bluesky_posts(query: str, max_posts: int = 10) -> Dict[str, Any]:
 
 
 @tool
+def get_bluesky_author_feed(actor: Optional[str] = None, max_posts: int = 10) -> Dict[str, Any]:
+    """
+    Get posts from a specific Bluesky author/handle. If actor is None, gets posts from authenticated user.
+
+    Args:
+        actor: Bluesky handle (e.g., "username.bsky.social") or None for authenticated user.
+        max_posts: Maximum number of posts to return (default 10, max 100).
+    """
+    limit = max(1, min(max_posts or 10, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_author_feed(actor=actor, limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky author feed error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # Author feed returns {"feed": [{"post": {...}, "reply": {...}, ...}]}
+    # We need to extract the "post" from each feed item
+    feed_items = raw.get("feed", [])
+    posts = []
+    actor_handle = actor
+    
+    for feed_item in feed_items:
+        # Feed items have structure: {"post": {...}, "reply": {...}, ...}
+        post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+        # Extract actor handle from first post if not provided
+        if not actor_handle and normalized.get("author_handle"):
+            actor_handle = normalized.get("author_handle")
+
+    return {
+        "actor": actor_handle or "authenticated user",
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
 def summarize_bluesky_posts(
     query: str,
     lookback_hours: Optional[int] = None,
     max_items: Optional[int] = None,
+    actor: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Summarize top Bluesky posts for a search query within an optional time window.
+    Summarize top Bluesky posts for a search query or from a specific author within an optional time window.
+    If query contains patterns like "last N tweets" or "my tweets", fetches from authenticated user's feed.
 
     Args:
-        query: Search keywords or phrase to focus on.
+        query: Search keywords or phrase to focus on, or patterns like "last 3 tweets", "my tweets".
         lookback_hours: Time window to filter posts (defaults to bluesky.default_lookback_hours or 24).
         max_items: Maximum number of highlights to summarize (defaults to bluesky.max_summary_items or 5).
+        actor: Optional Bluesky handle to get posts from specific user instead of searching.
     """
     if not query or not query.strip():
         return {
@@ -214,9 +309,51 @@ def summarize_bluesky_posts(
     max_highlights = max_items if max_items is not None else default_max_items
     max_highlights = max(1, min(max_highlights, 10))
 
+    # Detect if query is asking for author feed (e.g., "last 3 tweets", "my tweets", "tweets on bluesky")
+    query_lower = query.lower().strip()
+    use_author_feed = False
+    target_actor = actor
+    disable_time_filter = False  # For "last N tweets", don't filter by time
+    
+    # Patterns that indicate author feed request
+    author_feed_patterns = [
+        "last",
+        "my tweets",
+        "my posts",
+        "tweets on bluesky",
+        "posts on bluesky",
+        "recent tweets",
+        "recent posts",
+    ]
+    
+    # Check if query matches author feed patterns
+    if any(pattern in query_lower for pattern in author_feed_patterns):
+        use_author_feed = True
+        # Extract number if present (e.g., "last 3 tweets" -> 3)
+        import re
+        num_match = re.search(r'(\d+)', query_lower)
+        if num_match:
+            max_highlights = min(int(num_match.group(1)), max_highlights)
+        # For "last N tweets" queries, disable time filtering
+        if "last" in query_lower:
+            disable_time_filter = True
+
     try:
         client = BlueskyAPIClient()
-        raw = client.search_posts(query.strip(), limit=max_highlights * 5)
+        
+        if use_author_feed or target_actor is not None:
+            # Get posts from author feed
+            raw = client.get_author_feed(actor=target_actor, limit=max_highlights * 2)
+            # Author feed returns {"feed": [{"post": {...}, ...}]}
+            feed_items = raw.get("feed", [])
+            posts = []
+            for feed_item in feed_items:
+                post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+                posts.append(_normalize_post(post_data))
+        else:
+            # Search posts
+            raw = client.search_posts(query.strip(), limit=max_highlights * 5)
+            posts = [_normalize_post(post) for post in raw.get("posts", [])]
     except BlueskyAPIError as exc:
         return {
             "error": True,
@@ -233,8 +370,8 @@ def summarize_bluesky_posts(
             "retry_possible": False,
         }
 
-    posts = [_normalize_post(post) for post in raw.get("posts", [])]
-    if lookback:
+    # Apply time filter only if not disabled (e.g., for "last N tweets" queries)
+    if lookback and not disable_time_filter:
         posts = _filter_by_time(posts, lookback)
 
     if not posts:
@@ -247,14 +384,58 @@ def summarize_bluesky_posts(
             },
         }
 
-    posts.sort(key=lambda item: (item["score"], item.get("created_at", "")), reverse=True)
-    highlights = posts[:max_highlights]
+    # Sort by creation date (most recent first) for author feeds, by score for search
+    if use_author_feed or target_actor is not None:
+        posts.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    else:
+        posts.sort(key=lambda item: (item["score"], item.get("created_at", "")), reverse=True)
+    
+    # Extract exact count if user requested "last N tweets"
+    requested_count = None
+    if use_author_feed and "last" in query_lower:
+        import re
+        num_match = re.search(r'(\d+)', query_lower)
+        if num_match:
+            requested_count = int(num_match.group(1))
+            # Ensure we return EXACTLY the requested count
+            highlights = posts[:requested_count]
+            logger.info(f"[BLUESKY AGENT] User requested last {requested_count} tweets, returning exactly {len(highlights)} posts")
+        else:
+            highlights = posts[:max_highlights]
+    else:
+        highlights = posts[:max_highlights]
+    
+    # Validate count accuracy for "last N tweets" queries
+    if requested_count is not None:
+        if len(highlights) != requested_count:
+            logger.warning(f"[BLUESKY AGENT] ⚠️  Count mismatch: requested {requested_count}, got {len(highlights)}")
+            # Try to get more posts if we don't have enough
+            if len(highlights) < requested_count and len(posts) >= requested_count:
+                highlights = posts[:requested_count]
+                logger.info(f"[BLUESKY AGENT] Expanded highlights to match requested count: {len(highlights)}")
+            elif len(highlights) < requested_count:
+                logger.warning(f"[BLUESKY AGENT] ⚠️  Only {len(highlights)} posts available, requested {requested_count}")
+    
+    # Validate chronological order (most recent first)
+    if highlights:
+        timestamps = [item.get("created_at", "") for item in highlights if item.get("created_at")]
+        if len(timestamps) > 1:
+            # Check if sorted descending (most recent first)
+            try:
+                parsed_times = [datetime.fromisoformat(ts.replace("Z", "+00:00")) for ts in timestamps]
+                is_descending = all(parsed_times[i] >= parsed_times[i+1] for i in range(len(parsed_times)-1))
+                if not is_descending:
+                    logger.warning(f"[BLUESKY AGENT] ⚠️  Posts not in chronological order (most recent first)")
+            except Exception as e:
+                logger.warning(f"[BLUESKY AGENT] Could not validate chronological order: {e}")
 
     summary_text = _summarize_posts(config, highlights)
 
     return {
         "summary": summary_text,
         "items": highlights,
+        "count": len(highlights),
+        "requested_count": requested_count,
         "query": query.strip(),
         "time_window": {
             "hours": lookback,
@@ -291,6 +472,21 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
     try:
         client = BlueskyAPIClient()
         response = client.create_post(clean_text)
+
+        uri = (response.get("uri") or response.get("record", {}).get("uri") or "")
+        cid = (response.get("cid") or response.get("record", {}).get("cid") or "")
+
+        # Prefer the authenticated handle, but fall back gracefully.
+        handle = ""
+        if hasattr(client, "get_my_handle"):
+            try:
+                handle = client.get_my_handle() or ""
+            except Exception:
+                handle = ""
+        if not handle:
+            handle = getattr(client, "handle", None) or getattr(client, "identifier", "") or ""
+
+        url = _post_url(handle, uri) if uri and handle else ""
     except BlueskyAPIError as exc:
         return {
             "error": True,
@@ -307,25 +503,420 @@ def post_bluesky_update(message: str) -> Dict[str, Any]:
             "retry_possible": False,
         }
 
-    uri = (response.get("uri") or response.get("record", {}).get("uri") or "")
-    cid = (response.get("cid") or response.get("record", {}).get("cid") or "")
-    handle = response.get("handle")
-
-    url = _post_url(handle or "", uri) if uri and handle else ""
-
     return {
         "success": True,
         "uri": uri,
         "cid": cid,
         "url": url,
-        "message": "Bluesky post published successfully.",
+        "message": get_bluesky_post_message(),
     }
+
+
+@tool
+def fetch_bluesky_following_feed(max_posts: int = 20) -> Dict[str, Any]:
+    """
+    Fetch recent posts from the authenticated user's following feed (timeline).
+
+    Args:
+        max_posts: Maximum number of posts to return (default 20, max 100).
+    """
+    limit = max(1, min(max_posts or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_timeline(limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky timeline error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # Timeline returns {"feed": [{"post": {...}, ...}]}
+    feed_items = raw.get("feed", [])
+    posts = []
+
+    for feed_item in feed_items:
+        # Feed items have structure: {"post": {...}, "reply": {...}, ...}
+        post_data = feed_item.get("post", feed_item)  # Fallback to feed_item if no "post" key
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+
+    return {
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
+def fetch_bluesky_list_feed(list_uri: str, max_posts: int = 20) -> Dict[str, Any]:
+    """
+    Fetch posts from a specific Bluesky list.
+
+    Args:
+        list_uri: AT Protocol URI of the list (e.g., "at://did:plc:xyz/app.bsky.graph.list/abc123").
+        max_posts: Maximum number of posts to return (default 20, max 100).
+    """
+    if not list_uri or not list_uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "List URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    limit = max(1, min(max_posts or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.get_list_feed(list_uri=list_uri.strip(), limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky list feed error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    # List feed returns {"feed": [{"post": {...}, ...}]}
+    feed_items = raw.get("feed", [])
+    posts = []
+
+    for feed_item in feed_items:
+        post_data = feed_item.get("post", feed_item)
+        normalized = _normalize_post(post_data)
+        posts.append(normalized)
+
+    return {
+        "list_uri": list_uri.strip(),
+        "count": len(posts),
+        "posts": posts,
+    }
+
+
+@tool
+def list_bluesky_notifications(max_notifications: int = 20) -> Dict[str, Any]:
+    """
+    Fetch recent notifications (mentions, replies, likes, follows, etc.).
+
+    Args:
+        max_notifications: Maximum number of notifications to return (default 20, max 100).
+    """
+    limit = max(1, min(max_notifications or 20, 100))
+
+    try:
+        client = BlueskyAPIClient()
+        raw = client.list_notifications(limit=limit)
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky notifications error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+    notifications = raw.get("notifications", [])
+
+    # Normalize notifications - each has a "record" field with the notification data
+    normalized_notifications = []
+    for notification in notifications:
+        record = notification.get("record", {})
+        author = notification.get("author", {})
+
+        normalized = {
+            "uri": notification.get("uri"),
+            "cid": notification.get("cid"),
+            "type": record.get("$type", "").replace("app.bsky.notification.", ""),
+            "reason": notification.get("reason"),
+            "is_read": notification.get("isRead", False),
+            "indexed_at": notification.get("indexedAt"),
+            "author_handle": author.get("handle", ""),
+            "author_name": author.get("displayName") or author.get("handle", ""),
+            "reason_subject": notification.get("reasonSubject"),
+            "labels": notification.get("labels", []),
+        }
+
+        # For notifications about posts, include post details
+        if normalized["reason_subject"]:
+            try:
+                # Get the post details for context
+                post_raw = client.get_posts([normalized["reason_subject"]])
+                if post_raw.get("posts"):
+                    post_data = _normalize_post(post_raw["posts"][0])
+                    normalized["subject_post"] = post_data
+            except Exception:
+                # If post lookup fails, continue without it
+                pass
+
+        normalized_notifications.append(normalized)
+
+    return {
+        "count": len(normalized_notifications),
+        "notifications": normalized_notifications,
+    }
+
+
+@tool
+def reply_to_bluesky_post(uri: str, text: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Reply to a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to reply to.
+        text: Reply text content.
+        cid: Optional CID of the post to reply to (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    if not text or not text.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Reply text cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+    text = text.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.reply_to_post(text, uri, cid)
+
+        reply_uri = response.get("uri")
+        reply_cid = response.get("cid")
+
+        # Generate URL for the reply
+        handle = ""
+        if hasattr(client, "get_my_handle"):
+            try:
+                handle = client.get_my_handle() or ""
+            except Exception:
+                handle = ""
+
+        url = _post_url(handle, reply_uri) if reply_uri and handle else ""
+
+        return {
+            "success": True,
+            "uri": reply_uri,
+            "cid": reply_cid,
+            "url": url,
+            "message": f"Replied to post: {text[:50]}{'...' if len(text) > 50 else ''}",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky reply error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+
+@tool
+def like_bluesky_post(uri: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Like a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to like.
+        cid: Optional CID of the post to like (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.like_post(uri, cid)
+
+        return {
+            "success": True,
+            "uri": response.get("uri"),
+            "cid": response.get("cid"),
+            "message": "Post liked successfully.",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky like error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
+
+
+@tool
+def repost_bluesky_post(uri: str, cid: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Repost (boost) a Bluesky post.
+
+    Args:
+        uri: AT Protocol URI of the post to repost.
+        cid: Optional CID of the post to repost (will be fetched if not provided).
+    """
+    if not uri or not uri.strip():
+        return {
+            "error": True,
+            "error_type": "InvalidInput",
+            "error_message": "Post URI cannot be empty.",
+            "retry_possible": False,
+        }
+
+    uri = uri.strip()
+
+    try:
+        client = BlueskyAPIClient()
+
+        # If CID not provided, fetch the post to get it
+        if not cid:
+            post_raw = client.get_posts([uri])
+            if not post_raw.get("posts"):
+                return {
+                    "error": True,
+                    "error_type": "PostNotFound",
+                    "error_message": f"Could not find post with URI: {uri}",
+                    "retry_possible": False,
+                }
+            cid = post_raw["posts"][0].get("cid")
+            if not cid:
+                return {
+                    "error": True,
+                    "error_type": "InvalidPost",
+                    "error_message": "Could not determine post CID.",
+                    "retry_possible": False,
+                }
+
+        response = client.repost_post(uri, cid)
+
+        return {
+            "success": True,
+            "uri": response.get("uri"),
+            "cid": response.get("cid"),
+            "message": "Post reposted successfully.",
+        }
+
+    except BlueskyAPIError as exc:
+        return {
+            "error": True,
+            "error_type": "BlueskyAPIError",
+            "error_message": str(exc),
+            "retry_possible": True,
+        }
+    except Exception as exc:
+        logger.exception("Unexpected Bluesky repost error")
+        return {
+            "error": True,
+            "error_type": "BlueskyClientError",
+            "error_message": str(exc),
+            "retry_possible": False,
+        }
 
 
 BLUESKY_AGENT_TOOLS = [
     search_bluesky_posts,
+    get_bluesky_author_feed,
     summarize_bluesky_posts,
     post_bluesky_update,
+    fetch_bluesky_following_feed,
+    fetch_bluesky_list_feed,
+    list_bluesky_notifications,
+    reply_to_bluesky_post,
+    like_bluesky_post,
+    repost_bluesky_post,
 ]
 
 BLUESKY_AGENT_HIERARCHY = """
@@ -334,12 +925,19 @@ Bluesky Agent Hierarchy:
 
 LEVEL 1: Discovery
 └─ search_bluesky_posts(query, max_posts=10) → Search public posts for a query
+└─ get_bluesky_author_feed(actor=None, max_posts=10) → Get posts from specific author or authenticated user
+└─ fetch_bluesky_following_feed(max_posts=20) → Get timeline posts from followed accounts
+└─ fetch_bluesky_list_feed(list_uri, max_posts=20) → Get posts from a curated list
+└─ list_bluesky_notifications(max_notifications=20) → Get notifications (mentions, replies, likes)
 
 LEVEL 2: Summaries
-└─ summarize_bluesky_posts(query, lookback_hours=24, max_items=5) → Gather + summarize top posts
+└─ summarize_bluesky_posts(query, lookback_hours=24, max_items=5, actor=None) → Gather + summarize top posts or author feed
 
-LEVEL 3: Publishing
-└─ post_bluesky_update(message) → Publish a post via AT Protocol
+LEVEL 3: Publishing & Interaction
+└─ post_bluesky_update(message) → Publish a new post via AT Protocol
+└─ reply_to_bluesky_post(uri, text, cid=None) → Reply to an existing post
+└─ like_bluesky_post(uri, cid=None) → Like a post
+└─ repost_bluesky_post(uri, cid=None) → Repost (boost) a post
 """
 
 

@@ -1,0 +1,1186 @@
+/Users/siddharthsuresh/Downloads/mac_auto/venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+INFO:src.config_manager:✅ OpenAI API key loaded successfully (ends with: ...PyqTIlXpsA)
+INFO:src.config_manager:[CONFIG MANAGER] ConfigManager initialized
+INFO:src.memory.session_manager:[SESSION MANAGER] Write-behind caching enabled (interval: 30s)
+INFO:src.memory.session_manager:[SESSION MANAGER] Initialized with storage: data/sessions, reasoning_trace=True, active_window=5, persistent_memory=True, msgpack=False
+INFO:src.agent.agent_registry:[AGENT REGISTRY] Session management enabled
+INFO:src.agent.agent_registry:[AGENT REGISTRY] Lazy loading enabled - agents will be initialized on first use
+INFO:src.agent.agent:[AUTOMATION AGENT] Session management enabled
+INFO:src.utils.performance_monitor:[PERFORMANCE MONITOR] Initialized
+INFO:src.utils.openai_client:[POOLED CLIENT] Created OpenAI client with connection pooling (max_connections=100, keepalive=50, expiry=30s)
+INFO:src.agent.verifier:[VERIFIER] Using pooled OpenAI client
+INFO:src.agent.agent:[PROMPT LOADING] Loaded agent-scoped examples for 'automation' agent via PromptRepository
+INFO:src.workflow:Initializing workflow components...
+INFO:src.documents.indexer:[DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+INFO:src.documents.image_indexer:Initializing CLIP model (MVP simplified version)
+INFO:src.documents.image_indexer:Loading existing image index
+INFO:src.documents.image_indexer:Loaded 1 images from index (restored 1 embedding vectors)
+INFO:src.documents.indexer:Image indexer initialized
+INFO:src.documents.indexer:Loading existing FAISS index
+INFO:src.documents.indexer:Loading FAISS index
+INFO:src.documents.indexer:Loaded 520 document chunks
+INFO:src.workflow:Workflow components initialized
+INFO:src.config_manager:[CONFIG MANAGER] Recreated ConfigAccessor in AutomationAgent
+INFO:src.config_manager:[CONFIG MANAGER] Component configs updated
+INFO:src.orchestrator.bluesky_notification_service:[BLUESKY NOTIFICATIONS] Initialized with 60s poll interval
+/Users/siddharthsuresh/Downloads/auto_mac/api_server.py:2451: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+/Users/siddharthsuresh/Downloads/auto_mac/api_server.py:2461: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:__main__:Starting Cerebro OS API Server...
+INFO:__main__:API will be available at http://localhost:8000
+INFO:__main__:WebSocket endpoint: ws://localhost:8000/ws/chat
+INFO:__main__:API docs: http://localhost:8000/docs
+INFO:     Started server process [51999]
+INFO:     Waiting for application startup.
+INFO:__main__:Starting recurring task scheduler...
+INFO:src.automation.recurring_scheduler:Recurring task scheduler initialized
+INFO:__main__:Starting Bluesky notification service...
+INFO:src.orchestrator.bluesky_notification_service:[BLUESKY NOTIFICATIONS] Loaded state: 2 notifications, 20 timeline posts
+INFO:src.orchestrator.bluesky_notification_service:[BLUESKY NOTIFICATIONS] Service started
+INFO:src.automation.recurring_scheduler:Recurring task scheduler started
+INFO:src.orchestrator.bluesky_notification_service:[BLUESKY NOTIFICATIONS] Starting poll loop (interval: 60s)
+INFO:src.orchestrator.bluesky_notification_service:[BLUESKY NOTIFICATIONS] Authenticated with Bluesky
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59170 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session ee4b5efa-9929-472b-997e-ef6ea4020b30. Total connections: 1
+INFO:__main__:WebSocket connection established for session ee4b5efa-9929-472b-997e-ef6ea4020b30
+INFO:src.memory.user_memory_store:[USER MEMORY] Using pooled OpenAI client for connection reuse
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.utils.rate_limiter:[RATE LIMITER] Initialized with RPM=9000, TPM=1800000, safety_margin=0.9
+INFO:src.utils.rate_limiter:[RATE LIMITER] Created global rate limiter (RPM=10000, TPM=2000000)
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session ee4b5efa-9929-472b-997e-ef6ea4020b30
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: ee4b5efa-9929-472b-997e-ef6ea4020b30 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/ee4b5efa-9929-472b-997e-ef6ea4020b30 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session ee4b5efa-9929-472b-997e-ef6ea4020b30
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59204 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session fd75f68a-9b55-48cf-8d09-97de060679d1. Total connections: 2
+INFO:__main__:WebSocket connection established for session fd75f68a-9b55-48cf-8d09-97de060679d1
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session fd75f68a-9b55-48cf-8d09-97de060679d1
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: fd75f68a-9b55-48cf-8d09-97de060679d1 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/fd75f68a-9b55-48cf-8d09-97de060679d1 (active window: 5)
+INFO:     connection closed
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 1/3): 
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59207 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1. Total connections: 3
+INFO:__main__:WebSocket connection established for session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 7f95489d-fecc-4b80-a8f1-e9dc64f562c1 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/7f95489d-fecc-4b80-a8f1-e9dc64f562c1 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 2/3): Cannot call "send" once a close message has been sent.
+INFO:     127.0.0.1:59203 - "GET /api/spotify/token HTTP/1.1" 200 OK
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 3/3): Cannot call "send" once a close message has been sent.
+ERROR:__main__:[CONNECTION MANAGER] Max retries exceeded for message, queueing for later delivery
+INFO:__main__:Welcome message sent to session fd75f68a-9b55-48cf-8d09-97de060679d1
+ERROR:__main__:WebSocket error: WebSocket is not connected. Need to call "accept" first.
+INFO:__main__:Client disconnected (session: fd75f68a-9b55-48cf-8d09-97de060679d1). Total connections: 2
+INFO:     127.0.0.1:59203 - "OPTIONS /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Registered Spotify web player device: eb8cd19677d4495c92ca8dc5d126f4ebf2e9a661
+INFO:     127.0.0.1:59203 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59203 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 152924 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpxv92z_nh.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 66 characters - 'me. Plan a trip from LA to Vegas and send me the link in my email....'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpxv92z_nh.webm
+INFO:     127.0.0.1:59203 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1): message='me. Plan a trip from LA to Vegas and send me the link in my email.', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session 7f95489d-fecc-4b80-a8f1-e9dc64f562c1: me. Plan a trip from LA to Vegas and send me the link in my email....
+INFO:src.agent.agent:Starting agent for request: me. Plan a trip from LA to Vegas and send me the link in my email.
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/7f95489d-fecc-4b80-a8f1-e9dc64f562c1
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763065918.7714381
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+INFO:src.agent.agent:=== PLANNING PHASE ===
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+INFO:src.agent.agent:User request: me. Plan a trip from LA to Vegas and send me the link in my email.
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'domain': 'email', 'task_type': 'email_composition', 'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59214 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Plan a trip from LA to Vegas and email the link to the user
+INFO:src.agent.agent:Steps: 3
+INFO:src.agent.agent:=== EXECUTING STEP 1: plan_trip_with_stops ===
+INFO:src.agent.agent:Reasoning: Plan a direct trip from LA to Vegas using Google Maps to generate a shareable link.
+INFO:src.agent.agent:Resolved parameters: {'origin': 'Los Angeles, CA', 'destination': 'Las Vegas, NV', 'num_fuel_stops': 0, 'num_food_stops': 0, 'departure_time': 'now', 'use_google_maps': True, 'open_maps': False}
+INFO:src.agent.maps_agent:[MAPS AGENT] Tool: plan_trip_with_stops(origin='Los Angeles, CA', destination='Las Vegas, NV', fuel_stops=0, food_stops=0, departure=now)
+INFO:src.agent.maps_agent:[MAPS AGENT] Learning from 1 past attempts - using more robust trip planning
+WARNING:src.agent.maps_agent:Could not parse departure time 'now': Unknown string format: now. Continuing without exact time parsing.
+INFO:src.agent.agent:Step 1 result: {'origin': 'Los Angeles, CA', 'destination': 'Las Vegas, NV', 'stops': [], 'departure_time': 'now', 'maps_url': 'https://www.google.com/maps/dir/?api=1&origin=Los%20Angeles%2C%20CA&destination=Las%20Vegas%2C%20NV&travelmode=driving', 'maps_service': 'Google Maps', 'num_fuel_stops': 0, 'num_food_stops': 0, 'message': "Here's your trip, enjoy: https://www.google.com/maps/dir/?api=1&origin=Los%20Angeles%2C%20CA&destination=Las%20Vegas%2C%20NV&travelmode=driving", 'total_stops': 0, 'maps_opened': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'plan_trip_with_stops'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['origin', 'destination', 'stops', 'departure_time', 'maps_url', 'maps_service', 'num_fuel_stops', 'num_food_stops', 'message', 'total_stops', 'maps_opened', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: compose_email ===
+INFO:src.agent.agent:Reasoning: Email the trip link to the user as requested.
+INFO:src.agent.agent:Resolved parameters: {'subject': 'Your Trip from LA to Vegas', 'body': 'Here is the link to your planned trip from Los Angeles to Las Vegas: https://www.google.com/maps/dir/?api=1&origin=Los%20Angeles%2C%20CA&destination=Las%20Vegas%2C%20NV&travelmode=driving', 'recipient': None, 'send': True}
+INFO:src.agent.agent:[EMAIL VERIFICATION] Verifying content for compose_email step 2
+WARNING:src.agent.agent:[EMAIL VERIFICATION] Could not get reasoning context: 'str' object has no attribute 'get'
+INFO:src.agent.email_content_verifier:[EMAIL VERIFIER] Verifying compose_email parameters for step 2
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.email_content_verifier:[EMAIL VERIFIER] ✅ Email content verified - contains requested items
+INFO:src.agent.email_agent:[EMAIL AGENT] Tool: compose_email(subject='Your Trip from LA to Vegas', recipient='None', send=True)
+INFO:src.agent.email_agent:[EMAIL AGENT] Using default recipient: spamstuff062@gmail.com
+INFO:src.automation.mail_composer:Composing email: Your Trip from LA to Vegas
+INFO:src.automation.mail_composer:Email sent successfully
+INFO:src.agent.agent:Step 2 result: {'status': 'sent', 'message': 'Email sent successfully'}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'compose_email'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['status', 'message', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.agent:=== EXECUTING STEP 3: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Confirm to the user that the trip has been planned and the link emailed.
+INFO:src.agent.agent:Resolved parameters: {'message': 'Planned your trip from LA to Vegas and emailed the link to you.', 'status': 'success'}
+INFO:src.agent.reply_tool:[REPLY TOOL] Prepared reply payload: {'type': 'reply', 'message': 'Planned your trip from LA to Vegas and emailed the link to you.', 'details': '', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:Step 3 result: {'type': 'reply', 'message': 'Planned your trip from LA to Vegas and emailed the link to you.', 'details': '', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[3] for tool 'reply_to_user'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'details', 'artifacts', 'status', 'error', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'reply'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[3]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+INFO:src.agent.agent:[FINALIZE] ✅ Reply confirmed in step_results after enforcement
+INFO:src.agent.agent:[FINALIZE] Gathering results: 3 step results
+INFO:src.agent.agent:[FINALIZE] Found reply_payload in step 3: Planned your trip from LA to Vegas and emailed the...
+INFO:src.agent.agent:[FINALIZE] Using richer message from step 1 (143 chars)
+INFO:src.agent.agent:[AGENT] Email result structure: {'status': 'sent', 'message': 'Email sent successfully', 'tool': 'compose_email'}
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763065943.733196
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: success, message: Here's your trip, enjoy: https://www.google.com/ma...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'reply_step_id', 'message', 'compose_email_step_id']
+INFO:src.agent.agent:Final status: success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 24.96s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 25.00s wait
+INFO:src.agent.agent:[AGENT] Result captured after 25.01s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59255 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 98828 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp23v5flpb.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 39 characters - 'Can you pull up my reminders for today?...'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp23v5flpb.webm
+INFO:     127.0.0.1:59258 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session ee4b5efa-9929-472b-997e-ef6ea4020b30): message='Can you pull up my reminders for today?', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session ee4b5efa-9929-472b-997e-ef6ea4020b30: Can you pull up my reminders for today?...
+INFO:src.agent.agent:Starting agent for request: Can you pull up my reminders for today?
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/ee4b5efa-9929-472b-997e-ef6ea4020b30
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763065975.00426
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.agent.agent:=== PLANNING PHASE ===
+INFO:src.agent.agent:User request: Can you pull up my reminders for today?
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Retrieve and display today's reminders
+INFO:src.agent.agent:Steps: 2
+INFO:src.agent.agent:=== EXECUTING STEP 1: list_reminders ===
+INFO:src.agent.agent:Reasoning: Retrieve all active reminders for today from the default reminder list.
+INFO:src.agent.agent:Resolved parameters: {'list_name': None, 'include_completed': False}
+INFO:src.agent.reminders_agent:[REMINDERS AGENT] list_reminders(list_name=None, include_completed=False)
+INFO:src.automation.reminders_automation:Listing reminders (list: None, include_completed: False)
+INFO:src.automation.reminders_automation:Retrieved 5 reminders
+INFO:src.agent.reminders_agent:[REMINDERS AGENT] ✅ Retrieved 5 reminders
+INFO:src.agent.agent:Step 1 result: {'reminders': [{'title': 'Act', 'notes': None, 'due_date': None, 'completed': False, 'list_name': 'Reminders'}, {'title': 'Fill up the timesheet', 'notes': None, 'due_date': None, 'completed': False, 'list_name': 'Reminders'}, {'title': 'The Ashok Anand', 'notes': None, 'due_date': None, 'completed': False, 'list_name': 'Reminders'}, {'title': 'Go to university', 'notes': 'Meeting at university', 'due_date': None, 'completed': False, 'list_name': 'Reminders'}, {'title': 'Cerebro OS Permission Test', 'notes': 'Testing reminder creation permissions', 'due_date': None, 'completed': False, 'list_name': 'Reminders'}], 'count': 5, 'list_name': None}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'list_reminders'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['reminders', 'count', 'list_name', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Provide the user with a summary of today's reminders.
+INFO:src.agent.agent:Resolved parameters: {'message': 'Here are your reminders for today:', 'details': '[\n  {\n    "title": "Act",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Fill up the timesheet",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "The Ashok Anand",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Go to university",\n    "notes": "Meeting at university",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Cerebro OS Permission Test",\n    "notes": "Testing reminder creation permissions",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  }\n]', 'status': 'success'}
+INFO:src.agent.reply_tool:[REPLY TOOL] Prepared reply payload: {'type': 'reply', 'message': 'Here are your reminders for today:', 'details': '[\n  {\n    "title": "Act",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Fill up the timesheet",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "The Ashok Anand",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Go to university",\n    "notes": "Meeting at university",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Cerebro OS Permission Test",\n    "notes": "Testing reminder creation permissions",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  }\n]', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:Step 2 result: {'type': 'reply', 'message': 'Here are your reminders for today:', 'details': '[\n  {\n    "title": "Act",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Fill up the timesheet",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "The Ashok Anand",\n    "notes": null,\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Go to university",\n    "notes": "Meeting at university",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  },\n  {\n    "title": "Cerebro OS Permission Test",\n    "notes": "Testing reminder creation permissions",\n    "due_date": null,\n    "completed": false,\n    "list_name": "Reminders"\n  }\n]', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'reply_to_user'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'details', 'artifacts', 'status', 'error', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'reply'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+INFO:src.agent.agent:[FINALIZE] ✅ Reply confirmed in step_results after enforcement
+INFO:src.agent.agent:[FINALIZE] Gathering results: 2 step results
+INFO:src.agent.agent:[FINALIZE] Found reply_payload in step 2: Here are your reminders for today:...
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763066004.979712
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: success, message: Here are your reminders for today:...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'reply_step_id', 'message', 'details']
+INFO:src.agent.agent:Final status: success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 29.98s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 30.06s wait
+INFO:src.agent.agent:[AGENT] Result captured after 30.07s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59292 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: ee4b5efa-9929-472b-997e-ef6ea4020b30). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: ee4b5efa-9929-472b-997e-ef6ea4020b30)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59306 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59307 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 88e3074d-e5b7-4535-bc2e-97d7269b1f09. Total connections: 2
+INFO:__main__:WebSocket connection established for session 88e3074d-e5b7-4535-bc2e-97d7269b1f09
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 88e3074d-e5b7-4535-bc2e-97d7269b1f09
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 88e3074d-e5b7-4535-bc2e-97d7269b1f09 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/88e3074d-e5b7-4535-bc2e-97d7269b1f09 (active window: 5)
+INFO:     connection open
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59306 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Welcome message sent to session 88e3074d-e5b7-4535-bc2e-97d7269b1f09
+INFO:     connection closed
+INFO:__main__:Client disconnected (session: 88e3074d-e5b7-4535-bc2e-97d7269b1f09). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: 88e3074d-e5b7-4535-bc2e-97d7269b1f09)
+INFO:     127.0.0.1:59312 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session f19cf384-cdf0-4c5b-be9e-8ab7cece3800. Total connections: 2
+INFO:__main__:WebSocket connection established for session f19cf384-cdf0-4c5b-be9e-8ab7cece3800
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session f19cf384-cdf0-4c5b-be9e-8ab7cece3800
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: f19cf384-cdf0-4c5b-be9e-8ab7cece3800 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/f19cf384-cdf0-4c5b-be9e-8ab7cece3800 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session f19cf384-cdf0-4c5b-be9e-8ab7cece3800
+INFO:     127.0.0.1:59306 - "GET /api/spotify/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59306 - "OPTIONS /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Registered Spotify web player device: 63e6c8df6781e2cb998494624be656bdf7f67b77
+INFO:     127.0.0.1:59306 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59306 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59322 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59322 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59330 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 90134 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp6drdadgy.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 43 characters - 'Can you pull up that picture of a mountain?...'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp6drdadgy.webm
+INFO:     127.0.0.1:59330 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59336 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session f19cf384-cdf0-4c5b-be9e-8ab7cece3800): message='Can you pull up that picture of a mountain?', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session f19cf384-cdf0-4c5b-be9e-8ab7cece3800: Can you pull up that picture of a mountain?...
+INFO:src.agent.agent:Starting agent for request: Can you pull up that picture of a mountain?
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/f19cf384-cdf0-4c5b-be9e-8ab7cece3800
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763066056.6358862
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+INFO:src.agent.agent:=== PLANNING PHASE ===
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.agent.agent:User request: Can you pull up that picture of a mountain?
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59336 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59345 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59345 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59352 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59352 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:src.integrations.spotify_api:Loaded token is expired, will refresh on next request
+INFO:src.integrations.spotify_api:Token expired, auto-refreshing in is_authenticated check
+INFO:src.integrations.spotify_api:Successfully refreshed access token
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59352 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59364 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59364 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59370 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59370 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Locate and present the picture of a mountain if available
+INFO:src.agent.agent:Steps: 2
+INFO:src.agent.agent:=== EXECUTING STEP 1: search_documents ===
+INFO:src.agent.agent:Reasoning: Search for documents or images related to 'picture of a mountain' using semantic search.
+INFO:src.agent.agent:Resolved parameters: {'query': 'picture of a mountain'}
+INFO:src.agent.file_agent:[FILE AGENT] Tool: search_documents(query='picture of a mountain', include_images=True, top_k=None)
+INFO:src.documents.indexer:[DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+INFO:src.documents.image_indexer:Initializing CLIP model (MVP simplified version)
+INFO:src.documents.image_indexer:Loading existing image index
+INFO:src.documents.image_indexer:Loaded 1 images from index (restored 1 embedding vectors)
+INFO:src.documents.indexer:Image indexer initialized
+INFO:src.documents.indexer:Loading existing FAISS index
+INFO:src.documents.indexer:Loading FAISS index
+INFO:src.documents.indexer:Loaded 520 document chunks
+INFO:src.agent.parameter_resolver:Resolving search parameters for: 'picture of a mountain'
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.parameter_resolver:Search parameters: top_k=5, reasoning=The query 'picture of a mountain' is vague as it doesn't specify a particular mountain, so a moderate number of diverse results is appropriate.
+INFO:src.agent.file_agent:[FILE AGENT] LLM-determined search params: {'top_k': 5, 'threshold': 0.6, 'strategy': 'semantic', 'reasoning': "The query 'picture of a mountain' is vague as it doesn't specify a particular mountain, so a moderate number of diverse results is appropriate."}
+INFO:src.documents.search:Searching for: picture of a mountain
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+INFO:src.documents.search:Found 0 results
+INFO:src.documents.image_indexer:Found 1 image results for query: picture of a mountain
+INFO:src.agent.file_agent:[FILE AGENT] Found 1 image results
+INFO:src.agent.agent:Step 1 result: {'results': [{'doc_path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'doc_title': 'mountain_landscape.jpg', 'relevance_score': 0.8072965072656506, 'content_preview': 'A beautiful mountain landscape with scenic views', 'result_type': 'image', 'thumbnail_url': '/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256', 'preview_url': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'metadata': {'file_type': 'jpg', 'width': 400, 'height': 300, 'breadcrumb': 'mountain_landscape.jpg'}}], 'doc_path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'doc_title': 'mountain_landscape.jpg', 'relevance_score': 0.8072965072656506, 'content_preview': 'A beautiful mountain landscape with scenic views', 'result_type': 'image', 'thumbnail_url': '/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256', 'preview_url': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'metadata': {'file_type': 'jpg', 'width': 400, 'height': 300, 'breadcrumb': 'mountain_landscape.jpg'}}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'search_documents'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['results', 'doc_path', 'doc_title', 'relevance_score', 'content_preview', 'result_type', 'thumbnail_url', 'preview_url', 'metadata', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Inform the user of the location of the mountain picture and provide a link to view it.
+INFO:src.agent.agent:Resolved parameters: {'message': 'I have found the picture of a mountain. You can view it using the link provided.', 'details': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'status': 'success'}
+INFO:src.agent.reply_tool:[REPLY TOOL] Prepared reply payload: {'type': 'reply', 'message': 'I have found the picture of a mountain. You can view it using the link provided.', 'details': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:Step 2 result: {'type': 'reply', 'message': 'I have found the picture of a mountain. You can view it using the link provided.', 'details': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'reply_to_user'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'details', 'artifacts', 'status', 'error', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'reply'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+INFO:src.agent.agent:[FINALIZE] ✅ Reply confirmed in step_results after enforcement
+INFO:src.agent.agent:[FINALIZE] Gathering results: 2 step results
+INFO:src.agent.agent:[FINALIZE] Found reply_payload in step 2: I have found the picture of a mountain. You can vi...
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763066082.3773062
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: success, message: I have found the picture of a mountain. You can vi...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'reply_step_id', 'message', 'details']
+INFO:src.agent.agent:Final status: success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 25.74s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 25.83s wait
+INFO:src.agent.agent:[AGENT] Result captured after 25.83s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59389 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59442 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: f19cf384-cdf0-4c5b-be9e-8ab7cece3800). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: f19cf384-cdf0-4c5b-be9e-8ab7cece3800)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59452 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59454 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session a5e2fe97-2033-4b14-8c27-5b3fa3e80da7. Total connections: 2
+INFO:__main__:WebSocket connection established for session a5e2fe97-2033-4b14-8c27-5b3fa3e80da7
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session a5e2fe97-2033-4b14-8c27-5b3fa3e80da7
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: a5e2fe97-2033-4b14-8c27-5b3fa3e80da7 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/a5e2fe97-2033-4b14-8c27-5b3fa3e80da7 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session a5e2fe97-2033-4b14-8c27-5b3fa3e80da7
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59452 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     connection closed
+INFO:__main__:Client disconnected (session: a5e2fe97-2033-4b14-8c27-5b3fa3e80da7). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: a5e2fe97-2033-4b14-8c27-5b3fa3e80da7)
+INFO:     127.0.0.1:59457 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee. Total connections: 2
+INFO:__main__:WebSocket connection established for session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee
+INFO:     127.0.0.1:59452 - "GET /api/spotify/token HTTP/1.1" 200 OK
+INFO:__main__:Registered Spotify web player device: 02126edab5ec1c2f2eaf291cc9721fb47a1300bd
+INFO:     127.0.0.1:59452 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59452 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59452 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59468 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59468 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59468 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59468 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 82406 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp6oceg7s0.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 71 characters - 'Can you show me, can you pull up all the files I have about Ed Sheeran?...'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp6oceg7s0.webm
+INFO:     127.0.0.1:59468 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59476 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee): message='Can you show me, can you pull up all the files I have about Ed Sheeran?', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee: Can you show me, can you pull up all the files I have about Ed Sheeran?...
+INFO:src.agent.agent:Starting agent for request: Can you show me, can you pull up all the files I have about Ed Sheeran?
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763066129.813952
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+INFO:src.agent.agent:=== PLANNING PHASE ===
+INFO:src.agent.agent:User request: Can you show me, can you pull up all the files I have about Ed Sheeran?
+INFO:src.prompt_repository:Loaded 1 examples (917 tokens) for task: {'domain': 'file', 'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Loaded 921/2000 tokens for task: {'domain': 'file', 'complexity': 'simple'}
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59476 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59476 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: List all files related to Ed Sheeran
+INFO:src.agent.agent:Steps: 2
+INFO:src.agent.agent:=== EXECUTING STEP 1: list_related_documents ===
+INFO:src.agent.agent:Reasoning: Use semantic search to find all documents related to Ed Sheeran.
+INFO:src.agent.agent:Resolved parameters: {'query': 'Ed Sheeran'}
+INFO:src.agent.file_agent:[FILE LIST] Tool: list_related_documents(query='Ed Sheeran', max_results=10)
+INFO:src.documents.indexer:[DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+INFO:src.documents.image_indexer:Initializing CLIP model (MVP simplified version)
+INFO:src.documents.image_indexer:Loading existing image index
+INFO:src.documents.image_indexer:Loaded 1 images from index (restored 1 embedding vectors)
+INFO:src.documents.indexer:Image indexer initialized
+INFO:src.documents.indexer:Loading existing FAISS index
+INFO:src.documents.indexer:Loading FAISS index
+INFO:src.documents.indexer:Loaded 520 document chunks
+INFO:src.documents.search:Searching for: Ed Sheeran
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+INFO:src.documents.search:Found 2 results
+INFO:src.documents.search:Grouped into 2 documents
+INFO:src.documents.image_indexer:Found 1 image results for query: Ed Sheeran
+INFO:src.agent.file_agent:[FILE LIST] Found 1 image results
+INFO:src.agent.file_agent:[FILE LIST] Query: 'Ed Sheeran', Total results: 3, Returning top 3
+INFO:src.agent.file_agent:[FILE LIST] Top filenames: mountain_landscape.jpg, Photoghaph - Ed Sheeran - Fingerstyle Club.pdf, Photoghaph - Ed Sheeran - Fingerstyle Club.pdf
+INFO:src.agent.file_agent:[FILE LIST] Returning result with type='file_list', files count=3
+INFO:src.agent.file_agent:[FILE LIST] Result keys: ['type', 'message', 'files', 'total_count', 'summary_blurb']
+INFO:src.agent.file_agent:[FILE LIST] First file structure: ['name', 'path', 'score', 'result_type', 'thumbnail_url', 'preview_url', 'meta']
+INFO:src.agent.file_agent:[FILE LIST] Sample file: name='mountain_landscape.jpg', path='/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', result_type='image'
+INFO:src.agent.agent:Step 1 result: {'type': 'file_list', 'message': "Found 3 results matching 'Ed Sheeran' (2 documents, 1 image)", 'files': [{'name': 'mountain_landscape.jpg', 'path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'score': 0.5504, 'result_type': 'image', 'thumbnail_url': '/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256', 'preview_url': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'meta': {'file_type': 'jpg', 'width': 400, 'height': 300}}, {'name': 'Photoghaph - Ed Sheeran - Fingerstyle Club.pdf', 'path': '/Users/siddharthsuresh/Downloads/auto_mac/test_docs/ed_sheeran_songs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf', 'score': 0.4607, 'result_type': 'document', 'meta': {'file_type': 'pdf', 'total_pages': 5}}, {'name': 'Photoghaph - Ed Sheeran - Fingerstyle Club.pdf', 'path': '/Users/siddharthsuresh/Downloads/auto_mac/test_docs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf', 'score': 0.4607, 'result_type': 'document', 'meta': {'file_type': 'pdf', 'total_pages': 5}}], 'total_count': 3, 'summary_blurb': ''}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'list_related_documents'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'files', 'total_count', 'summary_blurb', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'file_list'
+INFO:src.agent.agent:[AGENT] ✅ FILE_LIST detected! files count: 3
+INFO:src.agent.agent:[AGENT] First file keys: ['name', 'path', 'score', 'result_type', 'thumbnail_url', 'preview_url', 'meta']
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Provide the user with a summary of all Ed Sheeran related documents found.
+INFO:src.agent.agent:Resolved parameters: {'message': 'Here are all the files related to Ed Sheeran.', 'details': '[\n  {\n    "name": "mountain_landscape.jpg",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "score": 0.5504,\n    "result_type": "image",\n    "thumbnail_url": "/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256",\n    "preview_url": "/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "meta": {\n      "file_type": "jpg",\n      "width": 400,\n      "height": 300\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/ed_sheeran_songs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  }\n]', 'artifacts': []}
+INFO:src.agent.reply_tool:[REPLY TOOL] Prepared reply payload: {'type': 'reply', 'message': 'Here are all the files related to Ed Sheeran.', 'details': '[\n  {\n    "name": "mountain_landscape.jpg",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "score": 0.5504,\n    "result_type": "image",\n    "thumbnail_url": "/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256",\n    "preview_url": "/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "meta": {\n      "file_type": "jpg",\n      "width": 400,\n      "height": 300\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/ed_sheeran_songs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  }\n]', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:Step 2 result: {'type': 'reply', 'message': 'Here are all the files related to Ed Sheeran.', 'details': '[\n  {\n    "name": "mountain_landscape.jpg",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "score": 0.5504,\n    "result_type": "image",\n    "thumbnail_url": "/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256",\n    "preview_url": "/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg",\n    "meta": {\n      "file_type": "jpg",\n      "width": 400,\n      "height": 300\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/ed_sheeran_songs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  },\n  {\n    "name": "Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "path": "/Users/siddharthsuresh/Downloads/auto_mac/test_docs/Photoghaph - Ed Sheeran - Fingerstyle Club.pdf",\n    "score": 0.4607,\n    "result_type": "document",\n    "meta": {\n      "file_type": "pdf",\n      "total_pages": 5\n    }\n  }\n]', 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'reply_to_user'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'details', 'artifacts', 'status', 'error', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'reply'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+INFO:src.agent.agent:[FINALIZE] ✅ Reply confirmed in step_results after enforcement
+INFO:src.agent.agent:[FINALIZE] Gathering results: 2 step results
+INFO:src.agent.agent:[FINALIZE] Found reply_payload in step 2: Here are all the files related to Ed Sheeran....
+INFO:src.agent.agent:[FINALIZE] Using richer message from step 1 (60 chars)
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763066134.032078
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: success, message: Found 3 results matching 'Ed Sheeran' (2 documents...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'reply_step_id', 'message', 'details']
+INFO:src.agent.agent:Final status: success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 4.22s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 4.23s wait
+INFO:src.agent.agent:[AGENT] Result captured after 4.24s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59481 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59481 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59485 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59485 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59485 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59489 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59489 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59491 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59527 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: c9fb0803-ef0a-40fe-9ad1-82f629b2b1ee)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59539 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59541 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 17564a76-b548-4173-bebe-acc3af0b827f. Total connections: 2
+INFO:__main__:WebSocket connection established for session 17564a76-b548-4173-bebe-acc3af0b827f
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 17564a76-b548-4173-bebe-acc3af0b827f
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 17564a76-b548-4173-bebe-acc3af0b827f (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/17564a76-b548-4173-bebe-acc3af0b827f (active window: 5)
+INFO:     connection open
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59539 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 1/3): 
+INFO:     connection closed
+INFO:     127.0.0.1:59546 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b. Total connections: 3
+INFO:__main__:WebSocket connection established for session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/9b7ba221-a0f8-4b2c-850a-02d8845f8f0b (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 2/3): Cannot call "send" once a close message has been sent.
+INFO:     127.0.0.1:59539 - "GET /api/spotify/token HTTP/1.1" 200 OK
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 3/3): Cannot call "send" once a close message has been sent.
+ERROR:__main__:[CONNECTION MANAGER] Max retries exceeded for message, queueing for later delivery
+INFO:__main__:Welcome message sent to session 17564a76-b548-4173-bebe-acc3af0b827f
+ERROR:__main__:WebSocket error: WebSocket is not connected. Need to call "accept" first.
+INFO:__main__:Client disconnected (session: 17564a76-b548-4173-bebe-acc3af0b827f). Total connections: 2
+INFO:__main__:Registered Spotify web player device: 325395617a924838ac1da2e4fc42f196e27b9f47
+INFO:     127.0.0.1:59539 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59539 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59562 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59562 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59562 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 82405 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpcorxoq0e.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 1 characters - '....'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpcorxoq0e.webm
+INFO:     127.0.0.1:59569 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b): message='.', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b: ....
+INFO:src.agent.agent:Starting agent for request: .
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/9b7ba221-a0f8-4b2c-850a-02d8845f8f0b
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763066179.184514
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+INFO:src.agent.agent:=== PLANNING PHASE ===
+INFO:src.agent.agent:User request: .
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59569 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59569 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: 9b7ba221-a0f8-4b2c-850a-02d8845f8f0b)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59584 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59584 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59587 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session a0bf2d5c-fd65-4ea6-92ba-128bdebc124a. Total connections: 2
+INFO:__main__:WebSocket connection established for session a0bf2d5c-fd65-4ea6-92ba-128bdebc124a
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session a0bf2d5c-fd65-4ea6-92ba-128bdebc124a
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: a0bf2d5c-fd65-4ea6-92ba-128bdebc124a (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/a0bf2d5c-fd65-4ea6-92ba-128bdebc124a (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session a0bf2d5c-fd65-4ea6-92ba-128bdebc124a
+INFO:__main__:Client disconnected (session: a0bf2d5c-fd65-4ea6-92ba-128bdebc124a). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: a0bf2d5c-fd65-4ea6-92ba-128bdebc124a)
+INFO:     connection closed
+INFO:     127.0.0.1:59591 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session fa11266a-bcfb-4c87-b220-d3ec4b3504a7. Total connections: 2
+INFO:__main__:WebSocket connection established for session fa11266a-bcfb-4c87-b220-d3ec4b3504a7
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session fa11266a-bcfb-4c87-b220-d3ec4b3504a7
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: fa11266a-bcfb-4c87-b220-d3ec4b3504a7 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/fa11266a-bcfb-4c87-b220-d3ec4b3504a7 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session fa11266a-bcfb-4c87-b220-d3ec4b3504a7
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Unable to complete request
+INFO:src.agent.agent:Steps: 0
+WARNING:src.agent.agent:Task deemed impossible: The request is not clear enough to determine the required actions or tools needed.
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:Final status: error (preserved from earlier stage)
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 4.85s
+INFO:     127.0.0.1:59584 - "GET /api/spotify/token HTTP/1.1" 200 OK
+INFO:__main__:Registered Spotify web player device: af60bd757ebc1d7ea91c79585fb975d79fcdae63
+INFO:     127.0.0.1:59584 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59584 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59584 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: fa11266a-bcfb-4c87-b220-d3ec4b3504a7). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: fa11266a-bcfb-4c87-b220-d3ec4b3504a7)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59605 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59607 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9. Total connections: 2
+INFO:__main__:WebSocket connection established for session 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9 (active window: 5)
+INFO:     connection closed
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 1/3): 
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59609 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59611 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7. Total connections: 3
+INFO:__main__:WebSocket connection established for session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7 (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/873e7dad-7d10-45dd-a8d0-356b2cc7c1d7 (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 2/3): Cannot call "send" once a close message has been sent.
+INFO:     127.0.0.1:59609 - "GET /api/spotify/token HTTP/1.1" 200 OK
+WARNING:__main__:[CONNECTION MANAGER] Error sending message (attempt 3/3): Cannot call "send" once a close message has been sent.
+ERROR:__main__:[CONNECTION MANAGER] Max retries exceeded for message, queueing for later delivery
+INFO:__main__:Welcome message sent to session 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9
+ERROR:__main__:WebSocket error: WebSocket is not connected. Need to call "accept" first.
+INFO:__main__:Client disconnected (session: 02ebc0b0-f279-4ba9-9eb6-0fbd990ea3d9). Total connections: 2
+INFO:__main__:Registered Spotify web player device: e35e8b07bba2377c32651f1ef648cb427f63305d
+INFO:     127.0.0.1:59609 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59609 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59609 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59619 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59619 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59626 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59626 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59633 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59626 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59638 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59638 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59644 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59644 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59644 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 74678 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp72alvglx.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 22 characters - 'How's my deal looking?...'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmp72alvglx.webm
+INFO:     127.0.0.1:59651 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59656 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7): message='How's my deal looking?', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7: How's my deal looking?...
+INFO:src.agent.agent:Starting agent for request: How's my deal looking?
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/873e7dad-7d10-45dd-a8d0-356b2cc7c1d7
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763066215.682675
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+INFO:src.agent.agent:=== PLANNING PHASE ===
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.agent.agent:User request: How's my deal looking?
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59656 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59662 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Provide an overview of the user's deal status by analyzing related documents
+INFO:src.agent.agent:Steps: 4
+INFO:src.agent.agent:=== EXECUTING STEP 1: search_documents ===
+INFO:src.agent.agent:Reasoning: Locate any documents related to the current deal status in the user's indexed collection
+INFO:src.agent.agent:Resolved parameters: {'query': 'deal status report'}
+INFO:src.agent.file_agent:[FILE AGENT] Tool: search_documents(query='deal status report', include_images=True, top_k=None)
+INFO:src.documents.indexer:[DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+INFO:src.documents.image_indexer:Initializing CLIP model (MVP simplified version)
+INFO:src.documents.image_indexer:Loading existing image index
+INFO:src.documents.image_indexer:Loaded 1 images from index (restored 1 embedding vectors)
+INFO:src.documents.indexer:Image indexer initialized
+INFO:src.documents.indexer:Loading existing FAISS index
+INFO:src.documents.indexer:Loading FAISS index
+INFO:src.documents.indexer:Loaded 520 document chunks
+INFO:src.agent.parameter_resolver:Resolving search parameters for: 'deal status report'
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.parameter_resolver:Search parameters: top_k=5, reasoning=The query 'deal status report' is somewhat specific but could refer to multiple documents or versions. A moderate top_k and threshold will ensure relevant results while capturing potential variations of the report.
+INFO:src.agent.file_agent:[FILE AGENT] LLM-determined search params: {'top_k': 5, 'threshold': 0.6, 'strategy': 'semantic', 'reasoning': "The query 'deal status report' is somewhat specific but could refer to multiple documents or versions. A moderate top_k and threshold will ensure relevant results while capturing potential variations of the report."}
+INFO:src.documents.search:Searching for: deal status report
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+INFO:src.documents.search:Found 0 results
+INFO:src.documents.image_indexer:Found 1 image results for query: deal status report
+INFO:src.agent.file_agent:[FILE AGENT] Found 1 image results
+INFO:src.agent.agent:Step 1 result: {'results': [{'doc_path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'doc_title': 'mountain_landscape.jpg', 'relevance_score': 0.8598558331896999, 'content_preview': 'A beautiful mountain landscape with scenic views', 'result_type': 'image', 'thumbnail_url': '/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256', 'preview_url': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'metadata': {'file_type': 'jpg', 'width': 400, 'height': 300, 'breadcrumb': 'mountain_landscape.jpg'}}], 'doc_path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'doc_title': 'mountain_landscape.jpg', 'relevance_score': 0.8598558331896999, 'content_preview': 'A beautiful mountain landscape with scenic views', 'result_type': 'image', 'thumbnail_url': '/api/files/thumbnail?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg&max_size=256', 'preview_url': '/api/files/preview?path=/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'metadata': {'file_type': 'jpg', 'width': 400, 'height': 300, 'breadcrumb': 'mountain_landscape.jpg'}}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'search_documents'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['results', 'doc_path', 'doc_title', 'relevance_score', 'content_preview', 'result_type', 'thumbnail_url', 'preview_url', 'metadata', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: extract_section ===
+INFO:src.agent.agent:Reasoning: Extract the summary section from the identified deal status documents to understand the current state
+INFO:src.agent.agent:Resolved parameters: {'doc_path': '/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'section': 'summary'}
+INFO:src.agent.file_agent:[FILE AGENT] Tool: extract_section(doc_path='/Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', section='summary')
+INFO:src.documents.indexer:[DOCUMENT INDEXER] Using pooled OpenAI client for connection reuse
+INFO:src.documents.image_indexer:Initializing CLIP model (MVP simplified version)
+INFO:src.documents.image_indexer:Loading existing image index
+INFO:src.documents.image_indexer:Loaded 1 images from index (restored 1 embedding vectors)
+INFO:src.documents.indexer:Image indexer initialized
+INFO:src.documents.indexer:Loading existing FAISS index
+INFO:src.documents.indexer:Loading FAISS index
+INFO:src.documents.indexer:Loaded 520 document chunks
+WARNING:src.documents.parser:Unsupported file type: .jpg
+INFO:src.agent.agent:Step 2 result: {'error': True, 'error_type': 'ParseError', 'error_message': 'Failed to parse document: /Users/siddharthsuresh/Downloads/auto_mac/tests/data/test_docs/mountain_landscape.jpg', 'retry_possible': False}
+INFO:src.agent.error_analyzer:[ERROR ANALYZER] Analyzing error for extract_section: ParseError
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.error_analyzer:[ERROR ANALYZER] Analysis complete: recoverable=False, retry=False, root_cause=The tool attempted to parse an image file, which i...
+INFO:src.agent.agent:[ERROR RECOVERY] Analysis for step 2: The error was caused by attempting to parse an image file as a text document. Since the tool is not designed to handle image files, this is not recoverable with the current parameters. An alternative approach involving OCR is necessary to extract text from the image.
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'extract_section'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['error', 'error_type', 'error_message', 'retry_possible', 'tool', 'error_analysis']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.verifier:Verifying step 2: extract_section
+WARNING:src.agent.agent:Step 2 verification failed!
+WARNING:src.agent.agent:Issues: ['Step execution failed']
+WARNING:src.agent.agent:Suggestions: []
+INFO:src.agent.agent:=== EXECUTING STEP 3: synthesize_content ===
+INFO:src.agent.agent:Reasoning: Synthesize the extracted summaries into a coherent overview of the deal's current status
+WARNING:src.agent.agent:Step 3 skipped due to failed dependencies: [2]
+INFO:src.agent.agent:=== EXECUTING STEP 4: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Deliver the synthesized deal status overview to the user
+WARNING:src.agent.agent:Step 4 skipped due to failed dependencies: [3]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+ERROR:src.agent.agent:[FINALIZE] ❌ CRITICAL: No reply found in step_results after enforcement!
+INFO:src.agent.agent:[FINALIZE] Gathering results: 4 step results
+WARNING:src.agent.agent:[FINALIZE] ⚠️ No reply_payload found in step_results - summary will use fallback message
+INFO:src.agent.agent:[FINALIZE] Using richer message from step 3 (39 chars)
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763066226.4727738
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: partial_success, message: Skipped due to failed dependencies: [2]...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'message']
+INFO:src.agent.agent:Final status: partial_success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 10.79s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 10.88s wait
+INFO:src.agent.agent:[AGENT] Result captured after 10.89s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59692 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59716 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59725 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Client disconnected (session: 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7). Total connections: 1
+INFO:__main__:WebSocket client disconnected (session: 873e7dad-7d10-45dd-a8d0-356b2cc7c1d7)
+INFO:     connection closed
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59725 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59725 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59735 - "WebSocket /ws/chat" [accepted]
+INFO:__main__:Client connected with session 979c19bc-df09-4d36-8e75-207239625ebc. Total connections: 2
+INFO:__main__:WebSocket connection established for session 979c19bc-df09-4d36-8e75-207239625ebc
+INFO:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] Using pooled OpenAI client for connection reuse
+INFO:src.memory.session_memory:[SESSION MEMORY] Reasoning trace enabled for session 979c19bc-df09-4d36-8e75-207239625ebc
+INFO:src.memory.context_bus:[CONTEXT BUS] Initialized
+INFO:src.memory.session_memory:[SESSION MEMORY] Created session: 979c19bc-df09-4d36-8e75-207239625ebc (active window: 5)
+INFO:src.memory.session_manager:[SESSION MANAGER] Created new session: default_user/979c19bc-df09-4d36-8e75-207239625ebc (active window: 5)
+INFO:     connection open
+INFO:__main__:Welcome message sent to session 979c19bc-df09-4d36-8e75-207239625ebc
+INFO:     127.0.0.1:59725 - "GET /api/spotify/token HTTP/1.1" 200 OK
+INFO:__main__:Registered Spotify web player device: e0bc8c53715cf6e78f983737d8fd705701c82059
+INFO:     127.0.0.1:59725 - "POST /api/spotify/register-device HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59741 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59741 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59741 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59749 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59749 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 92066 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpwqr3uajg.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 50 characters - 'Can you summarize the last 5 tweets from Blue Sky?...'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpwqr3uajg.webm
+INFO:     127.0.0.1:59749 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59757 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session 979c19bc-df09-4d36-8e75-207239625ebc): message='Can you summarize the last 5 tweets from Blue Sky?', command=''
+INFO:__main__:[API SERVER] Starting agent execution for session 979c19bc-df09-4d36-8e75-207239625ebc: Can you summarize the last 5 tweets from Blue Sky?...
+INFO:src.agent.agent:Starting agent for request: Can you summarize the last 5 tweets from Blue Sky?
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/979c19bc-df09-4d36-8e75-207239625ebc
+INFO:src.agent.agent:[AGENT] Starting graph.invoke() at 1763066279.402655
+INFO:src.agent.agent:[AGENT] Waiting for result capture (no timeout - agents run until completion)...
+ERROR:src.memory.memory_extraction_pipeline:[MEMORY EXTRACTION] LLM extraction failed: Cannot run the event loop while another loop is running
+/Users/siddharthsuresh/Downloads/auto_mac/src/memory/memory_extraction_pipeline.py:334: RuntimeWarning: coroutine 'OpenAIRateLimiter.acquire' was never awaited
+  return []
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+INFO:src.agent.agent:=== PLANNING PHASE ===
+INFO:src.agent.agent:User request: Can you summarize the last 5 tweets from Blue Sky?
+INFO:src.prompt_repository:Loaded 0 examples (0 tokens) for task: {'complexity': 'simple'}
+INFO:src.agent.agent:[ATOMIC PROMPTS] Falling back to pre-loaded examples
+INFO:src.agent.agent:Planning with 125 available tools
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59757 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59757 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59768 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59768 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59778 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59778 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.agent:Plan created: Summarize the last 5 tweets from Blue Sky
+INFO:src.agent.agent:Steps: 3
+INFO:src.agent.agent:=== EXECUTING STEP 1: search_bluesky_posts ===
+INFO:src.agent.agent:Reasoning: Fetch the last 5 tweets from Blue Sky to summarize them.
+INFO:src.agent.agent:Resolved parameters: {'query': 'last 5 tweets', 'max_posts': 5}
+INFO:src.agent.agent:Step 1 result: {'query': 'last 5 tweets', 'count': 5, 'posts': [{'uri': 'at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5iu5a7tdk2j', 'cid': 'bafyreifps252ij6vs7uy7iofitcpsmszct7pehg6gvknwyko7ihpxdsh3a', 'text': '', 'created_at': '2025-11-13T09:30:00.089Z', 'author_handle': 'ajsdecepida.bsky.social', 'author_name': '𝐚𝐧𝐝𝐲 𝐉.𝐒. 𝐃𝐞𝐜𝐞𝐩𝐢𝐝𝐚 🇨🇦 🇺🇦 ¬1ɩ', 'like_count': 0, 'repost_count': 0, 'reply_count': 0, 'quote_count': 0, 'parent_uri': 'at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5itvwkpr22s', 'parent_cid': 'bafyreibilaoflbjayewai2uaydm4n4sqh6glwfbaeuqhue3kea4sp7m3w4', 'reply_root_uri': 'at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5itvuoups2s', 'reply_root_cid': 'bafyreigr2q2pnzxdvaar4er5u4eqwmv7u4wvdoeiw5uz7g5q46ptwpjywi', 'embed': {'$type': 'app.bsky.embed.images', 'images': [{'alt': 'Timeline: Trump’s “dog” insults as a political tic\nYear\tTarget / context\tRepresentative ❝dog❞ line\tWhat ❝dog❞ means here\n2012-2015\tWomen he dislikes (Arianna Huffington, Kristen Stewart, etc.)\tHuffington is ❝a dog who wrongfully comments on me❞; Stewart ❝cheated like a dog.❞1\tDog = ugly, immoral, beneath him (gendered insult).\n2015\tMedia figures (Chuck Todd, David Gregory, etc.)\t❝Sleepy eyes @chucktodd will be fired like a dog from ratings starved Meet The Press.❞2\tDog = loser who gets humiliated and discarded.\n2015\tConservative pundits (Erick Erickson, Glenn Beck, etc.)\tErickson ❝fired like a dog❞; others ❝begging for money like a dog.❞3\tDog = supplicant, grovelling nobody.\n2016\tMitt Romney (campaign trail)\t❝The last election should have been won, except Romney choked like a dog.❞4\tDog = weak choke artist, public failure.\n2015-2016\t❝Women you don’t like❞ generally\tMegan Kelly cites his record: he’s called women ❝fat pigs, dogs, slobs, disgusting animals.❞ He half-admits: ❝I’m sure it was [more than Rosie].❞5\tDog = go-to dehumanizing label, especially for women.\n2018\tOmarosa Manigault Newman\tTweet: ❝Good work by General Kelly for quickly firing that dog!❞ plus calling her a ❝crazed, crying lowlife.❞6\tDog = disloyal traitor who deserved to be put down.\n2018+\tGeneric enemies\tWashington Post/Vanity Fair catalogue: ❝choked like a dog,❞ ❝fired like a dog,❞ ❝sweat like a dog,❞ ❝begging for money like a dog❞…2\tDog = all-purpose insult for enemies: degraded, humiliated, expendable.\n2025\tNatasha Bertrand (CNN reporter)\tOn Truth Social, says she should be ❝thrown out like a dog,❞ continuing the pattern.7\tSame schema: dog = subhuman enemy to be ejected.', 'aspectRatio': {'height': 579, 'width': 1040}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreihsgrzhbruzpldbzib2kwmc7faja5gozsplhoauyo3bg25rvbqalu'}, 'mimeType': 'image/jpeg', 'size': 522410}}, {'alt': 'Pattern’s pretty consistent:\nDog = someone beneath Trump, to humiliate, discard, or dominate\nNever affectionate, never neutral.\nDrop Epstein’s 2011 line into that timeline\nEpstein’s line:\n❝I want you to realize that that dog that hasn’t barked is Trump.❞ (2011)\nThis is before Trump goes full-time political, but after the 2002 ❝terrific guy❞ quote and years of social overlap. The phrase itself is a mashup:\nSherlock Holmes trope: the ❝dog that didn’t bark in the night❞ = the silent thing that signals something’s off.\nPlus, in Trump-world, ❝dog❞ is an insult he hurls at others.\nSo, lined up against the table above:\nRole reversal:\nIn Trump’s own rhetoric, he stands above and calls other people dogs.\nIn Epstein’s email, Trump is the dog — the one you’d expect to bark, but who hasn’t… yet.\nSilence-as-signal:\nBy 2011, Epstein is already worrying about who might turn on him. He’s effectively saying:\nThe one guy who should be loudly disowning me — the attack dog — is silent. That silence itself is the thing to watch.\nPre-emptive leverage:\nEpstein is flagging Trump as both dangerous and untapped:', 'aspectRatio': {'height': 746, 'width': 715}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreig2n26mr6fa2lehc5frnyscyqr7423myfyc3egfn4afy6fwp4idqm'}, 'mimeType': 'image/jpeg', 'size': 398168}}, {'alt': 'Dangerous, because when Trump does bark, he goes nuclear (❝fired like a dog❞, ❝choked like a dog❞, etc.).\nUntapped, because at that moment Trump hasn’t gone public; he’s the ❝dog that hasn’t barked❞ but could.\nWhy the ❝dog❞ antennae is justified\nGiven the pattern:\nTrump’s dog insults = he publicly strips enemies of status.\nEpstein’s dog metaphor = Trump is the conspicuously quiet actor whose eventual ❝bark❞ would be a big deal.\nSo, Epstein’s sentence reads less like a neutral Sherlock reference and more like a dark in-joke:\nThe guy who loves calling other people dogs is, in this story, the dog whose silence is ominous.\nIt implicitly acknowledges Trump’s capacity for vicious, public attacks and suggests Epstein is tracking when/if that capacity will be used on him.', 'aspectRatio': {'height': 549, 'width': 721}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreieiqpmh64hu4mfzniijfwi4udwwmjdsecqka6zaj4afoot7j73hay'}, 'mimeType': 'image/jpeg', 'size': 306640}}, {'alt': "Citations:\n1\t❝Trump's Rationalization for Calling Women ❛dogs❜ Helped Define His Campaign❞ — https://www.washingtonpost.com/news/politics/wp/2018/08/14/trumps-rationalization-for-calling-women-dogs-helped-define-his-campaign/\n2\t❝Dog Days: Trump and His Toxic Twitter Insults of Omarosa❞ — https://www.newyorker.com/news/our-columnists/dog-days-trump-and-his-toxic-twitter-insults-of-omarosa\n3\t❝Donald J. Trump❞ — https://x.com/realDonaldTrump/status/652150749082746881\n4\t❝Donald Trump: Mitt Romney ❛Choked Like A Dog❜ In The 2012 Election❞ — https://www.scrippsnews.com/Politics/presidential-election/donald-trump-mitt-romney-choked-like-a-dog-in-the-2012-election\n5\t❝Trump’s Amnesia — FactCheck.org❞ — https://www.factcheck.org/2015/08/trumps-amnesia/\n6\t❝In series of nasty tweets, Trump calls Omarosa ❛dog,❜ ❛lying lowlife❜❞ — https://www.pbs.org/newshour/politics/in-series-of-nasty-tweets-trump-calls-omarosa-dog-lying-lowlife\n7\t❝Trump Wants CNN Reporter He Spent Days Watching Fired ❛Like a Dog❜❞ — https://www.thedailybeast.com/trump-wants-cnn-star-he-spent-days-watching-fired-like-a-dog/", 'aspectRatio': {'height': 620, 'width': 724}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreibaittdu2t4xhchav76m5h33a2bzmopzegdxfy4tk6v7dgz4r33qi'}, 'mimeType': 'image/jpeg', 'size': 404711}}]}, 'embed_type': 'images', 'embed_images': [{'alt': 'Timeline: Trump’s “dog” insults as a political tic\nYear\tTarget / context\tRepresentative ❝dog❞ line\tWhat ❝dog❞ means here\n2012-2015\tWomen he dislikes (Arianna Huffington, Kristen Stewart, etc.)\tHuffington is ❝a dog who wrongfully comments on me❞; Stewart ❝cheated like a dog.❞1\tDog = ugly, immoral, beneath him (gendered insult).\n2015\tMedia figures (Chuck Todd, David Gregory, etc.)\t❝Sleepy eyes @chucktodd will be fired like a dog from ratings starved Meet The Press.❞2\tDog = loser who gets humiliated and discarded.\n2015\tConservative pundits (Erick Erickson, Glenn Beck, etc.)\tErickson ❝fired like a dog❞; others ❝begging for money like a dog.❞3\tDog = supplicant, grovelling nobody.\n2016\tMitt Romney (campaign trail)\t❝The last election should have been won, except Romney choked like a dog.❞4\tDog = weak choke artist, public failure.\n2015-2016\t❝Women you don’t like❞ generally\tMegan Kelly cites his record: he’s called women ❝fat pigs, dogs, slobs, disgusting animals.❞ He half-admits: ❝I’m sure it was [more than Rosie].❞5\tDog = go-to dehumanizing label, especially for women.\n2018\tOmarosa Manigault Newman\tTweet: ❝Good work by General Kelly for quickly firing that dog!❞ plus calling her a ❝crazed, crying lowlife.❞6\tDog = disloyal traitor who deserved to be put down.\n2018+\tGeneric enemies\tWashington Post/Vanity Fair catalogue: ❝choked like a dog,❞ ❝fired like a dog,❞ ❝sweat like a dog,❞ ❝begging for money like a dog❞…2\tDog = all-purpose insult for enemies: degraded, humiliated, expendable.\n2025\tNatasha Bertrand (CNN reporter)\tOn Truth Social, says she should be ❝thrown out like a dog,❞ continuing the pattern.7\tSame schema: dog = subhuman enemy to be ejected.', 'aspectRatio': {'height': 579, 'width': 1040}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreihsgrzhbruzpldbzib2kwmc7faja5gozsplhoauyo3bg25rvbqalu'}, 'mimeType': 'image/jpeg', 'size': 522410}}, {'alt': 'Pattern’s pretty consistent:\nDog = someone beneath Trump, to humiliate, discard, or dominate\nNever affectionate, never neutral.\nDrop Epstein’s 2011 line into that timeline\nEpstein’s line:\n❝I want you to realize that that dog that hasn’t barked is Trump.❞ (2011)\nThis is before Trump goes full-time political, but after the 2002 ❝terrific guy❞ quote and years of social overlap. The phrase itself is a mashup:\nSherlock Holmes trope: the ❝dog that didn’t bark in the night❞ = the silent thing that signals something’s off.\nPlus, in Trump-world, ❝dog❞ is an insult he hurls at others.\nSo, lined up against the table above:\nRole reversal:\nIn Trump’s own rhetoric, he stands above and calls other people dogs.\nIn Epstein’s email, Trump is the dog — the one you’d expect to bark, but who hasn’t… yet.\nSilence-as-signal:\nBy 2011, Epstein is already worrying about who might turn on him. He’s effectively saying:\nThe one guy who should be loudly disowning me — the attack dog — is silent. That silence itself is the thing to watch.\nPre-emptive leverage:\nEpstein is flagging Trump as both dangerous and untapped:', 'aspectRatio': {'height': 746, 'width': 715}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreig2n26mr6fa2lehc5frnyscyqr7423myfyc3egfn4afy6fwp4idqm'}, 'mimeType': 'image/jpeg', 'size': 398168}}, {'alt': 'Dangerous, because when Trump does bark, he goes nuclear (❝fired like a dog❞, ❝choked like a dog❞, etc.).\nUntapped, because at that moment Trump hasn’t gone public; he’s the ❝dog that hasn’t barked❞ but could.\nWhy the ❝dog❞ antennae is justified\nGiven the pattern:\nTrump’s dog insults = he publicly strips enemies of status.\nEpstein’s dog metaphor = Trump is the conspicuously quiet actor whose eventual ❝bark❞ would be a big deal.\nSo, Epstein’s sentence reads less like a neutral Sherlock reference and more like a dark in-joke:\nThe guy who loves calling other people dogs is, in this story, the dog whose silence is ominous.\nIt implicitly acknowledges Trump’s capacity for vicious, public attacks and suggests Epstein is tracking when/if that capacity will be used on him.', 'aspectRatio': {'height': 549, 'width': 721}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreieiqpmh64hu4mfzniijfwi4udwwmjdsecqka6zaj4afoot7j73hay'}, 'mimeType': 'image/jpeg', 'size': 306640}}, {'alt': "Citations:\n1\t❝Trump's Rationalization for Calling Women ❛dogs❜ Helped Define His Campaign❞ — https://www.washingtonpost.com/news/politics/wp/2018/08/14/trumps-rationalization-for-calling-women-dogs-helped-define-his-campaign/\n2\t❝Dog Days: Trump and His Toxic Twitter Insults of Omarosa❞ — https://www.newyorker.com/news/our-columnists/dog-days-trump-and-his-toxic-twitter-insults-of-omarosa\n3\t❝Donald J. Trump❞ — https://x.com/realDonaldTrump/status/652150749082746881\n4\t❝Donald Trump: Mitt Romney ❛Choked Like A Dog❜ In The 2012 Election❞ — https://www.scrippsnews.com/Politics/presidential-election/donald-trump-mitt-romney-choked-like-a-dog-in-the-2012-election\n5\t❝Trump’s Amnesia — FactCheck.org❞ — https://www.factcheck.org/2015/08/trumps-amnesia/\n6\t❝In series of nasty tweets, Trump calls Omarosa ❛dog,❜ ❛lying lowlife❜❞ — https://www.pbs.org/newshour/politics/in-series-of-nasty-tweets-trump-calls-omarosa-dog-lying-lowlife\n7\t❝Trump Wants CNN Reporter He Spent Days Watching Fired ❛Like a Dog❜❞ — https://www.thedailybeast.com/trump-wants-cnn-star-he-spent-days-watching-fired-like-a-dog/", 'aspectRatio': {'height': 620, 'width': 724}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreibaittdu2t4xhchav76m5h33a2bzmopzegdxfy4tk6v7dgz4r33qi'}, 'mimeType': 'image/jpeg', 'size': 404711}}], 'score': 0.0, 'url': 'https://bsky.app/profile/ajsdecepida.bsky.social/post/3m5iu5a7tdk2j'}, {'uri': 'at://did:plc:tdkozxvfyqk3ywtialqf675s/app.bsky.feed.post/3m57bc5v2l22w', 'cid': 'bafyreiemii3meqzp4wzszhj55mqsoea3humqqxd2rzv2lf3ebs3tghrmxu', 'text': 'See below for a sequence of separate tweets (not a thread, unhelpfully) from @mrmujac who chronicles and authors books on the the #MUAcademy about the consecutive games with a youth player in the 1st XI match day squad being in danger…or not: (screenshots in reverse order, alt text in order)', 'created_at': '2025-11-09T13:58:46.651Z', 'author_handle': 'j0hnbev.bsky.social', 'author_name': 'John 🏴\U000e0067\U000e0062\U000e0077\U000e006c\U000e0073\U000e007f🔴👹', 'like_count': 2, 'repost_count': 1, 'reply_count': 0, 'quote_count': 0, 'parent_uri': None, 'parent_cid': None, 'reply_root_uri': None, 'reply_root_cid': None, 'embed': {'$type': 'app.bsky.embed.images', 'images': [{'alt': "Screenshot of tweets from @mrmujac: \n\nACADEMY NEWS: It's now been 88 years since Tom Manley and Jackie Wassall played against Fulham on 30th October 1937. It started a sequence of 4,331 consecutive games with an Academy/Youth player in the official match day squad...300+ players...150+ internationals...20,000+ games\n\nACADEMY NEWS: There seemed to be a lot of noise about Jack Fletcher being the only Academy player being involved yesterday...so here's a few things to note.\n\n1. All youth systems work in cycles. There are often lean periods when players don't come through. We have had so many changes in managers over the last decade that it's been like a train station with so many new players. It makes it harder to break through.\n\n2. We have had plenty of periods in our history where there have been only one youth player in the squad...twice in 1992/93 and three times in 1993/94 as examples. The mid 1970's, early 1980's and later 1980's were all periods where very few youth players were breaking through.\n", 'aspectRatio': {'height': 1717, 'width': 1703}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreiawlfc6ulhmgttnywxmatoqr646yqbhqxxa3s4ql3ehzx2ixc77li'}, 'mimeType': 'image/jpeg', 'size': 724692}}, {'alt': "3. We have a proud record of having an Academy graduate in every match day squad since 1937...88 years and 4,333 games. But if players aren't good enough then we shouldn't pick people because of a statistic. Luckily we have 18 places available are we still have good youngsters.\n\n4. Historically we have the best record of youth development in England and comparable to any other global club. It's a record that is part of the fabric of Manchester United and we should be doing everything to build on youth and continue to champion youth development.\n\n5. I was pleased that Amorin directly said that we would always find space in the squad for youngsters...but not to keep a record...but as a message to all our current and future youth players...you will always get a chance at United. The way it should always be.\n\n6. Finally, I'm not reading too much into the comments in the press or on social media...once we start to win regularly again there will be plenty of places for youth players to make their mark once again. I can't wait to see the next starlet to make the grade.", 'aspectRatio': {'height': 1676, 'width': 1766}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidsll5zbwhinit7m3mnq2jljny6n2v3nser4phh3f6th4hvxvygyq'}, 'mimeType': 'image/jpeg', 'size': 743846}}]}, 'embed_type': 'images', 'embed_images': [{'alt': "Screenshot of tweets from @mrmujac: \n\nACADEMY NEWS: It's now been 88 years since Tom Manley and Jackie Wassall played against Fulham on 30th October 1937. It started a sequence of 4,331 consecutive games with an Academy/Youth player in the official match day squad...300+ players...150+ internationals...20,000+ games\n\nACADEMY NEWS: There seemed to be a lot of noise about Jack Fletcher being the only Academy player being involved yesterday...so here's a few things to note.\n\n1. All youth systems work in cycles. There are often lean periods when players don't come through. We have had so many changes in managers over the last decade that it's been like a train station with so many new players. It makes it harder to break through.\n\n2. We have had plenty of periods in our history where there have been only one youth player in the squad...twice in 1992/93 and three times in 1993/94 as examples. The mid 1970's, early 1980's and later 1980's were all periods where very few youth players were breaking through.\n", 'aspectRatio': {'height': 1717, 'width': 1703}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreiawlfc6ulhmgttnywxmatoqr646yqbhqxxa3s4ql3ehzx2ixc77li'}, 'mimeType': 'image/jpeg', 'size': 724692}}, {'alt': "3. We have a proud record of having an Academy graduate in every match day squad since 1937...88 years and 4,333 games. But if players aren't good enough then we shouldn't pick people because of a statistic. Luckily we have 18 places available are we still have good youngsters.\n\n4. Historically we have the best record of youth development in England and comparable to any other global club. It's a record that is part of the fabric of Manchester United and we should be doing everything to build on youth and continue to champion youth development.\n\n5. I was pleased that Amorin directly said that we would always find space in the squad for youngsters...but not to keep a record...but as a message to all our current and future youth players...you will always get a chance at United. The way it should always be.\n\n6. Finally, I'm not reading too much into the comments in the press or on social media...once we start to win regularly again there will be plenty of places for youth players to make their mark once again. I can't wait to see the next starlet to make the grade.", 'aspectRatio': {'height': 1676, 'width': 1766}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidsll5zbwhinit7m3mnq2jljny6n2v3nser4phh3f6th4hvxvygyq'}, 'mimeType': 'image/jpeg', 'size': 743846}}], 'score': 4.0, 'url': 'https://bsky.app/profile/j0hnbev.bsky.social/post/3m57bc5v2l22w'}, {'uri': 'at://did:plc:mtvn5te7majydwd7txifsyqq/app.bsky.feed.post/3m4yes5mmas2a', 'cid': 'bafyreigkdmvu7fnfbatkqmrswokdagkly3vy7j6i4upymbaqctgobato2a', 'text': "Anyway did ya'll know that in 1912 when the Titanic sank the media was literally casting Vicious Mockery on its corpse with no mercy whatsoever\n\n#titanic #vintagenews", 'created_at': '2025-11-06T20:12:46.312Z', 'author_handle': 'salamencefury.bsky.social', 'author_name': 'Stinky Catboy (Dragon flavored)', 'like_count': 1, 'repost_count': 1, 'reply_count': 0, 'quote_count': 0, 'parent_uri': None, 'parent_cid': None, 'reply_root_uri': None, 'reply_root_cid': None, 'embed': {'$type': 'app.bsky.embed.images', 'images': [{'alt': 'A tweet from Copper Lund where he says "They were roasting the shit out of the Titanic in the newspaper right after it sank man. This is not a new development, or a chance to stroke your chin about the dangers of social media."', 'aspectRatio': {'height': 536, 'width': 1033}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreiayxeunr7dh5abpz7c6u53p23hrtu2hiuxknmsxtfvljwq4eisl74'}, 'mimeType': 'image/jpeg', 'size': 206698}}, {'alt': 'A series of tweets with various newspaper headlines from 1912 roasting the Titanic for sinking. The first one, from The Evening Star, Washington DC, April 18, 1912, says "The adjective "unsinkable", like the word "fireproof", will be accepted here only in an approximate sense." The second headline, from The Butte Inter-Mountain, Montana, April 22, 1912, reads "At all, the events the scientists seem to agree that icebergs in the path of ocean liners are not conducive to safety". The third headline, from The Chicago Tribune, Illinois, April 23, 1912, has a title saying "In the Steamship Office..." with the text being:\n\n"Patron: What can you give me for next Wedsneday\'s sailing?"\n"Agent: How about No. 8 on the promenade, deck, starboard, suit you? private dining room, private bath, brass bed, real windows with lace curtains-"\n"Patron: Never mind that! What kind of seat can you give me in the lifeboat?"', 'aspectRatio': {'height': 1759, 'width': 1015}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidqo7kysfzkjz6vvkxslg3vutuviavejvea746qbg42kvgi6dboai'}, 'mimeType': 'image/jpeg', 'size': 629346}}, {'alt': 'Continuing with the series of headlines mocking the Titanic for sinking, the next one is from the Topeka Daily Capital, Kansas, April 24, 1912, and reads "If you own a life boat right now is a good time to sell it. There is a big demand for life boats and prices have gone up." The next one is from the Jewell County Republican, Kansas, July 5, 1912, and reads "One of the beauties of aviating is that there are no icebergs floating in the sky." The last headline is from The Baltimore Sun, Maryland, May 1, 1912, and says "If the people on the Titanic had known what the poets were going to do to them maybe some of them would not have cared to survive."', 'aspectRatio': {'height': 1643, 'width': 996}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidrwf2mazt5wyrcftvnjyiyfi6xfijaf73laevppdilqsv4a4nnji'}, 'mimeType': 'image/jpeg', 'size': 519306}}, {'alt': 'A crop of a headline from an unknown newspaper from 1912 saying "It was kind of the Titanic to provide a ball room for the mermaids".', 'aspectRatio': {'height': 165, 'width': 589}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreibhtu2zf5nwxsqp3nedzmncgulexwgxdxlan7j2gakabskqnmxyle'}, 'mimeType': 'image/jpeg', 'size': 59592}}]}, 'embed_type': 'images', 'embed_images': [{'alt': 'A tweet from Copper Lund where he says "They were roasting the shit out of the Titanic in the newspaper right after it sank man. This is not a new development, or a chance to stroke your chin about the dangers of social media."', 'aspectRatio': {'height': 536, 'width': 1033}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreiayxeunr7dh5abpz7c6u53p23hrtu2hiuxknmsxtfvljwq4eisl74'}, 'mimeType': 'image/jpeg', 'size': 206698}}, {'alt': 'A series of tweets with various newspaper headlines from 1912 roasting the Titanic for sinking. The first one, from The Evening Star, Washington DC, April 18, 1912, says "The adjective "unsinkable", like the word "fireproof", will be accepted here only in an approximate sense." The second headline, from The Butte Inter-Mountain, Montana, April 22, 1912, reads "At all, the events the scientists seem to agree that icebergs in the path of ocean liners are not conducive to safety". The third headline, from The Chicago Tribune, Illinois, April 23, 1912, has a title saying "In the Steamship Office..." with the text being:\n\n"Patron: What can you give me for next Wedsneday\'s sailing?"\n"Agent: How about No. 8 on the promenade, deck, starboard, suit you? private dining room, private bath, brass bed, real windows with lace curtains-"\n"Patron: Never mind that! What kind of seat can you give me in the lifeboat?"', 'aspectRatio': {'height': 1759, 'width': 1015}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidqo7kysfzkjz6vvkxslg3vutuviavejvea746qbg42kvgi6dboai'}, 'mimeType': 'image/jpeg', 'size': 629346}}, {'alt': 'Continuing with the series of headlines mocking the Titanic for sinking, the next one is from the Topeka Daily Capital, Kansas, April 24, 1912, and reads "If you own a life boat right now is a good time to sell it. There is a big demand for life boats and prices have gone up." The next one is from the Jewell County Republican, Kansas, July 5, 1912, and reads "One of the beauties of aviating is that there are no icebergs floating in the sky." The last headline is from The Baltimore Sun, Maryland, May 1, 1912, and says "If the people on the Titanic had known what the poets were going to do to them maybe some of them would not have cared to survive."', 'aspectRatio': {'height': 1643, 'width': 996}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreidrwf2mazt5wyrcftvnjyiyfi6xfijaf73laevppdilqsv4a4nnji'}, 'mimeType': 'image/jpeg', 'size': 519306}}, {'alt': 'A crop of a headline from an unknown newspaper from 1912 saying "It was kind of the Titanic to provide a ball room for the mermaids".', 'aspectRatio': {'height': 165, 'width': 589}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreibhtu2zf5nwxsqp3nedzmncgulexwgxdxlan7j2gakabskqnmxyle'}, 'mimeType': 'image/jpeg', 'size': 59592}}], 'score': 3.0, 'url': 'https://bsky.app/profile/salamencefury.bsky.social/post/3m4yes5mmas2a'}, {'uri': 'at://did:plc:rsiddsnbwfju2ikpyjuc3akt/app.bsky.feed.post/3m4w3uajn3s2f', 'cid': 'bafyreidziwgczlyxzd5qi5x55myl6qjndpobsrxv2gt3enmo4u2kltwgfa', 'text': 'They had a moratorium on Mamdani posts for the last few months because I assume there was enough pushback from the lower decks to stop both-sidesing. But then they broke the moratorium two weeks ago to bothsides Mamdani vs. Cuomo', 'created_at': '2025-11-05T22:27:33.326Z', 'author_handle': 'standard.bsky.social', 'author_name': 'standard 🥪', 'like_count': 0, 'repost_count': 0, 'reply_count': 0, 'quote_count': 0, 'parent_uri': 'at://did:plc:7umvpuxe2vbrc3zrzuquzniu/app.bsky.feed.post/3m4w34wdkhk2o', 'parent_cid': 'bafyreidb5jhlat6ogkw6pvafaq5beinrr2l3knefnajvtarmf25ahqnfdy', 'reply_root_uri': 'at://did:plc:rsiddsnbwfju2ikpyjuc3akt/app.bsky.feed.post/3m4w2pvlkj22f', 'reply_root_cid': 'bafyreihw6qibt7solcujcxdtzdkot5khok2tqhwlrogyq42iehemzy7uga', 'embed': {'$type': 'app.bsky.embed.images', 'images': [{'alt': 'A screenshot of a Twitter search for posts from the account "@CNLiberalism" mentioning "Mamdani". The "Latest" tab is selected. The screenshot displays three tweets from the account "New Liberals" (@CNLiberalism), each discussing New York politician Zohran Mamdani.\n\nFirst tweet (Top of image):\nPosted on October 29\nThe tweet reads:\n\n"- Mamdani won’t support rezoning in Long Island, and is refusing to endorse props 2-5, despite his past overtures to abundance\n\nCuomo is opposing housing in Elizabeth Street Garden, and is clearly a nimby, but also supports prop 2-5 bc he wants more power\n\nNYC politics is cursed"\n\nAttached below this tweet is a quote tweet of another post by journalist Emma G. Fitzsimmons (@emmagf), posted October 28. Her tweet reads:\n\n"Zohran Mamdani declined to say whether he supports the Long Island City rezoning which faces a major City Council vote this week."\n\nShe includes a cropped screenshot of Mamdani’s public statement. It reads:\n\n"I\'ve said time and again that I will always appreciate and celebrate the prospect of building more housing in New York City, and I also am someone who believes firmly that we should have contiguous Park access between Queens Bridge Park and gantry Plaza. These are incredibly important things that need to be done, and I\'m looking forward to seeing the resolution of that."\n\nAttached is an image of a chart and two tweet excerpts. The chart is titled "The favorability ratings of Democrats", showing bars for four politicians: Gavin Newsom, Alexandria Ocasio-Cortez, Kamala Harris, and Zohran Mamdani. It shows the percentage of people who view each figure as "Somewhat/Very favorable", "Haven’t heard", or "Somewhat/Very unfavorable." Notably, Mamdani has the highest "Haven’t heard" percentage at 40%.\n\nNext to the chart are tweets by users reacting to the data, criticizing the poll for being unrepresentative.\n', 'aspectRatio': {'height': 1288, 'width': 661}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreigohftgl6bjtnzn2bne2vddnytqfhx2cbzukcbo5sjq755amms2xy'}, 'mimeType': 'image/jpeg', 'size': 685189}}]}, 'embed_type': 'images', 'embed_images': [{'alt': 'A screenshot of a Twitter search for posts from the account "@CNLiberalism" mentioning "Mamdani". The "Latest" tab is selected. The screenshot displays three tweets from the account "New Liberals" (@CNLiberalism), each discussing New York politician Zohran Mamdani.\n\nFirst tweet (Top of image):\nPosted on October 29\nThe tweet reads:\n\n"- Mamdani won’t support rezoning in Long Island, and is refusing to endorse props 2-5, despite his past overtures to abundance\n\nCuomo is opposing housing in Elizabeth Street Garden, and is clearly a nimby, but also supports prop 2-5 bc he wants more power\n\nNYC politics is cursed"\n\nAttached below this tweet is a quote tweet of another post by journalist Emma G. Fitzsimmons (@emmagf), posted October 28. Her tweet reads:\n\n"Zohran Mamdani declined to say whether he supports the Long Island City rezoning which faces a major City Council vote this week."\n\nShe includes a cropped screenshot of Mamdani’s public statement. It reads:\n\n"I\'ve said time and again that I will always appreciate and celebrate the prospect of building more housing in New York City, and I also am someone who believes firmly that we should have contiguous Park access between Queens Bridge Park and gantry Plaza. These are incredibly important things that need to be done, and I\'m looking forward to seeing the resolution of that."\n\nAttached is an image of a chart and two tweet excerpts. The chart is titled "The favorability ratings of Democrats", showing bars for four politicians: Gavin Newsom, Alexandria Ocasio-Cortez, Kamala Harris, and Zohran Mamdani. It shows the percentage of people who view each figure as "Somewhat/Very favorable", "Haven’t heard", or "Somewhat/Very unfavorable." Notably, Mamdani has the highest "Haven’t heard" percentage at 40%.\n\nNext to the chart are tweets by users reacting to the data, criticizing the poll for being unrepresentative.\n', 'aspectRatio': {'height': 1288, 'width': 661}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreigohftgl6bjtnzn2bne2vddnytqfhx2cbzukcbo5sjq755amms2xy'}, 'mimeType': 'image/jpeg', 'size': 685189}}], 'score': 0.0, 'url': 'https://bsky.app/profile/standard.bsky.social/post/3m4w3uajn3s2f'}, {'uri': 'at://did:plc:mlan7kocyn37uzb25btjt2cc/app.bsky.feed.post/3m4ten472ak2t', 'cid': 'bafyreigystkh7aboafn437awiv7dgxmvjxhnwcxxnul5jd7g4z5pz6xf5u', 'text': "Around 20% election day turnout (not counting early voting) in deep-blue Falls Church as of 3 pm today; last year, in the presidential election, it didn't hit 20% until 5 pm or so... bluevirginia.us/2025/11/virg... h/t @davebjerke.bsky.social", 'created_at': '2025-11-04T20:26:38.369Z', 'author_handle': 'bluevirginia.bsky.social', 'author_name': 'Blue Virginia', 'like_count': 27, 'repost_count': 6, 'reply_count': 1, 'quote_count': 2, 'parent_uri': None, 'parent_cid': None, 'reply_root_uri': None, 'reply_root_cid': None, 'embed': {'$type': 'app.bsky.embed.images', 'images': [{'alt': 'Falls Church elections official Dave Bjerke tweets out 3 pm turnout numbers', 'aspectRatio': {'height': 392, 'width': 361}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreicrkjdgailb276mdgddhtavpu2jdft626g2iray6d5grdyijbsf44'}, 'mimeType': 'image/jpeg', 'size': 47465}}]}, 'embed_type': 'images', 'embed_images': [{'alt': 'Falls Church elections official Dave Bjerke tweets out 3 pm turnout numbers', 'aspectRatio': {'height': 392, 'width': 361}, 'image': {'$type': 'blob', 'ref': {'$link': 'bafkreicrkjdgailb276mdgddhtavpu2jdft626g2iray6d5grdyijbsf44'}, 'mimeType': 'image/jpeg', 'size': 47465}}], 'score': 43.5, 'url': 'https://bsky.app/profile/bluevirginia.bsky.social/post/3m4ten472ak2t'}]}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[1] for tool 'search_bluesky_posts'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['query', 'count', 'posts', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[1]
+INFO:src.agent.agent:=== EXECUTING STEP 2: synthesize_content ===
+INFO:src.agent.agent:Reasoning: Create a concise summary of the last 5 tweets from the fetched data.
+INFO:src.agent.agent:Resolved parameters: {'source_contents': ['[{"uri": "at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5iu5a7tdk2j", "cid": "bafyreifps252ij6vs7uy7iofitcpsmszct7pehg6gvknwyko7ihpxdsh3a", "text": "", "created_at": "2025-11-13T09:30:00.089Z", "author_handle": "ajsdecepida.bsky.social", "author_name": "\\ud835\\udc1a\\ud835\\udc27\\ud835\\udc1d\\ud835\\udc32 \\ud835\\udc09.\\ud835\\udc12. \\ud835\\udc03\\ud835\\udc1e\\ud835\\udc1c\\ud835\\udc1e\\ud835\\udc29\\ud835\\udc22\\ud835\\udc1d\\ud835\\udc1a \\ud83c\\udde8\\ud83c\\udde6 \\ud83c\\uddfa\\ud83c\\udde6 \\u00ac1\\u0269", "like_count": 0, "repost_count": 0, "reply_count": 0, "quote_count": 0, "parent_uri": "at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5itvwkpr22s", "parent_cid": "bafyreibilaoflbjayewai2uaydm4n4sqh6glwfbaeuqhue3kea4sp7m3w4", "reply_root_uri": "at://did:plc:wnhlwfb44kfyi4gb6yc2tvbz/app.bsky.feed.post/3m5itvuoups2s", "reply_root_cid": "bafyreigr2q2pnzxdvaar4er5u4eqwmv7u4wvdoeiw5uz7g5q46ptwpjywi", "embed": {"$type": "app.bsky.embed.images", "images": [{"alt": "Timeline: Trump\\u2019s \\u201cdog\\u201d insults as a political tic\\nYear\\tTarget / context\\tRepresentative \\u275ddog\\u275e line\\tWhat \\u275ddog\\u275e means here\\n2012-2015\\tWomen he dislikes (Arianna Huffington, Kristen Stewart, etc.)\\tHuffington is \\u275da dog who wrongfully comments on me\\u275e; Stewart \\u275dcheated like a dog.\\u275e1\\tDog = ugly, immoral, beneath him (gendered insult).\\n2015\\tMedia figures (Chuck Todd, David Gregory, etc.)\\t\\u275dSleepy eyes @chucktodd will be fired like a dog from ratings starved Meet The Press.\\u275e2\\tDog = loser who gets humiliated and discarded.\\n2015\\tConservative pundits (Erick Erickson, Glenn Beck, etc.)\\tErickson \\u275dfired like a dog\\u275e; others \\u275dbegging for money like a dog.\\u275e3\\tDog = supplicant, grovelling nobody.\\n2016\\tMitt Romney (campaign trail)\\t\\u275dThe last election should have been won, except Romney choked like a dog.\\u275e4\\tDog = weak choke artist, public failure.\\n2015-2016\\t\\u275dWomen you don\\u2019t like\\u275e generally\\tMegan Kelly cites his record: he\\u2019s called women \\u275dfat pigs, dogs, slobs, disgusting animals.\\u275e He half-admits: \\u275dI\\u2019m sure it was [more than Rosie].\\u275e5\\tDog = go-to dehumanizing label, especially for women.\\n2018\\tOmarosa Manigault Newman\\tTweet: \\u275dGood work by General Kelly for quickly firing that dog!\\u275e plus calling her a \\u275dcrazed, crying lowlife.\\u275e6\\tDog = disloyal traitor who deserved to be put down.\\n2018+\\tGeneric enemies\\tWashington Post/Vanity Fair catalogue: \\u275dchoked like a dog,\\u275e \\u275dfired like a dog,\\u275e \\u275dsweat like a dog,\\u275e \\u275dbegging for money like a dog\\u275e\\u20262\\tDog = all-purpose insult for enemies: degraded, humiliated, expendable.\\n2025\\tNatasha Bertrand (CNN reporter)\\tOn Truth Social, says she should be \\u275dthrown out like a dog,\\u275e continuing the pattern.7\\tSame schema: dog = subhuman enemy to be ejected.", "aspectRatio": {"height": 579, "width": 1040}, "image": {"$type": "blob", "ref": {"$link": "bafkreihsgrzhbruzpldbzib2kwmc7faja5gozsplhoauyo3bg25rvbqalu"}, "mimeType": "image/jpeg", "size": 522410}}, {"alt": "Pattern\\u2019s pretty consistent:\\nDog = someone beneath Trump, to humiliate, discard, or dominate\\nNever affectionate, never neutral.\\nDrop Epstein\\u2019s 2011 line into that timeline\\nEpstein\\u2019s line:\\n\\u275dI want you to realize that that dog that hasn\\u2019t barked is Trump.\\u275e (2011)\\nThis is before Trump goes full-time political, but after the 2002 \\u275dterrific guy\\u275e quote and years of social overlap. The phrase itself is a mashup:\\nSherlock Holmes trope: the \\u275ddog that didn\\u2019t bark in the night\\u275e = the silent thing that signals something\\u2019s off.\\nPlus, in Trump-world, \\u275ddog\\u275e is an insult he hurls at others.\\nSo, lined up against the table above:\\nRole reversal:\\nIn Trump\\u2019s own rhetoric, he stands above and calls other people dogs.\\nIn Epstein\\u2019s email, Trump is the dog \\u2014 the one you\\u2019d expect to bark, but who hasn\\u2019t\\u2026 yet.\\nSilence-as-signal:\\nBy 2011, Epstein is already worrying about who might turn on him. He\\u2019s effectively saying:\\nThe one guy who should be loudly disowning me \\u2014 the attack dog \\u2014 is silent. That silence itself is the thing to watch.\\nPre-emptive leverage:\\nEpstein is flagging Trump as both dangerous and untapped:", "aspectRatio": {"height": 746, "width": 715}, "image": {"$type": "blob", "ref": {"$link": "bafkreig2n26mr6fa2lehc5frnyscyqr7423myfyc3egfn4afy6fwp4idqm"}, "mimeType": "image/jpeg", "size": 398168}}, {"alt": "Dangerous, because when Trump does bark, he goes nuclear (\\u275dfired like a dog\\u275e, \\u275dchoked like a dog\\u275e, etc.).\\nUntapped, because at that moment Trump hasn\\u2019t gone public; he\\u2019s the \\u275ddog that hasn\\u2019t barked\\u275e but could.\\nWhy the \\u275ddog\\u275e antennae is justified\\nGiven the pattern:\\nTrump\\u2019s dog insults = he publicly strips enemies of status.\\nEpstein\\u2019s dog metaphor = Trump is the conspicuously quiet actor whose eventual \\u275dbark\\u275e would be a big deal.\\nSo, Epstein\\u2019s sentence reads less like a neutral Sherlock reference and more like a dark in-joke:\\nThe guy who loves calling other people dogs is, in this story, the dog whose silence is ominous.\\nIt implicitly acknowledges Trump\\u2019s capacity for vicious, public attacks and suggests Epstein is tracking when/if that capacity will be used on him.", "aspectRatio": {"height": 549, "width": 721}, "image": {"$type": "blob", "ref": {"$link": "bafkreieiqpmh64hu4mfzniijfwi4udwwmjdsecqka6zaj4afoot7j73hay"}, "mimeType": "image/jpeg", "size": 306640}}, {"alt": "Citations:\\n1\\t\\u275dTrump\'s Rationalization for Calling Women \\u275bdogs\\u275c Helped Define His Campaign\\u275e \\u2014 https://www.washingtonpost.com/news/politics/wp/2018/08/14/trumps-rationalization-for-calling-women-dogs-helped-define-his-campaign/\\n2\\t\\u275dDog Days: Trump and His Toxic Twitter Insults of Omarosa\\u275e \\u2014 https://www.newyorker.com/news/our-columnists/dog-days-trump-and-his-toxic-twitter-insults-of-omarosa\\n3\\t\\u275dDonald J. Trump\\u275e \\u2014 https://x.com/realDonaldTrump/status/652150749082746881\\n4\\t\\u275dDonald Trump: Mitt Romney \\u275bChoked Like A Dog\\u275c In The 2012 Election\\u275e \\u2014 https://www.scrippsnews.com/Politics/presidential-election/donald-trump-mitt-romney-choked-like-a-dog-in-the-2012-election\\n5\\t\\u275dTrump\\u2019s Amnesia \\u2014 FactCheck.org\\u275e \\u2014 https://www.factcheck.org/2015/08/trumps-amnesia/\\n6\\t\\u275dIn series of nasty tweets, Trump calls Omarosa \\u275bdog,\\u275c \\u275blying lowlife\\u275c\\u275e \\u2014 https://www.pbs.org/newshour/politics/in-series-of-nasty-tweets-trump-calls-omarosa-dog-lying-lowlife\\n7\\t\\u275dTrump Wants CNN Reporter He Spent Days Watching Fired \\u275bLike a Dog\\u275c\\u275e \\u2014 https://www.thedailybeast.com/trump-wants-cnn-star-he-spent-days-watching-fired-like-a-dog/", "aspectRatio": {"height": 620, "width": 724}, "image": {"$type": "blob", "ref": {"$link": "bafkreibaittdu2t4xhchav76m5h33a2bzmopzegdxfy4tk6v7dgz4r33qi"}, "mimeType": "image/jpeg", "size": 404711}}]}, "embed_type": "images", "embed_images": [{"alt": "Timeline: Trump\\u2019s \\u201cdog\\u201d insults as a political tic\\nYear\\tTarget / context\\tRepresentative \\u275ddog\\u275e line\\tWhat \\u275ddog\\u275e means here\\n2012-2015\\tWomen he dislikes (Arianna Huffington, Kristen Stewart, etc.)\\tHuffington is \\u275da dog who wrongfully comments on me\\u275e; Stewart \\u275dcheated like a dog.\\u275e1\\tDog = ugly, immoral, beneath him (gendered insult).\\n2015\\tMedia figures (Chuck Todd, David Gregory, etc.)\\t\\u275dSleepy eyes @chucktodd will be fired like a dog from ratings starved Meet The Press.\\u275e2\\tDog = loser who gets humiliated and discarded.\\n2015\\tConservative pundits (Erick Erickson, Glenn Beck, etc.)\\tErickson \\u275dfired like a dog\\u275e; others \\u275dbegging for money like a dog.\\u275e3\\tDog = supplicant, grovelling nobody.\\n2016\\tMitt Romney (campaign trail)\\t\\u275dThe last election should have been won, except Romney choked like a dog.\\u275e4\\tDog = weak choke artist, public failure.\\n2015-2016\\t\\u275dWomen you don\\u2019t like\\u275e generally\\tMegan Kelly cites his record: he\\u2019s called women \\u275dfat pigs, dogs, slobs, disgusting animals.\\u275e He half-admits: \\u275dI\\u2019m sure it was [more than Rosie].\\u275e5\\tDog = go-to dehumanizing label, especially for women.\\n2018\\tOmarosa Manigault Newman\\tTweet: \\u275dGood work by General Kelly for quickly firing that dog!\\u275e plus calling her a \\u275dcrazed, crying lowlife.\\u275e6\\tDog = disloyal traitor who deserved to be put down.\\n2018+\\tGeneric enemies\\tWashington Post/Vanity Fair catalogue: \\u275dchoked like a dog,\\u275e \\u275dfired like a dog,\\u275e \\u275dsweat like a dog,\\u275e \\u275dbegging for money like a dog\\u275e\\u20262\\tDog = all-purpose insult for enemies: degraded, humiliated, expendable.\\n2025\\tNatasha Bertrand (CNN reporter)\\tOn Truth Social, says she should be \\u275dthrown out like a dog,\\u275e continuing the pattern.7\\tSame schema: dog = subhuman enemy to be ejected.", "aspectRatio": {"height": 579, "width": 1040}, "image": {"$type": "blob", "ref": {"$link": "bafkreihsgrzhbruzpldbzib2kwmc7faja5gozsplhoauyo3bg25rvbqalu"}, "mimeType": "image/jpeg", "size": 522410}}, {"alt": "Pattern\\u2019s pretty consistent:\\nDog = someone beneath Trump, to humiliate, discard, or dominate\\nNever affectionate, never neutral.\\nDrop Epstein\\u2019s 2011 line into that timeline\\nEpstein\\u2019s line:\\n\\u275dI want you to realize that that dog that hasn\\u2019t barked is Trump.\\u275e (2011)\\nThis is before Trump goes full-time political, but after the 2002 \\u275dterrific guy\\u275e quote and years of social overlap. The phrase itself is a mashup:\\nSherlock Holmes trope: the \\u275ddog that didn\\u2019t bark in the night\\u275e = the silent thing that signals something\\u2019s off.\\nPlus, in Trump-world, \\u275ddog\\u275e is an insult he hurls at others.\\nSo, lined up against the table above:\\nRole reversal:\\nIn Trump\\u2019s own rhetoric, he stands above and calls other people dogs.\\nIn Epstein\\u2019s email, Trump is the dog \\u2014 the one you\\u2019d expect to bark, but who hasn\\u2019t\\u2026 yet.\\nSilence-as-signal:\\nBy 2011, Epstein is already worrying about who might turn on him. He\\u2019s effectively saying:\\nThe one guy who should be loudly disowning me \\u2014 the attack dog \\u2014 is silent. That silence itself is the thing to watch.\\nPre-emptive leverage:\\nEpstein is flagging Trump as both dangerous and untapped:", "aspectRatio": {"height": 746, "width": 715}, "image": {"$type": "blob", "ref": {"$link": "bafkreig2n26mr6fa2lehc5frnyscyqr7423myfyc3egfn4afy6fwp4idqm"}, "mimeType": "image/jpeg", "size": 398168}}, {"alt": "Dangerous, because when Trump does bark, he goes nuclear (\\u275dfired like a dog\\u275e, \\u275dchoked like a dog\\u275e, etc.).\\nUntapped, because at that moment Trump hasn\\u2019t gone public; he\\u2019s the \\u275ddog that hasn\\u2019t barked\\u275e but could.\\nWhy the \\u275ddog\\u275e antennae is justified\\nGiven the pattern:\\nTrump\\u2019s dog insults = he publicly strips enemies of status.\\nEpstein\\u2019s dog metaphor = Trump is the conspicuously quiet actor whose eventual \\u275dbark\\u275e would be a big deal.\\nSo, Epstein\\u2019s sentence reads less like a neutral Sherlock reference and more like a dark in-joke:\\nThe guy who loves calling other people dogs is, in this story, the dog whose silence is ominous.\\nIt implicitly acknowledges Trump\\u2019s capacity for vicious, public attacks and suggests Epstein is tracking when/if that capacity will be used on him.", "aspectRatio": {"height": 549, "width": 721}, "image": {"$type": "blob", "ref": {"$link": "bafkreieiqpmh64hu4mfzniijfwi4udwwmjdsecqka6zaj4afoot7j73hay"}, "mimeType": "image/jpeg", "size": 306640}}, {"alt": "Citations:\\n1\\t\\u275dTrump\'s Rationalization for Calling Women \\u275bdogs\\u275c Helped Define His Campaign\\u275e \\u2014 https://www.washingtonpost.com/news/politics/wp/2018/08/14/trumps-rationalization-for-calling-women-dogs-helped-define-his-campaign/\\n2\\t\\u275dDog Days: Trump and His Toxic Twitter Insults of Omarosa\\u275e \\u2014 https://www.newyorker.com/news/our-columnists/dog-days-trump-and-his-toxic-twitter-insults-of-omarosa\\n3\\t\\u275dDonald J. Trump\\u275e \\u2014 https://x.com/realDonaldTrump/status/652150749082746881\\n4\\t\\u275dDonald Trump: Mitt Romney \\u275bChoked Like A Dog\\u275c In The 2012 Election\\u275e \\u2014 https://www.scrippsnews.com/Politics/presidential-election/donald-trump-mitt-romney-choked-like-a-dog-in-the-2012-election\\n5\\t\\u275dTrump\\u2019s Amnesia \\u2014 FactCheck.org\\u275e \\u2014 https://www.factcheck.org/2015/08/trumps-amnesia/\\n6\\t\\u275dIn series of nasty tweets, Trump calls Omarosa \\u275bdog,\\u275c \\u275blying lowlife\\u275c\\u275e \\u2014 https://www.pbs.org/newshour/politics/in-series-of-nasty-tweets-trump-calls-omarosa-dog-lying-lowlife\\n7\\t\\u275dTrump Wants CNN Reporter He Spent Days Watching Fired \\u275bLike a Dog\\u275c\\u275e \\u2014 https://www.thedailybeast.com/trump-wants-cnn-star-he-spent-days-watching-fired-like-a-dog/", "aspectRatio": {"height": 620, "width": 724}, "image": {"$type": "blob", "ref": {"$link": "bafkreibaittdu2t4xhchav76m5h33a2bzmopzegdxfy4tk6v7dgz4r33qi"}, "mimeType": "image/jpeg", "size": 404711}}], "score": 0.0, "url": "https://bsky.app/profile/ajsdecepida.bsky.social/post/3m5iu5a7tdk2j"}, {"uri": "at://did:plc:tdkozxvfyqk3ywtialqf675s/app.bsky.feed.post/3m57bc5v2l22w", "cid": "bafyreiemii3meqzp4wzszhj55mqsoea3humqqxd2rzv2lf3ebs3tghrmxu", "text": "See below for a sequence of separate tweets (not a thread, unhelpfully) from @mrmujac who chronicles and authors books on the the #MUAcademy about the consecutive games with a youth player in the 1st XI match day squad being in danger\\u2026or not: (screenshots in reverse order, alt text in order)", "created_at": "2025-11-09T13:58:46.651Z", "author_handle": "j0hnbev.bsky.social", "author_name": "John \\ud83c\\udff4\\udb40\\udc67\\udb40\\udc62\\udb40\\udc77\\udb40\\udc6c\\udb40\\udc73\\udb40\\udc7f\\ud83d\\udd34\\ud83d\\udc79", "like_count": 2, "repost_count": 1, "reply_count": 0, "quote_count": 0, "parent_uri": null, "parent_cid": null, "reply_root_uri": null, "reply_root_cid": null, "embed": {"$type": "app.bsky.embed.images", "images": [{"alt": "Screenshot of tweets from @mrmujac: \\n\\nACADEMY NEWS: It\'s now been 88 years since Tom Manley and Jackie Wassall played against Fulham on 30th October 1937. It started a sequence of 4,331 consecutive games with an Academy/Youth player in the official match day squad...300+ players...150+ internationals...20,000+ games\\n\\nACADEMY NEWS: There seemed to be a lot of noise about Jack Fletcher being the only Academy player being involved yesterday...so here\'s a few things to note.\\n\\n1. All youth systems work in cycles. There are often lean periods when players don\'t come through. We have had so many changes in managers over the last decade that it\'s been like a train station with so many new players. It makes it harder to break through.\\n\\n2. We have had plenty of periods in our history where there have been only one youth player in the squad...twice in 1992/93 and three times in 1993/94 as examples. The mid 1970\'s, early 1980\'s and later 1980\'s were all periods where very few youth players were breaking through.\\n", "aspectRatio": {"height": 1717, "width": 1703}, "image": {"$type": "blob", "ref": {"$link": "bafkreiawlfc6ulhmgttnywxmatoqr646yqbhqxxa3s4ql3ehzx2ixc77li"}, "mimeType": "image/jpeg", "size": 724692}}, {"alt": "3. We have a proud record of having an Academy graduate in every match day squad since 1937...88 years and 4,333 games. But if players aren\'t good enough then we shouldn\'t pick people because of a statistic. Luckily we have 18 places available are we still have good youngsters.\\n\\n4. Historically we have the best record of youth development in England and comparable to any other global club. It\'s a record that is part of the fabric of Manchester United and we should be doing everything to build on youth and continue to champion youth development.\\n\\n5. I was pleased that Amorin directly said that we would always find space in the squad for youngsters...but not to keep a record...but as a message to all our current and future youth players...you will always get a chance at United. The way it should always be.\\n\\n6. Finally, I\'m not reading too much into the comments in the press or on social media...once we start to win regularly again there will be plenty of places for youth players to make their mark once again. I can\'t wait to see the next starlet to make the grade.", "aspectRatio": {"height": 1676, "width": 1766}, "image": {"$type": "blob", "ref": {"$link": "bafkreidsll5zbwhinit7m3mnq2jljny6n2v3nser4phh3f6th4hvxvygyq"}, "mimeType": "image/jpeg", "size": 743846}}]}, "embed_type": "images", "embed_images": [{"alt": "Screenshot of tweets from @mrmujac: \\n\\nACADEMY NEWS: It\'s now been 88 years since Tom Manley and Jackie Wassall played against Fulham on 30th October 1937. It started a sequence of 4,331 consecutive games with an Academy/Youth player in the official match day squad...300+ players...150+ internationals...20,000+ games\\n\\nACADEMY NEWS: There seemed to be a lot of noise about Jack Fletcher being the only Academy player being involved yesterday...so here\'s a few things to note.\\n\\n1. All youth systems work in cycles. There are often lean periods when players don\'t come through. We have had so many changes in managers over the last decade that it\'s been like a train station with so many new players. It makes it harder to break through.\\n\\n2. We have had plenty of periods in our history where there have been only one youth player in the squad...twice in 1992/93 and three times in 1993/94 as examples. The mid 1970\'s, early 1980\'s and later 1980\'s were all periods where very few youth players were breaking through.\\n", "aspectRatio": {"height": 1717, "width": 1703}, "image": {"$type": "blob", "ref": {"$link": "bafkreiawlfc6ulhmgttnywxmatoqr646yqbhqxxa3s4ql3ehzx2ixc77li"}, "mimeType": "image/jpeg", "size": 724692}}, {"alt": "3. We have a proud record of having an Academy graduate in every match day squad since 1937...88 years and 4,333 games. But if players aren\'t good enough then we shouldn\'t pick people because of a statistic. Luckily we have 18 places available are we still have good youngsters.\\n\\n4. Historically we have the best record of youth development in England and comparable to any other global club. It\'s a record that is part of the fabric of Manchester United and we should be doing everything to build on youth and continue to champion youth development.\\n\\n5. I was pleased that Amorin directly said that we would always find space in the squad for youngsters...but not to keep a record...but as a message to all our current and future youth players...you will always get a chance at United. The way it should always be.\\n\\n6. Finally, I\'m not reading too much into the comments in the press or on social media...once we start to win regularly again there will be plenty of places for youth players to make their mark once again. I can\'t wait to see the next starlet to make the grade.", "aspectRatio": {"height": 1676, "width": 1766}, "image": {"$type": "blob", "ref": {"$link": "bafkreidsll5zbwhinit7m3mnq2jljny6n2v3nser4phh3f6th4hvxvygyq"}, "mimeType": "image/jpeg", "size": 743846}}], "score": 4.0, "url": "https://bsky.app/profile/j0hnbev.bsky.social/post/3m57bc5v2l22w"}, {"uri": "at://did:plc:mtvn5te7majydwd7txifsyqq/app.bsky.feed.post/3m4yes5mmas2a", "cid": "bafyreigkdmvu7fnfbatkqmrswokdagkly3vy7j6i4upymbaqctgobato2a", "text": "Anyway did ya\'ll know that in 1912 when the Titanic sank the media was literally casting Vicious Mockery on its corpse with no mercy whatsoever\\n\\n#titanic #vintagenews", "created_at": "2025-11-06T20:12:46.312Z", "author_handle": "salamencefury.bsky.social", "author_name": "Stinky Catboy (Dragon flavored)", "like_count": 1, "repost_count": 1, "reply_count": 0, "quote_count": 0, "parent_uri": null, "parent_cid": null, "reply_root_uri": null, "reply_root_cid": null, "embed": {"$type": "app.bsky.embed.images", "images": [{"alt": "A tweet from Copper Lund where he says \\"They were roasting the shit out of the Titanic in the newspaper right after it sank man. This is not a new development, or a chance to stroke your chin about the dangers of social media.\\"", "aspectRatio": {"height": 536, "width": 1033}, "image": {"$type": "blob", "ref": {"$link": "bafkreiayxeunr7dh5abpz7c6u53p23hrtu2hiuxknmsxtfvljwq4eisl74"}, "mimeType": "image/jpeg", "size": 206698}}, {"alt": "A series of tweets with various newspaper headlines from 1912 roasting the Titanic for sinking. The first one, from The Evening Star, Washington DC, April 18, 1912, says \\"The adjective \\"unsinkable\\", like the word \\"fireproof\\", will be accepted here only in an approximate sense.\\" The second headline, from The Butte Inter-Mountain, Montana, April 22, 1912, reads \\"At all, the events the scientists seem to agree that icebergs in the path of ocean liners are not conducive to safety\\". The third headline, from The Chicago Tribune, Illinois, April 23, 1912, has a title saying \\"In the Steamship Office...\\" with the text being:\\n\\n\\"Patron: What can you give me for next Wedsneday\'s sailing?\\"\\n\\"Agent: How about No. 8 on the promenade, deck, starboard, suit you? private dining room, private bath, brass bed, real windows with lace curtains-\\"\\n\\"Patron: Never mind that! What kind of seat can you give me in the lifeboat?\\"", "aspectRatio": {"height": 1759, "width": 1015}, "image": {"$type": "blob", "ref": {"$link": "bafkreidqo7kysfzkjz6vvkxslg3vutuviavejvea746qbg42kvgi6dboai"}, "mimeType": "image/jpeg", "size": 629346}}, {"alt": "Continuing with the series of headlines mocking the Titanic for sinking, the next one is from the Topeka Daily Capital, Kansas, April 24, 1912, and reads \\"If you own a life boat right now is a good time to sell it. There is a big demand for life boats and prices have gone up.\\" The next one is from the Jewell County Republican, Kansas, July 5, 1912, and reads \\"One of the beauties of aviating is that there are no icebergs floating in the sky.\\" The last headline is from The Baltimore Sun, Maryland, May 1, 1912, and says \\"If the people on the Titanic had known what the poets were going to do to them maybe some of them would not have cared to survive.\\"", "aspectRatio": {"height": 1643, "width": 996}, "image": {"$type": "blob", "ref": {"$link": "bafkreidrwf2mazt5wyrcftvnjyiyfi6xfijaf73laevppdilqsv4a4nnji"}, "mimeType": "image/jpeg", "size": 519306}}, {"alt": "A crop of a headline from an unknown newspaper from 1912 saying \\"It was kind of the Titanic to provide a ball room for the mermaids\\".", "aspectRatio": {"height": 165, "width": 589}, "image": {"$type": "blob", "ref": {"$link": "bafkreibhtu2zf5nwxsqp3nedzmncgulexwgxdxlan7j2gakabskqnmxyle"}, "mimeType": "image/jpeg", "size": 59592}}]}, "embed_type": "images", "embed_images": [{"alt": "A tweet from Copper Lund where he says \\"They were roasting the shit out of the Titanic in the newspaper right after it sank man. This is not a new development, or a chance to stroke your chin about the dangers of social media.\\"", "aspectRatio": {"height": 536, "width": 1033}, "image": {"$type": "blob", "ref": {"$link": "bafkreiayxeunr7dh5abpz7c6u53p23hrtu2hiuxknmsxtfvljwq4eisl74"}, "mimeType": "image/jpeg", "size": 206698}}, {"alt": "A series of tweets with various newspaper headlines from 1912 roasting the Titanic for sinking. The first one, from The Evening Star, Washington DC, April 18, 1912, says \\"The adjective \\"unsinkable\\", like the word \\"fireproof\\", will be accepted here only in an approximate sense.\\" The second headline, from The Butte Inter-Mountain, Montana, April 22, 1912, reads \\"At all, the events the scientists seem to agree that icebergs in the path of ocean liners are not conducive to safety\\". The third headline, from The Chicago Tribune, Illinois, April 23, 1912, has a title saying \\"In the Steamship Office...\\" with the text being:\\n\\n\\"Patron: What can you give me for next Wedsneday\'s sailing?\\"\\n\\"Agent: How about No. 8 on the promenade, deck, starboard, suit you? private dining room, private bath, brass bed, real windows with lace curtains-\\"\\n\\"Patron: Never mind that! What kind of seat can you give me in the lifeboat?\\"", "aspectRatio": {"height": 1759, "width": 1015}, "image": {"$type": "blob", "ref": {"$link": "bafkreidqo7kysfzkjz6vvkxslg3vutuviavejvea746qbg42kvgi6dboai"}, "mimeType": "image/jpeg", "size": 629346}}, {"alt": "Continuing with the series of headlines mocking the Titanic for sinking, the next one is from the Topeka Daily Capital, Kansas, April 24, 1912, and reads \\"If you own a life boat right now is a good time to sell it. There is a big demand for life boats and prices have gone up.\\" The next one is from the Jewell County Republican, Kansas, July 5, 1912, and reads \\"One of the beauties of aviating is that there are no icebergs floating in the sky.\\" The last headline is from The Baltimore Sun, Maryland, May 1, 1912, and says \\"If the people on the Titanic had known what the poets were going to do to them maybe some of them would not have cared to survive.\\"", "aspectRatio": {"height": 1643, "width": 996}, "image": {"$type": "blob", "ref": {"$link": "bafkreidrwf2mazt5wyrcftvnjyiyfi6xfijaf73laevppdilqsv4a4nnji"}, "mimeType": "image/jpeg", "size": 519306}}, {"alt": "A crop of a headline from an unknown newspaper from 1912 saying \\"It was kind of the Titanic to provide a ball room for the mermaids\\".", "aspectRatio": {"height": 165, "width": 589}, "image": {"$type": "blob", "ref": {"$link": "bafkreibhtu2zf5nwxsqp3nedzmncgulexwgxdxlan7j2gakabskqnmxyle"}, "mimeType": "image/jpeg", "size": 59592}}], "score": 3.0, "url": "https://bsky.app/profile/salamencefury.bsky.social/post/3m4yes5mmas2a"}, {"uri": "at://did:plc:rsiddsnbwfju2ikpyjuc3akt/app.bsky.feed.post/3m4w3uajn3s2f", "cid": "bafyreidziwgczlyxzd5qi5x55myl6qjndpobsrxv2gt3enmo4u2kltwgfa", "text": "They had a moratorium on Mamdani posts for the last few months because I assume there was enough pushback from the lower decks to stop both-sidesing. But then they broke the moratorium two weeks ago to bothsides Mamdani vs. Cuomo", "created_at": "2025-11-05T22:27:33.326Z", "author_handle": "standard.bsky.social", "author_name": "standard \\ud83e\\udd6a", "like_count": 0, "repost_count": 0, "reply_count": 0, "quote_count": 0, "parent_uri": "at://did:plc:7umvpuxe2vbrc3zrzuquzniu/app.bsky.feed.post/3m4w34wdkhk2o", "parent_cid": "bafyreidb5jhlat6ogkw6pvafaq5beinrr2l3knefnajvtarmf25ahqnfdy", "reply_root_uri": "at://did:plc:rsiddsnbwfju2ikpyjuc3akt/app.bsky.feed.post/3m4w2pvlkj22f", "reply_root_cid": "bafyreihw6qibt7solcujcxdtzdkot5khok2tqhwlrogyq42iehemzy7uga", "embed": {"$type": "app.bsky.embed.images", "images": [{"alt": "A screenshot of a Twitter search for posts from the account \\"@CNLiberalism\\" mentioning \\"Mamdani\\". The \\"Latest\\" tab is selected. The screenshot displays three tweets from the account \\"New Liberals\\" (@CNLiberalism), each discussing New York politician Zohran Mamdani.\\n\\nFirst tweet (Top of image):\\nPosted on October 29\\nThe tweet reads:\\n\\n\\"- Mamdani won\\u2019t support rezoning in Long Island, and is refusing to endorse props 2-5, despite his past overtures to abundance\\n\\nCuomo is opposing housing in Elizabeth Street Garden, and is clearly a nimby, but also supports prop 2-5 bc he wants more power\\n\\nNYC politics is cursed\\"\\n\\nAttached below this tweet is a quote tweet of another post by journalist Emma G. Fitzsimmons (@emmagf), posted October 28. Her tweet reads:\\n\\n\\"Zohran Mamdani declined to say whether he supports the Long Island City rezoning which faces a major City Council vote this week.\\"\\n\\nShe includes a cropped screenshot of Mamdani\\u2019s public statement. It reads:\\n\\n\\"I\'ve said time and again that I will always appreciate and celebrate the prospect of building more housing in New York City, and I also am someone who believes firmly that we should have contiguous Park access between Queens Bridge Park and gantry Plaza. These are incredibly important things that need to be done, and I\'m looking forward to seeing the resolution of that.\\"\\n\\nAttached is an image of a chart and two tweet excerpts. The chart is titled \\"The favorability ratings of Democrats\\", showing bars for four politicians: Gavin Newsom, Alexandria Ocasio-Cortez, Kamala Harris, and Zohran Mamdani. It shows the percentage of people who view each figure as \\"Somewhat/Very favorable\\", \\"Haven\\u2019t heard\\", or \\"Somewhat/Very unfavorable.\\" Notably, Mamdani has the highest \\"Haven\\u2019t heard\\" percentage at 40%.\\n\\nNext to the chart are tweets by users reacting to the data, criticizing the poll for being unrepresentative.\\n", "aspectRatio": {"height": 1288, "width": 661}, "image": {"$type": "blob", "ref": {"$link": "bafkreigohftgl6bjtnzn2bne2vddnytqfhx2cbzukcbo5sjq755amms2xy"}, "mimeType": "image/jpeg", "size": 685189}}]}, "embed_type": "images", "embed_images": [{"alt": "A screenshot of a Twitter search for posts from the account \\"@CNLiberalism\\" mentioning \\"Mamdani\\". The \\"Latest\\" tab is selected. The screenshot displays three tweets from the account \\"New Liberals\\" (@CNLiberalism), each discussing New York politician Zohran Mamdani.\\n\\nFirst tweet (Top of image):\\nPosted on October 29\\nThe tweet reads:\\n\\n\\"- Mamdani won\\u2019t support rezoning in Long Island, and is refusing to endorse props 2-5, despite his past overtures to abundance\\n\\nCuomo is opposing housing in Elizabeth Street Garden, and is clearly a nimby, but also supports prop 2-5 bc he wants more power\\n\\nNYC politics is cursed\\"\\n\\nAttached below this tweet is a quote tweet of another post by journalist Emma G. Fitzsimmons (@emmagf), posted October 28. Her tweet reads:\\n\\n\\"Zohran Mamdani declined to say whether he supports the Long Island City rezoning which faces a major City Council vote this week.\\"\\n\\nShe includes a cropped screenshot of Mamdani\\u2019s public statement. It reads:\\n\\n\\"I\'ve said time and again that I will always appreciate and celebrate the prospect of building more housing in New York City, and I also am someone who believes firmly that we should have contiguous Park access between Queens Bridge Park and gantry Plaza. These are incredibly important things that need to be done, and I\'m looking forward to seeing the resolution of that.\\"\\n\\nAttached is an image of a chart and two tweet excerpts. The chart is titled \\"The favorability ratings of Democrats\\", showing bars for four politicians: Gavin Newsom, Alexandria Ocasio-Cortez, Kamala Harris, and Zohran Mamdani. It shows the percentage of people who view each figure as \\"Somewhat/Very favorable\\", \\"Haven\\u2019t heard\\", or \\"Somewhat/Very unfavorable.\\" Notably, Mamdani has the highest \\"Haven\\u2019t heard\\" percentage at 40%.\\n\\nNext to the chart are tweets by users reacting to the data, criticizing the poll for being unrepresentative.\\n", "aspectRatio": {"height": 1288, "width": 661}, "image": {"$type": "blob", "ref": {"$link": "bafkreigohftgl6bjtnzn2bne2vddnytqfhx2cbzukcbo5sjq755amms2xy"}, "mimeType": "image/jpeg", "size": 685189}}], "score": 0.0, "url": "https://bsky.app/profile/standard.bsky.social/post/3m4w3uajn3s2f"}, {"uri": "at://did:plc:mlan7kocyn37uzb25btjt2cc/app.bsky.feed.post/3m4ten472ak2t", "cid": "bafyreigystkh7aboafn437awiv7dgxmvjxhnwcxxnul5jd7g4z5pz6xf5u", "text": "Around 20% election day turnout (not counting early voting) in deep-blue Falls Church as of 3 pm today; last year, in the presidential election, it didn\'t hit 20% until 5 pm or so... bluevirginia.us/2025/11/virg... h/t @davebjerke.bsky.social", "created_at": "2025-11-04T20:26:38.369Z", "author_handle": "bluevirginia.bsky.social", "author_name": "Blue Virginia", "like_count": 27, "repost_count": 6, "reply_count": 1, "quote_count": 2, "parent_uri": null, "parent_cid": null, "reply_root_uri": null, "reply_root_cid": null, "embed": {"$type": "app.bsky.embed.images", "images": [{"alt": "Falls Church elections official Dave Bjerke tweets out 3 pm turnout numbers", "aspectRatio": {"height": 392, "width": 361}, "image": {"$type": "blob", "ref": {"$link": "bafkreicrkjdgailb276mdgddhtavpu2jdft626g2iray6d5grdyijbsf44"}, "mimeType": "image/jpeg", "size": 47465}}]}, "embed_type": "images", "embed_images": [{"alt": "Falls Church elections official Dave Bjerke tweets out 3 pm turnout numbers", "aspectRatio": {"height": 392, "width": 361}, "image": {"$type": "blob", "ref": {"$link": "bafkreicrkjdgailb276mdgddhtavpu2jdft626g2iray6d5grdyijbsf44"}, "mimeType": "image/jpeg", "size": 47465}}], "score": 43.5, "url": "https://bsky.app/profile/bluevirginia.bsky.social/post/3m4ten472ak2t"}]'], 'topic': 'Summary of the last 5 tweets from Blue Sky', 'synthesis_style': 'concise'}
+INFO:src.agent.writing_agent:[WRITING AGENT] Tool: synthesize_content(topic='Summary of the last 5 tweets from Blue Sky', style='concise', brief=No)
+INFO:src.agent.writing_agent:[WRITING AGENT] Learning from 1 past attempts - using more detailed synthesis
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59778 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59785 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59785 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:src.agent.writing_agent:[WRITING AGENT] Synthesized 1 sources → 204 words
+INFO:src.agent.agent:Step 2 result: {'synthesized_content': "The recent tweets from Blue Sky provide an intricate analysis of Donald Trump's use of the term 'dog' as a political insult throughout his career. This pattern reveals a consistent dehumanization tactic aimed at opponents and critics, highlighting a unique rhetorical strategy. These tweets delve into the timeline of Trump's 'dog' insults, beginning with derogatory comments directed at women such as Arianna Huffington and Kristen Stewart, where 'dog' equated to being ugly and immoral. The analysis progresses through his targeting of media figures like Chuck Todd, portraying them as losers and failures, to conservative pundits whom he labeled as supplicants. On the campaign trail in 2016, Trump used the term against Mitt Romney, branding him as weak. By 2018, the term 'dog' had broadened to encompass various enemies, consistently implying degradation and expendability. A notable insight is the juxtaposition with Jeffrey Epstein's 2011 email, where Trump himself is likened to a 'dog that hasn't barked,' suggesting a silent menace or potential threat. This analogy positions Trump as a figure whose silence, in certain contexts, is as significant as his vocal attacks. The tweets collectively emphasize a pattern where the 'dog' metaphor is never neutral or affectionate, reinforcing Trump's overarching narrative of domination and humiliation.", 'key_points': ["Donald Trump frequently uses 'dog' as a derogatory term against opponents.", "The insult 'dog' has been aimed at various figures, including women, media figures, and political opponents.", 'The term implies ugliness, immorality, failure, and expendability.', "Jeffrey Epstein's email from 2011 presents Trump as a 'dog that hasn't barked,' suggesting a potential threat.", "Trump's rhetorical strategy is to dehumanize and dominate through language."], 'themes_identified': ['Dehumanization in political rhetoric', 'Consistent use of derogatory language', 'Rhetorical strategies in political discourse', 'Silence as a form of power'], 'source_count': 1, 'brief_compliance': {'facts_included': ["Trump's use of 'dog' as an insult", "Timeline and context of 'dog' insults", "Epstein's 2011 email regarding Trump"], 'data_included': ["Timeline examples of Trump's 'dog' insults", "Analysis of Epstein's metaphor regarding Trump"]}, 'word_count': 204, 'message': 'Synthesized 1 sources into 204 words'}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[2] for tool 'synthesize_content'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['synthesized_content', 'key_points', 'themes_identified', 'source_count', 'brief_compliance', 'word_count', 'message', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'unknown'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[2]
+INFO:src.agent.agent:=== EXECUTING STEP 3: reply_to_user ===
+INFO:src.agent.agent:Reasoning: Provide the user with the summarized content of the tweets.
+INFO:src.agent.agent:Resolved parameters: {'message': 'Here is the summary of the last 5 tweets from Blue Sky.', 'details': "The recent tweets from Blue Sky provide an intricate analysis of Donald Trump's use of the term 'dog' as a political insult throughout his career. This pattern reveals a consistent dehumanization tactic aimed at opponents and critics, highlighting a unique rhetorical strategy. These tweets delve into the timeline of Trump's 'dog' insults, beginning with derogatory comments directed at women such as Arianna Huffington and Kristen Stewart, where 'dog' equated to being ugly and immoral. The analysis progresses through his targeting of media figures like Chuck Todd, portraying them as losers and failures, to conservative pundits whom he labeled as supplicants. On the campaign trail in 2016, Trump used the term against Mitt Romney, branding him as weak. By 2018, the term 'dog' had broadened to encompass various enemies, consistently implying degradation and expendability. A notable insight is the juxtaposition with Jeffrey Epstein's 2011 email, where Trump himself is likened to a 'dog that hasn't barked,' suggesting a silent menace or potential threat. This analogy positions Trump as a figure whose silence, in certain contexts, is as significant as his vocal attacks. The tweets collectively emphasize a pattern where the 'dog' metaphor is never neutral or affectionate, reinforcing Trump's overarching narrative of domination and humiliation.", 'status': 'success'}
+INFO:src.agent.reply_tool:[REPLY TOOL] Prepared reply payload: {'type': 'reply', 'message': 'Here is the summary of the last 5 tweets from Blue Sky.', 'details': "The recent tweets from Blue Sky provide an intricate analysis of Donald Trump's use of the term 'dog' as a political insult throughout his career. This pattern reveals a consistent dehumanization tactic aimed at opponents and critics, highlighting a unique rhetorical strategy. These tweets delve into the timeline of Trump's 'dog' insults, beginning with derogatory comments directed at women such as Arianna Huffington and Kristen Stewart, where 'dog' equated to being ugly and immoral. The analysis progresses through his targeting of media figures like Chuck Todd, portraying them as losers and failures, to conservative pundits whom he labeled as supplicants. On the campaign trail in 2016, Trump used the term against Mitt Romney, branding him as weak. By 2018, the term 'dog' had broadened to encompass various enemies, consistently implying degradation and expendability. A notable insight is the juxtaposition with Jeffrey Epstein's 2011 email, where Trump himself is likened to a 'dog that hasn't barked,' suggesting a silent menace or potential threat. This analogy positions Trump as a figure whose silence, in certain contexts, is as significant as his vocal attacks. The tweets collectively emphasize a pattern where the 'dog' metaphor is never neutral or affectionate, reinforcing Trump's overarching narrative of domination and humiliation.", 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:Step 3 result: {'type': 'reply', 'message': 'Here is the summary of the last 5 tweets from Blue Sky.', 'details': "The recent tweets from Blue Sky provide an intricate analysis of Donald Trump's use of the term 'dog' as a political insult throughout his career. This pattern reveals a consistent dehumanization tactic aimed at opponents and critics, highlighting a unique rhetorical strategy. These tweets delve into the timeline of Trump's 'dog' insults, beginning with derogatory comments directed at women such as Arianna Huffington and Kristen Stewart, where 'dog' equated to being ugly and immoral. The analysis progresses through his targeting of media figures like Chuck Todd, portraying them as losers and failures, to conservative pundits whom he labeled as supplicants. On the campaign trail in 2016, Trump used the term against Mitt Romney, branding him as weak. By 2018, the term 'dog' had broadened to encompass various enemies, consistently implying degradation and expendability. A notable insight is the juxtaposition with Jeffrey Epstein's 2011 email, where Trump himself is likened to a 'dog that hasn't barked,' suggesting a silent menace or potential threat. This analogy positions Trump as a figure whose silence, in certain contexts, is as significant as his vocal attacks. The tweets collectively emphasize a pattern where the 'dog' metaphor is never neutral or affectionate, reinforcing Trump's overarching narrative of domination and humiliation.", 'artifacts': [], 'status': 'success', 'error': False}
+INFO:src.agent.agent:[AGENT] Storing result in step_results[3] for tool 'reply_to_user'
+INFO:src.agent.agent:[AGENT] Result type: <class 'dict'>, is_dict: True
+INFO:src.agent.agent:[AGENT] Result keys: ['type', 'message', 'details', 'artifacts', 'status', 'error', 'tool']
+INFO:src.agent.agent:[AGENT] Result type field: 'reply'
+INFO:src.agent.agent:[AGENT] ✅ Result stored in step_results[3]
+INFO:src.agent.agent:=== FINALIZING ===
+INFO:src.agent.agent:[FINALIZE] Enforcing reply_to_user as final step
+INFO:src.agent.agent:[FINALIZE] ✅ Reply confirmed in step_results after enforcement
+INFO:src.agent.agent:[FINALIZE] Gathering results: 3 step results
+INFO:src.agent.agent:[FINALIZE] Found reply_payload in step 3: Here is the summary of the last 5 tweets from Blue...
+INFO:src.agent.agent:[RESULT_CAPTURE] Result captured at 1763066314.347527
+INFO:src.agent.agent:[FINALIZE] Result captured in ResultCapture for non-blocking return
+INFO:src.agent.agent:[FINALIZE] ✅ Final result set with status: success, message: Here is the summary of the last 5 tweets from Blue...
+INFO:src.agent.agent:[FINALIZE] Final result keys: ['goal', 'steps_executed', 'results', 'step_results', 'status', 'reply_step_id', 'message', 'details']
+INFO:src.agent.agent:Final status: success
+INFO:src.agent.agent:[AGENT] graph.invoke() completed in 34.94s
+INFO:src.agent.agent:[RESULT_CAPTURE] Result retrieved after 35.01s wait
+INFO:src.agent.agent:[AGENT] Result captured after 35.02s, returning immediately
+INFO:src.agent.agent:[AGENT] graph.invoke() may still be running in background for cleanup
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59799 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59808 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59893 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59893 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59917 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:[TRANSCRIBE] Request received from: recording.webm, content_type: audio/webm;codecs=opus
+INFO:__main__:[TRANSCRIBE] Request headers available: True
+INFO:__main__:Audio file size: 112352 bytes
+INFO:__main__:Saved temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpt0y0eq8n.webm
+INFO:__main__:Calling OpenAI Whisper API...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/audio/transcriptions "HTTP/1.1 200 OK"
+INFO:__main__:Transcription successful: 65 characters - 'Can you post on blue sky saying hello world, this is AI tweeting....'
+INFO:__main__:Cleaned up temporary file: /var/folders/qv/5nnbl3cd5fq6vnfqgrjwm0v00000gn/T/tmpt0y0eq8n.webm
+INFO:     127.0.0.1:59926 - "POST /api/transcribe HTTP/1.1" 200 OK
+INFO:__main__:WebSocket received (session 979c19bc-df09-4d36-8e75-207239625ebc): message='Can you post on blue sky saying hello world, this is AI tweeting.', command=''
+INFO:__main__:[API SERVER] Waiting for previous response to be delivered for session 979c19bc-df09-4d36-8e75-207239625ebc
+INFO:__main__:[API SERVER] Starting agent execution for session 979c19bc-df09-4d36-8e75-207239625ebc: Can you post on blue sky saying hello world, this is AI tweeting....
+INFO:src.agent.agent:Starting agent for request: Can you post on blue sky saying hello world, this is AI tweeting.
+INFO:src.agent.agent:[SESSION] Loaded context for session: default_user/979c19bc-df09-4d36-8e75-207239625ebc
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59948 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59959 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:59977 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60021 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60027 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60078 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60101 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60110 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60163 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60163 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60365 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60391 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60677 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:__main__:Token file check: data/spotify_tokens.json exists=True
+INFO:__main__:Spotify auth status: authenticated=True, has_token=True, token_file_exists=True
+INFO:     127.0.0.1:60837 - "GET /api/spotify/auth-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60874 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:60879 - "GET / HTTP/1.1" 200 OK

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -42,6 +42,7 @@ class BlueskyAPIClient:
         self.access_jwt: Optional[str] = None
         self.refresh_jwt: Optional[str] = None
         self.did: Optional[str] = None
+        self.handle: Optional[str] = None  # Store the handle from session
 
         self._authenticate()
 
@@ -60,8 +61,14 @@ class BlueskyAPIClient:
         response = self._get("app.bsky.feed.searchPosts", params=params)
         return response.json()
 
-    def get_author_feed(self, actor: str, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch posts from a specific author/handle."""
+    def get_author_feed(self, actor: Optional[str] = None, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch posts from a specific author/handle. If actor is None, uses authenticated user's handle."""
+        if actor is None:
+            # Use authenticated user's handle (prefer handle over identifier/email)
+            actor = self.handle or self.did or self.identifier
+            if not actor:
+                raise BlueskyAPIError("Cannot get author feed: no actor specified and no authenticated user handle available.")
+        
         params = {
             "actor": actor,
             "limit": max(1, min(limit, 100)),
@@ -71,6 +78,13 @@ class BlueskyAPIClient:
 
         response = self._get("app.bsky.feed.getAuthorFeed", params=params)
         return response.json()
+    
+    def get_my_handle(self) -> str:
+        """Get the authenticated user's handle."""
+        if not self.did:
+            raise BlueskyAPIError("Cannot get handle: not authenticated.")
+        # Return handle if available, otherwise fall back to DID or identifier
+        return self.handle or self.did or self.identifier
 
     def get_popular(self, limit: int = 10, cursor: Optional[str] = None) -> Dict[str, Any]:
         """Fetch globally popular posts (Bluesky curated)."""
@@ -107,6 +121,125 @@ class BlueskyAPIClient:
         response = self._post("com.atproto.repo.createRecord", json=payload)
         return response.json()
 
+    def get_timeline(self, limit: int = 50, cursor: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch the authenticated user's timeline (following feed)."""
+        params = {
+            "limit": max(1, min(limit, 100)),
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        response = self._get("app.bsky.feed.getTimeline", params=params)
+        return response.json()
+
+    def get_list_feed(self, list_uri: str, limit: int = 50, cursor: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch posts from a specific Bluesky list."""
+        params = {
+            "list": list_uri,
+            "limit": max(1, min(limit, 100)),
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        response = self._get("app.bsky.feed.getListFeed", params=params)
+        return response.json()
+
+    def list_notifications(self, limit: int = 50, cursor: Optional[str] = None, seen_at: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch notifications (mentions, replies, likes, follows, etc.)."""
+        params = {
+            "limit": max(1, min(limit, 100)),
+        }
+        if cursor:
+            params["cursor"] = cursor
+        if seen_at:
+            params["seenAt"] = seen_at
+
+        response = self._get("app.bsky.notification.listNotifications", params=params)
+        return response.json()
+
+    def get_posts(self, uris: List[str]) -> Dict[str, Any]:
+        """Bulk lookup posts by their AT Protocol URIs."""
+        if not uris:
+            return {"posts": []}
+
+        params = {"uris": uris}
+        response = self._get("app.bsky.feed.getPosts", params=params)
+        return response.json()
+
+    def reply_to_post(self, text: str, reply_to_uri: str, reply_to_cid: str) -> Dict[str, Any]:
+        """Reply to an existing post, creating a threaded conversation."""
+        if not text or not text.strip():
+            raise BlueskyAPIError("Cannot create an empty Bluesky reply.")
+
+        clean_text = text.strip()
+        if len(clean_text) > 300:
+            raise BlueskyAPIError("Bluesky posts are limited to 300 characters.")
+
+        record = {
+            "$type": "app.bsky.feed.post",
+            "text": clean_text,
+            "createdAt": self._timestamp(),
+            "reply": {
+                "root": {
+                    "uri": reply_to_uri,
+                    "cid": reply_to_cid,
+                },
+                "parent": {
+                    "uri": reply_to_uri,
+                    "cid": reply_to_cid,
+                },
+            },
+        }
+
+        payload = {
+            "repo": self.did,
+            "collection": "app.bsky.feed.post",
+            "record": record,
+        }
+
+        response = self._post("com.atproto.repo.createRecord", json=payload)
+        return response.json()
+
+    def like_post(self, subject_uri: str, subject_cid: str) -> Dict[str, Any]:
+        """Like a post."""
+        record = {
+            "$type": "app.bsky.feed.like",
+            "subject": {
+                "uri": subject_uri,
+                "cid": subject_cid,
+            },
+            "createdAt": self._timestamp(),
+        }
+
+        payload = {
+            "repo": self.did,
+            "collection": "app.bsky.feed.like",
+            "record": record,
+        }
+
+        response = self._post("com.atproto.repo.createRecord", json=payload)
+        return response.json()
+
+    def repost_post(self, subject_uri: str, subject_cid: str) -> Dict[str, Any]:
+        """Repost (boost) a post."""
+        record = {
+            "$type": "app.bsky.feed.repost",
+            "subject": {
+                "uri": subject_uri,
+                "cid": subject_cid,
+            },
+            "createdAt": self._timestamp(),
+        }
+
+        payload = {
+            "repo": self.did,
+            "collection": "app.bsky.feed.repost",
+            "record": record,
+        }
+
+        response = self._post("com.atproto.repo.createRecord", json=payload)
+        return response.json()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -125,6 +258,7 @@ class BlueskyAPIClient:
         self.access_jwt = data.get("accessJwt")
         self.refresh_jwt = data.get("refreshJwt")
         self.did = data.get("did")
+        self.handle = data.get("handle")  # Get handle from session response
 
         if not self.access_jwt or not self.did:
             raise BlueskyAPIError("Bluesky session missing token or DID.")

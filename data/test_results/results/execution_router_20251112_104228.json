@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_browse_and_play_song_found",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "tests/test_execution_router.py:322: in test_browse_and_play_song_found\n    self.assertTrue(result[\"success\"])\nE   AssertionError: False is not true",
+    "duration": 0.3255019160278607
+  },
+  "timestamp": "2025-11-12T10:42:28.720727",
+  "test_name": "execution_router"
+}

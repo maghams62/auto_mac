@@ -65,26 +65,38 @@ def create_keynote(
                         "content": para.strip()
                     })
 
+        # Construct the path before creation
+        if output_path:
+            final_path = output_path
+        else:
+            import os
+            final_path = os.path.expanduser(f"~/Documents/{title}.key")
+
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=final_path
         )
 
         if success:
-            # Construct the path if not provided
-            if output_path:
-                final_path = output_path
+            # KeynoteComposer already verifies the file exists, but double-check here
+            import os
+            if os.path.exists(final_path) and os.path.isfile(final_path):
+                logger.info(f"✅ Keynote file verified at: {final_path}")
+                return {
+                    "keynote_path": final_path,
+                    "slide_count": len(slides) + 1,  # +1 for title slide
+                    "message": "Keynote presentation created successfully"
+                }
             else:
-                import os
-                final_path = os.path.expanduser(f"~/Documents/{title}.key")
-
-            return {
-                "keynote_path": final_path,
-                "slide_count": len(slides) + 1,  # +1 for title slide
-                "message": "Keynote presentation created successfully"
-            }
+                logger.error(f"❌ Keynote reported success but file not found: {final_path}")
+                return {
+                    "error": True,
+                    "error_type": "KeynoteError",
+                    "error_message": f"Keynote file not saved to {final_path} - file not found after creation",
+                    "retry_possible": True
+                }
         else:
             return {
                 "error": True,
@@ -140,18 +152,25 @@ def create_keynote_with_images(
         # If content is provided, parse it and integrate with images
         if content:
             # Parse the formatted content into slides
-            content_slides = content.split('\n\n\n')
+            # Support two formats:
+            # 1. "SLIDE N: Title" format from stock agent
+            # 2. Simple paragraph splits with \n\n\n
 
-            # Add content slides (text with bullets)
-            for i, content_slide in enumerate(content_slides):
-                if content_slide.strip():
-                    lines = content_slide.strip().split('\n')
-                    slide_title = lines[0] if lines else f"Slide {i+1}"
-                    slide_bullets = [line.lstrip('• ').strip() for line in lines[1:] if line.strip()]
+            import re
 
-                    # Convert bullets to content string for Keynote
-                    if slide_bullets:
-                        slide_content = '\n'.join([f'• {bullet}' for bullet in slide_bullets])
+            # Check if content uses "SLIDE N:" markers
+            if re.search(r'SLIDE \d+:', content):
+                # Split by SLIDE markers
+                slide_pattern = r'SLIDE \d+:\s*([^\n]+)\n((?:•[^\n]+\n?)*)'
+                matches = re.findall(slide_pattern, content)
+
+                for slide_title, bullet_text in matches:
+                    slide_title = slide_title.strip()
+                    # Extract bullets
+                    bullets = [line.lstrip('• ').strip() for line in bullet_text.strip().split('\n') if line.strip()]
+
+                    if bullets:
+                        slide_content = '\n'.join([f'• {bullet}' for bullet in bullets])
                     else:
                         slide_content = ''
 
@@ -159,6 +178,30 @@ def create_keynote_with_images(
                         "title": slide_title,
                         "content": slide_content
                     })
+
+                logger.info(f"[PRESENTATION AGENT] Parsed {len(slides)} slides using SLIDE markers")
+            else:
+                # Fallback: split by triple newlines
+                content_slides = content.split('\n\n\n')
+
+                for i, content_slide in enumerate(content_slides):
+                    if content_slide.strip():
+                        lines = content_slide.strip().split('\n')
+                        slide_title = lines[0] if lines else f"Slide {i+1}"
+                        slide_bullets = [line.lstrip('• ').strip() for line in lines[1:] if line.strip()]
+
+                        # Convert bullets to content string for Keynote
+                        if slide_bullets:
+                            slide_content = '\n'.join([f'• {bullet}' for bullet in slide_bullets])
+                        else:
+                            slide_content = ''
+
+                        slides.append({
+                            "title": slide_title,
+                            "content": slide_content
+                        })
+
+                logger.info(f"[PRESENTATION AGENT] Parsed {len(slides)} slides using paragraph splits")
 
             # Add image slides separately (Keynote doesn't support text + image on same slide easily)
             import os
@@ -193,21 +236,22 @@ def create_keynote_with_images(
         )
 
         if success:
-            # Verify the file actually exists
+            # KeynoteComposer already verifies the file exists, but double-check here
             import os
-            if os.path.exists(output_path):
+            if os.path.exists(output_path) and os.path.isfile(output_path):
+                logger.info(f"✅ Keynote file with images verified at: {output_path}")
                 return {
                     "keynote_path": output_path,
                     "slide_count": len(slides) + 1,  # +1 for title slide
                     "message": f"Keynote presentation created with {len(slides)} image slides"
                 }
             else:
-                logger.error(f"[PRESENTATION AGENT] Keynote reported success but file not found: {output_path}")
+                logger.error(f"[PRESENTATION AGENT] ❌ Keynote reported success but file not found: {output_path}")
                 return {
                     "error": True,
                     "error_type": "KeynoteError",
-                    "error_message": f"Keynote file not saved to {output_path}",
-                    "retry_possible": False
+                    "error_message": f"Keynote file not saved to {output_path} - file not found after creation",
+                    "retry_possible": True
                 }
         else:
             return {
@@ -234,10 +278,11 @@ def create_pages_doc(
     output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Generate a Pages document from content.
+    DISABLED: Pages document creation is unreliable and unsafe.
+    Use create_keynote or create_local_document_report instead.
 
     PRESENTATION AGENT - LEVEL 3: Document Creation
-    Use this to create formatted documents.
+    This tool is disabled. Use create_keynote for presentations.
 
     Args:
         title: Document title
@@ -245,82 +290,26 @@ def create_pages_doc(
         output_path: Save location (None = default)
 
     Returns:
-        Dictionary with pages_path and page_count
+        Error dictionary indicating Pages is disabled
     """
-    logger.info(f"[PRESENTATION AGENT] Tool: create_pages_doc(title='{title}')")
-
-    try:
-        from ..automation import PagesComposer
-        from ..utils import load_config
-
-        config = load_config()
-        pages_composer = PagesComposer(config)
-
-        # Convert string content to sections format expected by PagesComposer
-        # Split content into sections based on double newlines or headers
-        sections = []
-
-        # Try to parse content intelligently
-        if '\n\n' in content:
-            # Content has paragraph breaks
-            paragraphs = content.split('\n\n')
-
-            for para in paragraphs:
-                if para.strip():
-                    lines = para.strip().split('\n')
-                    # First line could be a heading if it's short and not ending with punctuation
-                    if len(lines) > 1 and len(lines[0]) < 60 and not lines[0].endswith(('.', '!', '?')):
-                        sections.append({
-                            'heading': lines[0],
-                            'content': '\n'.join(lines[1:])
-                        })
-                    else:
-                        # Treat whole paragraph as content
-                        sections.append({
-                            'heading': '',
-                            'content': para.strip()
-                        })
-        else:
-            # Single block of content - create one section
-            sections.append({
-                'heading': '',
-                'content': content
-            })
-
-        result = pages_composer.create_document(
-            title=title,
-            sections=sections,
-            output_path=output_path
-        )
-
-        if result:
-            return {
-                "pages_path": result.get("file_path", "Unknown"),
-                "message": "Pages document created successfully"
-            }
-        else:
-            return {
-                "error": True,
-                "error_type": "PagesError",
-                "error_message": "Failed to create Pages document",
-                "retry_possible": True
-            }
-
-    except Exception as e:
-        logger.error(f"[PRESENTATION AGENT] Error in create_pages_doc: {e}")
-        return {
-            "error": True,
-            "error_type": "PagesError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
+    logger.warning(f"[PRESENTATION AGENT] Tool: create_pages_doc called but is disabled (title='{title}')")
+    
+    return {
+        "error": True,
+        "error_type": "PagesDisabled",
+        "error_message": "Pages document creation is disabled due to reliability issues. Use create_keynote for presentations or create_local_document_report for PDF reports instead.",
+        "retry_possible": False,
+        "suggested_alternatives": [
+            "create_keynote - for presentations",
+            "create_local_document_report - for PDF reports"
+        ]
+    }
 
 
 # Presentation Agent Tool Registry
 PRESENTATION_AGENT_TOOLS = [
     create_keynote,
     create_keynote_with_images,
-    create_pages_doc,
 ]
 
 

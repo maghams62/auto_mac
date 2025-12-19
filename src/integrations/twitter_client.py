@@ -119,6 +119,122 @@ class TwitterAPIClient:
         self._raise_for_status(response, "fetching conversation")
         return response.json()
 
+    def search_tweets(
+        self,
+        query: str,
+        max_results: int = 10,
+        start_time_iso: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search recent tweets matching a query.
+
+        Args:
+            query: Search query string
+            max_results: Maximum tweets to return (10-100)
+            start_time_iso: Optional start time filter (ISO 8601 format)
+
+        Returns the raw JSON response with tweets and user data.
+        """
+        url = f"{self.BASE_URL}/tweets/search/recent"
+        params = {
+            "query": query,
+            "max_results": max(10, min(max_results, 100)),
+            "tweet.fields": "id,text,author_id,created_at,conversation_id,public_metrics,referenced_tweets",
+            "expansions": "author_id",
+            "user.fields": "id,name,username",
+            "sort_order": "recency",
+        }
+        if start_time_iso:
+            params["start_time"] = start_time_iso
+
+        # Validate parameters
+        validated_params = self._validator.validate_params("search_recent", params)
+
+        response = self.read_session.get(url, params=validated_params, timeout=30)
+        self._raise_for_status(response, "searching tweets")
+        return response.json()
+
+    def get_user_timeline(
+        self,
+        username: Optional[str] = None,
+        user_id: Optional[str] = None,
+        max_results: int = 10,
+        start_time_iso: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get tweets from a specific user's timeline.
+
+        Args:
+            username: Twitter username (e.g., "elonmusk")
+            user_id: Twitter user ID (alternative to username)
+            max_results: Maximum tweets to return (5-100)
+            start_time_iso: Optional start time filter (ISO 8601 format)
+
+        Returns the raw JSON response with tweets.
+        """
+        # First, get user ID if username provided
+        if username and not user_id:
+            user_url = f"{self.BASE_URL}/users/by/username/{username}"
+            user_response = self.read_session.get(user_url, timeout=30)
+            self._raise_for_status(user_response, f"fetching user ID for @{username}")
+            user_data = user_response.json()
+            user_id = user_data.get("data", {}).get("id")
+            if not user_id:
+                raise TwitterAPIError(f"Could not find user ID for @{username}")
+
+        if not user_id:
+            raise TwitterAPIError("Either username or user_id must be provided")
+
+        url = f"{self.BASE_URL}/users/{user_id}/tweets"
+        params = {
+            "max_results": max(5, min(max_results, 100)),
+            "tweet.fields": "id,text,author_id,created_at,conversation_id,public_metrics,referenced_tweets",
+            "expansions": "author_id",
+            "user.fields": "id,name,username",
+        }
+        if start_time_iso:
+            params["start_time"] = start_time_iso
+
+        # Validate parameters
+        validated_params = self._validator.validate_params("user_timeline", params)
+
+        response = self.read_session.get(url, params=validated_params, timeout=30)
+        self._raise_for_status(response, f"fetching user timeline for user {user_id}")
+        return response.json()
+
+    def get_authenticated_user_timeline(
+        self,
+        max_results: int = 10,
+        start_time_iso: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get tweets from the authenticated user's timeline (requires OAuth).
+
+        Args:
+            max_results: Maximum tweets to return (5-100)
+            start_time_iso: Optional start time filter (ISO 8601 format)
+
+        Returns the raw JSON response with tweets.
+        """
+        if not self._oauth:
+            raise TwitterAPIError(
+                "OAuth credentials required for authenticated user timeline. "
+                "Set TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET."
+            )
+
+        # Use Twitter API v2 "me" endpoint to get authenticated user ID
+        me_url = f"{self.BASE_URL}/users/me"
+        me_response = requests.get(me_url, auth=self._oauth, timeout=30)
+        self._raise_for_status(me_response, "fetching authenticated user info")
+        me_data = me_response.json()
+        user_id = me_data.get("data", {}).get("id")
+
+        if not user_id:
+            raise TwitterAPIError("Could not get authenticated user ID")
+
+        # Now fetch the timeline
+        return self.get_user_timeline(user_id=user_id, max_results=max_results, start_time_iso=start_time_iso)
+
     def post_tweet(self, text: str) -> Dict[str, Any]:
         """
         Publish a tweet using user-context OAuth credentials.

@@ -1,0 +1,2904 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo, useRef, KeyboardEvent, lazy, Suspense } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { getApiBaseUrl, getWebSocketUrl } from "@/lib/apiConfig";
+import { overlayFade, modalSlideDown } from "@/lib/motion";
+import { duration, easing } from "@/lib/motion";
+import logger from "@/lib/logger";
+import { isElectron, hideWindow, revealInFinder, lockWindow, unlockWindow, openExpandedWindow, onWindowShown } from "@/lib/electron";
+import SpotifyMiniPlayer from "@/components/SpotifyMiniPlayer";
+import RecordingIndicator from "@/components/RecordingIndicator";
+import TypingIndicator from "@/components/TypingIndicator";
+import BlueskyNotificationCard from "@/components/BlueskyNotificationCard";
+import LauncherHistoryPanel from "@/components/LauncherHistoryPanel";
+import SettingsModal from "@/components/SettingsModal";
+const HelpOverlay = lazy(() => import("@/components/HelpOverlay"));
+const KeyboardShortcutsOverlay = lazy(() => import("@/components/KeyboardShortcutsOverlay"));
+import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
+import { useWebSocket, Message, PlanState } from "@/lib/useWebSocket";
+import { useCommandRouter, CommandRouterContext } from "@/lib/useCommandRouter";
+import { useSharedSessionId } from "@/lib/useSharedSessionId";
+import { isCalculation, evaluateCalculation, getRawResult } from "@/lib/useCalculator";
+import { spotlightUi, clampMiniConversationDepth } from "@/config/ui";
+import { getPaletteCommands, filterSlashCommands, getSlashQueryMetadata, canonicalizeSlashCommandId } from "@/lib/slashCommands";
+import { useGlobalEventBus } from "@/lib/telemetry";
+import { useSlashMetadataAutocomplete, AutocompleteSuggestion, AutocompleteRequest } from "@/lib/useSlashMetadataAutocomplete";
+import { detectSlackContext, detectGitContext, detectYouTubeContext, replaceRange, getSuggestionToken, getSuggestionDescriptors } from "@/lib/slashMetadata";
+
+type HintPill = {
+  id: string;
+  icon: string;
+  label: string;
+  detail?: string;
+  tone?: "neutral" | "warning" | "success";
+};
+
+const hintPillToneClass: Record<NonNullable<HintPill["tone"]>, string> = {
+  neutral: "border-white/10 bg-white/5 text-white/70",
+  warning: "border-amber-400/40 bg-amber-400/10 text-amber-100",
+  success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-100",
+};
+const getHintPillClasses = (tone?: HintPill["tone"]) =>
+  tone ? hintPillToneClass[tone] : "border-white/10 bg-white/5 text-white/70";
+
+interface SearchResult {
+  result_type: "document" | "image";
+  file_path: string;
+  file_name: string;
+  file_type: string;
+  page_number?: number;
+  total_pages?: number;
+  similarity_score: number;
+  snippet: string;
+  highlight_offsets: [number, number][];
+  breadcrumb: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  folder_label?: string;
+  indexed_at?: string;
+  ingest_scope?: string;
+  metadata?: {
+    width?: number;
+    height?: number;
+  };
+}
+
+interface Command {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  icon: string;
+  keywords: string[];
+  handler_type: "agent" | "system" | "spotify_control" | "slash_command";
+  endpoint?: string; // For spotify_control commands
+  command_type?: "immediate" | "with_input"; // For slash commands
+  placeholder?: string; // For slash commands with input
+  telemetryKey?: string;
+}
+
+const slashCommandFallback: Command[] = getPaletteCommands().map((cmd) => {
+  const normalizedId = cmd.command.replace(/^\//, "");
+  const fallbackKeywords = cmd.keywords && cmd.keywords.length > 0
+    ? cmd.keywords
+    : [normalizedId, cmd.label, cmd.description];
+
+  return {
+    id: normalizedId,
+    title: cmd.label,
+    description: cmd.description,
+    category: cmd.category || "Commands",
+    icon: cmd.emoji || cmd.icon || "⌘",
+    keywords: fallbackKeywords,
+    handler_type: "slash_command",
+    command_type: cmd.commandType || (cmd.kind === "chat" ? "with_input" : "immediate"),
+    placeholder: cmd.placeholder || "",
+    telemetryKey: cmd.telemetryKey,
+  };
+});
+
+const mergeWithSlashFallback = (apiCommands: Command[] = []): Command[] => {
+  const commandMap = new Map<string, Command>();
+  apiCommands.forEach((command) => {
+    commandMap.set(command.id, command);
+  });
+  slashCommandFallback.forEach((fallbackCommand) => {
+    if (!commandMap.has(fallbackCommand.id)) {
+      commandMap.set(fallbackCommand.id, fallbackCommand);
+    }
+  });
+  return Array.from(commandMap.values());
+};
+
+interface CommandPaletteProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onMount?: (inputRef: HTMLInputElement | null) => void;
+  onOpenDocument?: (filePath: string, highlightOffsets?: [number, number][]) => void;
+  onOpenExternal?: (filePath: string) => void;
+  initialQuery?: string;
+  source?: "files" | "folder";
+  mode?: "overlay" | "launcher";
+}
+
+export default function CommandPalette({
+  isOpen,
+  onClose,
+  onMount,
+  onOpenDocument,
+  onOpenExternal,
+  initialQuery = "",
+  source = "files",
+  mode = "overlay"
+}: CommandPaletteProps) {
+  const baseUrl = getApiBaseUrl();
+  const sessionId = useSharedSessionId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [commands, setCommands] = useState<Command[]>(() => [...slashCommandFallback]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'closed' | 'loading' | 'previewing'>('closed');
+  const [previewData, setPreviewData] = useState<SearchResult | null>(null);
+  const [showingResults, setShowingResults] = useState<"commands" | "files" | "both">("commands");
+  const [fileSearchActive, setFileSearchActive] = useState(false);
+  
+  // View state: "search" (default) or "command_input" (for command arguments)
+  const [viewState, setViewState] = useState<"search" | "command_input">("search");
+  const [selectedCommand, setSelectedCommand] = useState<Command | null>(null);
+  const [commandArg, setCommandArg] = useState("");
+  const [commandArgCaret, setCommandArgCaret] = useState<number | null>(null);
+  const trimmedQuery = query.trim();
+  const slashModeActive = trimmedQuery.startsWith('/');
+  const isFileCommand = /^\/(file|folder|files)\b/i.test(trimmedQuery);
+  const slashQueryMeta = useMemo(() => getSlashQueryMetadata(trimmedQuery), [trimmedQuery]);
+
+  useEffect(() => {
+    if (trimmedQuery === "/help") {
+      setShowHelpOverlay(true);
+      setQuery("");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [trimmedQuery]);
+
+  const slashCommandMap = useMemo(() => {
+    const map = new Map<string, Command>();
+    commands.forEach((cmd) => {
+      if (cmd.handler_type === "slash_command") {
+        map.set(cmd.id.toLowerCase(), cmd);
+      }
+    });
+    return map;
+  }, [commands]);
+
+  const activeCommandCaret = commandArgCaret ?? commandArg.length;
+  const commandMetadataContext = useMemo(() => {
+    if (!selectedCommand) {
+      return null;
+    }
+    if (selectedCommand.id === "slack") {
+      return detectSlackContext(commandArg, activeCommandCaret);
+    }
+    if (selectedCommand.id === "git") {
+      return detectGitContext(commandArg, activeCommandCaret);
+    }
+    if (selectedCommand.id === "youtube") {
+      return detectYouTubeContext(commandArg, activeCommandCaret);
+    }
+    return null;
+  }, [selectedCommand, commandArg, activeCommandCaret]);
+
+  const commandMetadataRequest = useMemo<AutocompleteRequest | null>(() => {
+    if (!commandMetadataContext) {
+      return null;
+    }
+    switch (commandMetadataContext.kind) {
+      case "slack-channel":
+      case "slack-user":
+        return {
+          kind: commandMetadataContext.kind,
+          query: commandMetadataContext.query,
+        };
+      case "git-repo":
+        return {
+          kind: "git-repo",
+          query: commandMetadataContext.query,
+        };
+      case "git-branch":
+        if (!commandMetadataContext.repoId) {
+          return null;
+        }
+        return {
+          kind: "git-branch",
+          query: commandMetadataContext.query,
+          repoId: commandMetadataContext.repoId,
+        };
+      case "youtube-video":
+        return {
+          kind: "youtube-video",
+          query: commandMetadataContext.query,
+        };
+      default:
+        return null;
+    }
+  }, [commandMetadataContext]);
+
+  const {
+    suggestions: commandMetadataSuggestions,
+    loading: commandMetadataLoading,
+    error: commandMetadataError,
+  } = useSlashMetadataAutocomplete(commandMetadataRequest, {
+    enabled: Boolean(commandMetadataRequest),
+  });
+  const [commandMetadataIndex, setCommandMetadataIndex] = useState(0);
+  useEffect(() => {
+    setCommandMetadataIndex(0);
+  }, [commandMetadataSuggestions.length, commandMetadataContext?.kind]);
+
+  const showCommandMetadata =
+    Boolean(commandMetadataContext) &&
+    (commandMetadataSuggestions.length > 0 ||
+      commandMetadataLoading ||
+      Boolean(commandMetadataError));
+
+  const handleCommandMetadataSelect = useCallback(
+    (suggestion: AutocompleteSuggestion) => {
+      if (!commandMetadataContext) {
+        return;
+      }
+      const token = getSuggestionToken(suggestion);
+      const next = replaceRange(commandArg, commandMetadataContext.range, token, {
+        appendSpace: true,
+      });
+      setCommandArg(next.value);
+      setCommandArgCaret(next.caret);
+      requestAnimationFrame(() => {
+        const inputEl = commandInputRef.current;
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.setSelectionRange(next.caret, next.caret);
+        }
+      });
+    },
+    [commandMetadataContext, commandArg],
+  );
+
+  const canonicalSlashMatches = useMemo(() => {
+    if (!slashModeActive || !slashQueryMeta.commandToken) {
+      return [];
+    }
+    return filterSlashCommands(slashQueryMeta.commandToken, "all");
+  }, [slashModeActive, slashQueryMeta.commandToken]);
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashModeActive) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const ordered: Command[] = [];
+
+    canonicalSlashMatches.forEach((definition) => {
+      const key = definition.command.replace(/^\//, "").toLowerCase();
+      const match = slashCommandMap.get(key);
+      if (match) {
+        ordered.push(match);
+        seen.add(key);
+      }
+    });
+
+    const extras = Array.from(slashCommandMap.entries())
+      .filter(([id]) => !seen.has(id))
+      .map(([, cmd]) => cmd)
+      .filter((cmd) => {
+        if (!slashQueryMeta.tokens.length) return true;
+        const haystack = [
+          cmd.id,
+          cmd.title,
+          cmd.description,
+          ...(cmd.keywords || []),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return slashQueryMeta.tokens.some((token) => haystack.includes(token));
+      });
+
+    return [...ordered, ...extras];
+  }, [slashModeActive, canonicalSlashMatches, slashCommandMap, slashQueryMeta]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleHelpShortcuts = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "/" || e.key === "?")) {
+        e.preventDefault();
+        setShowHelpOverlay(true);
+        return;
+      }
+
+      if (
+        !e.metaKey &&
+        !e.ctrlKey &&
+        e.key === "?" &&
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA"
+      ) {
+        e.preventDefault();
+        setShowShortcutsOverlay(true);
+      }
+    };
+
+    document.addEventListener("keydown", handleHelpShortcuts);
+    return () => document.removeEventListener("keydown", handleHelpShortcuts);
+  }, [isOpen]);
+
+  // Voice recording state (only in launcher mode)
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+
+  const [miniConversationTurns, setMiniConversationTurns] = useState(
+    spotlightUi.miniConversation.defaultTurns
+  );
+
+  // Settings modal state
+  const [showSettings, setShowSettings] = useState(false);
+  const [showHelpOverlay, setShowHelpOverlay] = useState(false);
+  const [showShortcutsOverlay, setShowShortcutsOverlay] = useState(false);
+  const eventBus = useGlobalEventBus();
+
+  // Transcribe audio to text
+  const transcribeAudio = useCallback(async (audioBlob: Blob) => {
+    logger.info("[LAUNCHER] Starting audio transcription");
+    setIsTranscribing(true);
+    try {
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error("No audio recorded");
+      }
+
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+
+      const response = await fetch(`${baseUrl}/api/transcribe`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Transcription failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const transcribedText = data.text?.trim() || "";
+      
+      logger.info("[LAUNCHER] Transcription complete", { text: transcribedText });
+      
+      if (transcribedText) {
+        setQuery(transcribedText);
+        // Focus the input after setting the query
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    } catch (error) {
+      logger.error("[LAUNCHER] Transcription error", { error });
+      setVoiceError(error instanceof Error ? error.message : "Transcription failed");
+    } finally {
+      setIsTranscribing(false);
+      // Unlock window after transcription (will be locked again if user submits)
+      unlockWindow();
+    }
+  }, [baseUrl]);
+
+  // Handle auto-stop from voice activity detection
+  const handleAutoStopTranscription = useCallback(async (audioBlob: Blob) => {
+    logger.info("[LAUNCHER] Voice auto-stop triggered");
+    await transcribeAudio(audioBlob);
+  }, [transcribeAudio]);
+
+  const recordCommandCaret = useCallback(
+    (target: HTMLInputElement | null, fallbackValue?: string) => {
+      if (!target) {
+        const fallback = fallbackValue ?? commandArg;
+        setCommandArgCaret(fallback.length);
+        return;
+      }
+      setCommandArgCaret(target.selectionStart ?? target.value.length);
+    },
+    [commandArg],
+  );
+
+  // Voice recorder hook
+  const { isRecording, startRecording, stopRecording, error: voiceRecorderError } = useVoiceRecorder({
+    onAutoStop: handleAutoStopTranscription,
+  });
+
+  // Handle voice recording toggle
+  const handleVoiceRecord = useCallback(async () => {
+    if (isRecording) {
+      logger.info("[LAUNCHER] Stopping voice recording");
+      try {
+        const audioBlob = await stopRecording();
+        if (audioBlob) {
+          await transcribeAudio(audioBlob);
+        }
+      } catch (err) {
+        logger.error("[LAUNCHER] Error stopping recording", { error: err });
+        unlockWindow(); // Unlock on error
+      }
+    } else {
+      logger.info("[LAUNCHER] Starting voice recording");
+      setVoiceError(null);
+      // Lock window during voice recording
+      lockWindow();
+      try {
+        await startRecording();
+      } catch (err) {
+        logger.error("[LAUNCHER] Error starting recording", { error: err });
+        unlockWindow(); // Unlock on error
+      }
+    }
+  }, [isRecording, startRecording, stopRecording, transcribeAudio]);
+
+  // Handle stop recording from RecordingIndicator
+  const handleStopRecording = useCallback(async () => {
+    if (isRecording) {
+      logger.info("[LAUNCHER] Stop recording from indicator");
+      try {
+        const audioBlob = await stopRecording();
+        if (audioBlob) {
+          await transcribeAudio(audioBlob);
+        }
+      } catch (err) {
+        logger.error("[LAUNCHER] Error stopping recording from indicator", { error: err });
+      }
+    }
+  }, [isRecording, stopRecording, transcribeAudio]);
+
+  // WebSocket connection for chat responses (only in launcher mode)
+  const wsUrl = useMemo(() => {
+    if (mode !== "launcher" || !sessionId) {
+      return "";
+    }
+    const resolved = new URL(getWebSocketUrl("/ws/chat"));
+    resolved.searchParams.set("session_id", sessionId);
+    return resolved.toString();
+  }, [mode, sessionId]);
+  const { 
+    messages: chatMessages, 
+    sendMessage: wsSendMessage, 
+    sendCommand: wsSendCommand,
+    planState,
+    isConnected: wsConnected,
+    connectionState,
+    lastError
+  } = useWebSocket(wsUrl);
+
+  // State to track if history has been loaded for this session
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const pendingSubmissionRef = useRef<string | null>(null);
+
+  // Load conversation history on WebSocket connection
+  const loadConversationHistory = useCallback(async () => {
+    // CRITICAL: Don't block on historyLoaded - allow window to render
+    // History loading should never prevent the window from displaying
+    if (!wsConnected || mode !== "launcher" || !sessionId) {
+      return;
+    }
+
+    // Skip if already loaded or currently loading
+    if (historyLoaded) {
+      return;
+    }
+
+    try {
+      logger.info('[HISTORY] Loading conversation history', { sessionId });
+
+      const response = await fetch(`${baseUrl}/api/conversation/history/${sessionId}`);
+
+      if (!response.ok) {
+        logger.warn('[HISTORY] Failed to load history', { status: response.status });
+        setHistoryLoaded(true); // Mark as loaded even on error to prevent retries
+        return;
+      }
+
+      const data = await response.json();
+      logger.info('[HISTORY] Loaded messages', {
+        count: data.messages?.length || 0,
+        total: data.total_messages
+      });
+
+      // If we have historical messages, they're already in chatMessages from the backend
+      // The backend WebSocket connection should handle this
+      // For now, just mark as loaded
+      setHistoryLoaded(true);
+
+    } catch (error) {
+      logger.error('[HISTORY] Failed to load conversation history', { error });
+      setHistoryLoaded(true); // Mark as loaded to prevent infinite retries
+    }
+  }, [wsConnected, historyLoaded, mode, baseUrl, sessionId]);
+
+  // Load history when WebSocket connects
+  useEffect(() => {
+    if (wsConnected && !historyLoaded && mode === "launcher") {
+      // Small delay to ensure WebSocket is fully established
+      const timer = setTimeout(() => {
+        loadConversationHistory();
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [wsConnected, historyLoaded, mode, loadConversationHistory]);
+
+  // Reset history loaded flag when session changes or component remounts
+  useEffect(() => {
+    setHistoryLoaded(false);
+  }, [wsUrl]);
+
+  // Deterministic command router for fast, local command handling
+  const { routeCommand } = useCommandRouter();
+
+  // Track if we're processing a query
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [currentResponse, setCurrentResponse] = useState<string>("");
+  const [submittedQuery, setSubmittedQuery] = useState<string>(""); // Track what was submitted
+  const [queuedSubmission, setQueuedSubmission] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isElectron()) {
+      return;
+    }
+    const handleWindowShown = () => {
+      setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
+      setSubmittedQuery("");
+      setCurrentResponse("");
+    };
+    onWindowShown(handleWindowShown);
+  }, []);
+  const [isWaitingForReconnect, setIsWaitingForReconnect] = useState(false);
+  const [connectionBanner, setConnectionBanner] = useState<{
+    level: "info" | "warning" | "error";
+    message: string;
+  } | null>(null);
+  const hintPills = useMemo<HintPill[]>(() => {
+    const basePills: HintPill[] = [];
+
+    if (slashModeActive) {
+      basePills.push({
+        id: "slash-mode",
+        icon: "/",
+        label: "Slash command",
+        detail: "Tab to autocomplete",
+      });
+    } else if (fileSearchActive) {
+      basePills.push({
+        id: "file-search",
+        icon: "⌘F",
+        label: "File search",
+        detail: "Press Enter to run",
+      });
+    } else {
+      basePills.push({
+        id: "ask",
+        icon: "↵",
+        label: "Ask Cerebros",
+        detail: trimmedQuery ? "Press Enter" : "Describe what you need",
+      });
+    }
+
+    basePills.push({
+      id: "help",
+      icon: "?",
+      label: "/help",
+      detail: "List commands",
+    });
+
+    if (isCalculation(trimmedQuery)) {
+      basePills.push({
+        id: "calc",
+        icon: "∑",
+        label: "Calculator",
+        detail: "Enter copies result",
+      });
+    }
+
+    const queuePill: HintPill | null =
+      isWaitingForReconnect || queuedSubmission
+        ? {
+            id: "queue",
+            icon: "🛰️",
+            label: isWaitingForReconnect ? "Waiting to reconnect" : "Queued for send",
+            detail: queuedSubmission || undefined,
+            tone: "warning",
+          }
+        : null;
+
+    const trimmedBase = basePills.slice(0, 3);
+    return queuePill ? [...trimmedBase, queuePill] : trimmedBase;
+  }, [slashModeActive, fileSearchActive, trimmedQuery, isWaitingForReconnect, queuedSubmission]);
+  const showResponseSurface = isProcessing || currentResponse || planState || isWaitingForReconnect;
+  const helpHint = hintPills.find((pill) => pill.id === "help");
+  const nonHelpHints = hintPills.filter((pill) => pill.id !== "help");
+  const primaryHint = nonHelpHints[0];
+  const secondaryHints = nonHelpHints.slice(1);
+
+  // Watch for new assistant messages
+  useEffect(() => {
+    if (mode !== "launcher" || chatMessages.length === 0) return;
+
+    const lastMessage = chatMessages[chatMessages.length - 1];
+    
+    // Log all message types for debugging
+    logger.debug("[LAUNCHER] New message received", { 
+      type: lastMessage.type, 
+      hasBluesky: !!lastMessage.bluesky_notification,
+      hasFiles: !!lastMessage.files?.length,
+      status: lastMessage.status 
+    });
+    
+    // Update processing state based on message type
+    if (lastMessage.type === "status") {
+      const isActive = lastMessage.status === "processing" || lastMessage.status === "thinking";
+      setIsProcessing(isActive);
+      logger.info("[LAUNCHER] Status update", { status: lastMessage.status, isActive });
+      
+      // Unlock window when status indicates completion
+      if (!isActive && (lastMessage.status === "complete" || lastMessage.status === "error" || lastMessage.status === "cancelled")) {
+        unlockWindow();
+      }
+    }
+    
+    // Capture assistant response
+    if (lastMessage.type === "assistant" && lastMessage.message) {
+      setCurrentResponse(lastMessage.message);
+      setIsProcessing(false);
+      logger.info("[LAUNCHER] Assistant response received", { length: lastMessage.message.length });
+      // Unlock window now that we have a response
+      unlockWindow();
+    }
+    
+    // Log Bluesky notifications
+    if (lastMessage.type === "bluesky_notification" && lastMessage.bluesky_notification) {
+      logger.info("[LAUNCHER] Bluesky notification received", { 
+        author: lastMessage.bluesky_notification.author_handle,
+        source: lastMessage.bluesky_notification.source 
+      });
+    }
+    
+    // Log file results
+    if (lastMessage.files && lastMessage.files.length > 0) {
+      logger.info("[LAUNCHER] File results received", { count: lastMessage.files.length });
+    }
+  }, [chatMessages, mode]);
+
+  // Log WebSocket connection state changes
+  useEffect(() => {
+    if (mode === "launcher") {
+      logger.info("[LAUNCHER] WebSocket state", { 
+        connected: wsConnected, 
+        state: connectionState,
+        url: wsUrl 
+      });
+    }
+  }, [wsConnected, connectionState, mode, wsUrl]);
+
+  // Surface connection state in UI so commands never fail silently
+  useEffect(() => {
+    if (!wsUrl) {
+      setConnectionBanner(null);
+      return;
+    }
+
+    if (wsConnected) {
+      setConnectionBanner(null);
+      return;
+    }
+
+    if (connectionState === "reconnecting") {
+      setConnectionBanner({
+        level: "warning",
+        message: "Reconnecting to Cerebros backend..."
+      });
+    } else if (connectionState === "error") {
+      setConnectionBanner({
+        level: "error",
+        message: lastError || "Lost connection to Cerebros. Ensure python api_server.py is running."
+      });
+    } else {
+      setConnectionBanner({
+        level: "info",
+        message: "Connecting to Cerebros backend..."
+      });
+    }
+  }, [wsConnected, connectionState, lastError, wsUrl]);
+
+  // Automatically flush queued submissions once the socket reconnects
+  useEffect(() => {
+    if (!wsConnected || !pendingSubmissionRef.current) {
+      return;
+    }
+
+    const pending = pendingSubmissionRef.current;
+    pendingSubmissionRef.current = null;
+    setQueuedSubmission(null);
+    setIsWaitingForReconnect(false);
+
+    logger.info("[LAUNCHER] Flushing queued submission after reconnect", { query: pending });
+
+    lockWindow();
+    setIsProcessing(true);
+    setCurrentResponse("");
+    setSubmittedQuery(pending);
+    wsSendMessage(pending);
+  }, [wsConnected, wsSendMessage]);
+
+  // Log plan state changes (orchestration visibility)
+  useEffect(() => {
+    if (mode === "launcher" && planState) {
+      const completedSteps = planState.steps.filter(s => s.status === "completed").length;
+      const runningStep = planState.steps.find(s => s.status === "running");
+      logger.info("[LAUNCHER] Plan state changed", { 
+        status: planState.status,
+        goal: planState.goal,
+        totalSteps: planState.steps.length,
+        completedSteps,
+        runningStepAction: runningStep?.action || null
+      });
+    }
+  }, [planState, mode]);
+
+  // Handle submitting a query to the chat
+  const handleSubmitQuery = useCallback(async () => {
+    if (!query.trim()) {
+      logger.debug("[LAUNCHER] Empty query, ignoring");
+      return;
+    }
+    
+    const submission = trimmedQuery;
+    logger.info("[LAUNCHER] Submitting query", { query: submission, timestamp: Date.now() });
+    
+    // Lock window visibility to prevent blur from hiding during processing
+    lockWindow();
+    
+    // Build context for command routing
+    const routerContext: CommandRouterContext = {
+      isMusicPlaying: false, // TODO: Get from Spotify state
+      hasActivePlan: planState?.status === "executing" || planState?.status === "planning",
+      isRecording: isRecording,
+      isExpandedView: false,
+    };
+    
+    // Try deterministic routing first
+    const routeResult = await routeCommand(submission, routerContext);
+    
+    if (routeResult.handled) {
+      logger.info("[LAUNCHER] Command handled by deterministic router", { 
+        action: routeResult.action,
+        response: routeResult.response 
+      });
+      
+      // Handle special actions
+      if (routeResult.action === "clear") {
+        wsSendMessage("/clear");
+        setQuery("");
+        unlockWindow();
+        return;
+      }
+      
+      if (routeResult.action === "cancel_plan") {
+        wsSendCommand("stop");
+        unlockWindow();
+        return;
+      }
+      
+      if (routeResult.action === "stop_recording" && isRecording) {
+        handleStopRecording();
+        unlockWindow();
+        return;
+      }
+      
+      if (routeResult.action === "help") {
+        setShowHelpOverlay(true);
+        setQuery("");
+        setCurrentResponse("");
+        setSubmittedQuery("");
+        unlockWindow();
+        return;
+      }
+      
+      // Open settings modal
+      if (routeResult.action === "open_settings") {
+        setShowSettings(true);
+        setQuery("");
+        unlockWindow();
+        return;
+      }
+      
+      // For "open app" actions, show feedback
+      if (routeResult.action === "open_app" && routeResult.response) {
+        setCurrentResponse(routeResult.response);
+        setSubmittedQuery(submission);
+        setQuery("");
+        unlockWindow();
+        return;
+      }
+      
+      // For Spotify actions, show feedback
+      if (routeResult.action?.startsWith("spotify_") && routeResult.response) {
+        setCurrentResponse(routeResult.response);
+        setSubmittedQuery(submission);
+        unlockWindow();
+        return;
+      }
+      
+      unlockWindow();
+      return;
+    }
+    
+    // Not deterministically routed - send to LLM via WebSocket
+    if (!wsConnected) {
+      logger.warn("[LAUNCHER] Cannot submit - WebSocket not connected, queuing request", { state: connectionState });
+      pendingSubmissionRef.current = submission;
+      setQueuedSubmission(submission);
+      setIsWaitingForReconnect(true);
+      setSubmittedQuery(submission);
+      setCurrentResponse("");
+      return;
+    }
+    
+    setIsProcessing(true);
+    setCurrentResponse("");
+    setSubmittedQuery(submission); // Track what was submitted
+    wsSendMessage(submission);
+    // Don't clear query - let user see what they typed
+  }, [query, trimmedQuery, wsConnected, connectionState, wsSendMessage, wsSendCommand, routeCommand, planState, isRecording, handleStopRecording]);
+
+  // Notify parent about the input ref for focus management
+  useEffect(() => {
+    if (onMount && inputRef.current) {
+      onMount(inputRef.current);
+    }
+  }, [onMount]);
+
+  // Define handler functions before useEffect to avoid initialization errors
+  const handleSelectResult = useCallback((result: SearchResult) => {
+    if (onOpenDocument) {
+      onOpenDocument(result.file_path, result.highlight_offsets);
+    }
+    // DON'T close - Raycast-style behavior keeps window open
+    logger.info("[LAUNCHER] Opened document", { path: result.file_path });
+  }, [onOpenDocument]);
+
+  const handleOpenExternal = useCallback(async (result: SearchResult) => {
+    if (onOpenExternal) {
+      onOpenExternal(result.file_path);
+    } else if (isElectron()) {
+      // Use Electron API to reveal in Finder
+      revealInFinder(result.file_path);
+    } else {
+      // Fallback: Use the reveal-file API
+      try {
+        const response = await fetch(`${baseUrl}/api/reveal-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ path: result.file_path }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to open externally');
+        }
+      } catch (error) {
+        console.error('Error opening file externally:', error);
+      }
+    }
+    // DON'T close - Raycast-style behavior keeps window open
+    logger.info("[LAUNCHER] Opened file externally", { path: result.file_path });
+  }, [onOpenExternal, baseUrl]);
+
+  const togglePreview = useCallback((result: SearchResult) => {
+    if (previewMode === 'closed' || previewData?.file_path !== result.file_path) {
+      setPreviewMode('loading');
+      setPreviewData(result);
+      // Simulate loading delay for now
+      setTimeout(() => setPreviewMode('previewing'), 300);
+    } else {
+      setPreviewMode('closed');
+      setPreviewData(null);
+    }
+  }, [previewMode, previewData]);
+
+  const handleExecuteCommand = useCallback(async (command: Command, argument?: string) => {
+    logger.info("[COMMAND PALETTE] Executing command", { command: command.id, argument });
+
+    // For slash commands with input, show input view instead of executing
+    if (command.handler_type === "slash_command" && command.command_type === "with_input" && argument === undefined) {
+      setSelectedCommand(command);
+      setCommandArg("");
+      setCommandArgCaret(null);
+      setViewState("command_input");
+      // Focus the command input after a short delay
+      setTimeout(() => {
+        commandInputRef.current?.focus();
+      }, 50);
+      return;
+    }
+
+    // Handle Spotify control commands directly - DON'T close the window
+    // This keeps the launcher open so users can see the Spotify player update
+      if (command.handler_type === "spotify_control" && command.endpoint) {
+      try {
+        const response = await fetch(`${baseUrl}${command.endpoint}`, {
+          method: 'POST'
+        });
+
+        if (!response.ok) {
+          console.error(`Spotify control failed: ${command.id}`);
+        }
+        // Don't close - keep launcher open for Spotify interaction
+        return;
+      } catch (error) {
+        console.error('Spotify control error:', error);
+        return;
+      }
+    }
+
+    // DON'T close the window - Raycast-style behavior keeps it open
+    // Show response and orchestration animations in the launcher
+
+    // Handle slash commands - send via WebSocket for orchestration visibility
+      if (command.handler_type === "slash_command") {
+        const canonicalCommandId = canonicalizeSlashCommandId(command.id);
+        const slashMessage = argument 
+          ? `/${canonicalCommandId} ${argument}`
+          : `/${canonicalCommandId}`;
+        
+      logger.info("[LAUNCHER] Executing slash command via WebSocket", { command: canonicalCommandId, alias: command.id, message: slashMessage });
+      const telemetryCommand = canonicalizeSlashCommandId(command.telemetryKey || command.id);
+      eventBus?.emit("slash-command-used", {
+        command: telemetryCommand,
+        invocation_source: "launcher_palette",
+        query: argument || ""
+      });
+      setIsProcessing(true);
+      setCurrentResponse("");
+      wsSendMessage(slashMessage);
+      
+      // Reset view state but DON'T close
+        setViewState("search");
+        setSelectedCommand(null);
+        setCommandArg("");
+        setCommandArgCaret(null);
+        setCommandArgCaret(null);
+        return;
+      }
+
+    // Send agent commands via WebSocket for orchestration visibility
+    const message = query.trim() || `Execute ${command.title}`;
+    logger.info("[LAUNCHER] Executing agent command via WebSocket", { command: command.id, message });
+    setIsProcessing(true);
+    setCurrentResponse("");
+    wsSendMessage(message);
+    
+  }, [query, baseUrl, wsSendMessage]);
+
+  // Handle command argument submission
+  const handleCommandArgSubmit = useCallback(() => {
+    if (selectedCommand) {
+      handleExecuteCommand(selectedCommand, commandArg);
+    }
+  }, [selectedCommand, commandArg, handleExecuteCommand]);
+
+  // Handle keyboard navigation in command input view
+  useEffect(() => {
+    if (viewState !== "command_input") return;
+
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleCommandArgSubmit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setViewState("search");
+        setSelectedCommand(null);
+        setCommandArg("");
+        setCommandArgCaret(null);
+        // Refocus search input
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 50);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [viewState, handleCommandArgSubmit]);
+
+  // Debounced search - use ref instead of state to avoid infinite loop
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const performSearch = useCallback(async (searchQuery: string) => {
+    const trimmedSearch = searchQuery.trim();
+    if (!trimmedSearch) {
+      setResults([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const searchScope = isFileCommand ? "files" : mode;
+      const intent = slashModeActive ? "slash" : "palette";
+      const params = new URLSearchParams({
+        q: trimmedSearch,
+        limit: "10",
+        scope: searchScope,
+        intent,
+      });
+
+      logger.info("[FILES] Performing semantic search", {
+        scope: searchScope,
+        intent,
+      });
+
+      const response = await fetch(`${baseUrl}/api/universal-search?${params.toString()}`);
+
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const normalizedResults: SearchResult[] = (data.results || []).map((result: SearchResult) => ({
+        ...result,
+      }));
+
+      setResults(normalizedResults);
+      setSelectedIndex(0);
+    } catch (error) {
+      console.error('Search error:', error);
+      setResults([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [baseUrl, isFileCommand, mode, slashModeActive]);
+
+  // Debounced search effect - only trigger for file commands or overlay mode
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    const shouldSearch = (() => {
+      if (mode === "overlay") {
+        if (slashModeActive && !isFileCommand) {
+          logger.debug("[COMMAND PALETTE] Suppressing semantic search for slash command", { query });
+          return false;
+        }
+        return true;
+      }
+      return isFileCommand;
+    })();
+
+    if (shouldSearch) {
+      setFileSearchActive(true);
+      setShowingResults(mode === "overlay" ? "both" : "files");
+
+      const timer = setTimeout(() => {
+        const searchQuery = isFileCommand
+          ? query.replace(/^\/(file|folder|files)\s*/, '').trim()
+          : query;
+        performSearch(searchQuery || query);
+      }, 200);
+
+      debounceTimerRef.current = timer;
+    } else {
+      setFileSearchActive(false);
+      setShowingResults("commands");
+      setResults([]);
+    }
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [mode, performSearch, query, isFileCommand, slashModeActive]);
+
+  // Fetch commands on mount
+  useEffect(() => {
+    const fetchCommands = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/commands`);
+        if (response.ok) {
+          const data = await response.json();
+          const mergedCommands = mergeWithSlashFallback(data.commands || []);
+          setCommands(mergedCommands);
+          logger.info("[COMMAND PALETTE] Commands loaded", { count: mergedCommands.length });
+        }
+      } catch (error) {
+        console.error('Error fetching commands:', error);
+      }
+    };
+
+    fetchCommands();
+  }, [baseUrl]);
+
+  // Reset state when opening
+  useEffect(() => {
+    if (isOpen) {
+      setQuery(initialQuery);
+      setResults([]);
+      setSelectedIndex(0);
+      setPreviewMode('closed');
+      setPreviewData(null);
+      setIsLoading(false);
+      setShowingResults("both");
+      logger.info("[COMMAND PALETTE] Opened", { source, initialQuery });
+      // Pass the input ref to parent when mounting
+      if (onMount && inputRef.current) {
+        onMount(inputRef.current);
+      }
+    }
+  }, [isOpen, initialQuery, onMount, source]);
+
+  // Load mini conversation depth from settings whenever the launcher opens
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!isElectron()) {
+      setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadMiniConversationDepth = async () => {
+      try {
+        const loaded = await window.electronAPI?.getSettings();
+        if (!loaded || isCancelled) return;
+        setMiniConversationTurns(
+          clampMiniConversationDepth(
+            loaded.miniConversationDepth ?? spotlightUi.miniConversation.defaultTurns
+          )
+        );
+      } catch (error) {
+        logger.error("[COMMAND PALETTE] Failed to load mini conversation depth", { error });
+        setMiniConversationTurns(spotlightUi.miniConversation.defaultTurns);
+      }
+    };
+
+    loadMiniConversationDepth();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen]);
+
+  // Filter commands based on query - prioritize slash commands when typing /
+  const filteredCommands = useMemo(() => {
+    if (slashModeActive) {
+      return filteredSlashCommands;
+    }
+
+    if (!query.trim()) {
+      // Show all non-Spotify commands when idle (sorted later by render order)
+      return commands.filter(cmd => cmd.handler_type !== 'spotify_control');
+    }
+
+    const lowerQuery = query.toLowerCase();
+    return commands.filter(cmd =>
+      cmd.handler_type !== 'spotify_control' && (
+        cmd.title.toLowerCase().includes(lowerQuery) ||
+        cmd.description.toLowerCase().includes(lowerQuery) ||
+        cmd.keywords.some(kw => kw.toLowerCase().includes(lowerQuery)) ||
+        cmd.category.toLowerCase().includes(lowerQuery)
+      )
+    );
+  }, [commands, filteredSlashCommands, query, slashModeActive]);
+
+  // Combined results for keyboard navigation
+  const allItems = useMemo(() => {
+    const items: Array<{ type: 'command' | 'file', data: Command | SearchResult }> = [];
+
+    if (showingResults === "both" || showingResults === "commands") {
+      filteredCommands.forEach(cmd => items.push({ type: 'command', data: cmd }));
+    }
+
+    if (showingResults === "both" || showingResults === "files") {
+      results.forEach(result => items.push({ type: 'file', data: result }));
+    }
+
+    return items;
+  }, [filteredCommands, results, showingResults]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (previewMode !== 'closed') {
+          setPreviewMode('closed');
+          setPreviewData(null);
+        } else {
+          onClose();
+        }
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex(prev =>
+          prev === allItems.length - 1 ? 0 : prev + 1
+        );
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex(prev =>
+          prev === 0 ? allItems.length - 1 : prev - 1
+        );
+        return;
+      }
+
+      if (e.key === "Enter") {
+        // If focus is in the search input, let the input handler deal with it
+        // This ensures queries are always submitted via WebSocket (Raycast-style)
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT') {
+          // Input handler will submit via WebSocket
+          return;
+        }
+        
+        // Only execute file operations when NOT in input (e.g., preview focused)
+        e.preventDefault();
+        const selectedItem = allItems[selectedIndex];
+        if (selectedItem && selectedItem.type === 'file') {
+            const result = selectedItem.data as SearchResult;
+            if (e.metaKey || e.ctrlKey) {
+              handleOpenExternal(result);
+            } else {
+              handleSelectResult(result);
+            }
+          }
+        // Commands are NOT executed on Enter anymore - they go through WebSocket
+        return;
+      }
+
+      if (e.key === " ") {
+        // Only toggle preview if NOT typing in the search input
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+          // Allow space to be typed in input fields
+          return;
+        }
+        e.preventDefault();
+        const selectedItem = allItems[selectedIndex];
+        if (selectedItem && selectedItem.type === 'file') {
+          togglePreview(selectedItem.data as SearchResult);
+        }
+        return;
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, allItems, selectedIndex, previewMode, onClose, handleOpenExternal, handleSelectResult, handleExecuteCommand, togglePreview]);
+
+  const getFileIcon = (fileType: string) => {
+    switch (fileType.toLowerCase()) {
+      case 'pdf':
+        return '📄';
+      case 'docx':
+      case 'doc':
+        return '📝';
+      case 'txt':
+        return '📃';
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'webp':
+        return '🖼️';
+      default:
+        return '📄';
+    }
+  };
+
+  // Always render SettingsModal even when palette is closed
+  const settingsModalElement = (
+    <SettingsModal 
+      isOpen={showSettings} 
+      onClose={() => setShowSettings(false)} 
+    />
+  );
+
+  const overlayElements = (
+    <>
+      {settingsModalElement}
+      {showHelpOverlay && (
+        <Suspense fallback={null}>
+          <HelpOverlay isOpen={showHelpOverlay} onClose={() => setShowHelpOverlay(false)} />
+        </Suspense>
+      )}
+      {showShortcutsOverlay && (
+        <Suspense fallback={null}>
+          <KeyboardShortcutsOverlay
+            isOpen={showShortcutsOverlay}
+            onClose={() => setShowShortcutsOverlay(false)}
+          />
+        </Suspense>
+      )}
+    </>
+  );
+
+  const slackTemplates = [
+    { label: "Summarize #backend (24h)", value: "summarize #backend last 24 hours" },
+    { label: "Decisions about onboarding", value: "decisions about onboarding flow this week" },
+    { label: "Tasks from #incidents (yesterday)", value: "tasks #incidents yesterday" },
+    { label: "Topic: billing_service", value: "topic billing_service last 14d" },
+    { label: "Summarize thread link", value: "summarize https://slack.com/archives/C123/p1234567890123456" },
+  ];
+
+  const renderSlackHintPanel = () => {
+    if (selectedCommand?.id !== "slack") return null;
+    return (
+      <div className="mt-4 space-y-2 rounded-xl border border-glass/40 bg-glass/20 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+          Slack templates
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {slackTemplates.map((template) => (
+            <button
+              key={template.label}
+              onClick={() => {
+                setCommandArg(template.value);
+                setCommandArgCaret(template.value.length);
+              }}
+              className="rounded-full border border-glass/40 px-3 py-1 text-xs font-medium text-text-muted hover:border-accent-primary/40 hover:text-accent-primary"
+              type="button"
+            >
+              {template.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-text-muted/80">
+          Tip: Mention #channel names, add time windows like &ldquo;last week&rdquo;, include keywords (`decisions`, `tasks`), or paste a Slack thread link.
+        </p>
+      </div>
+    );
+  };
+
+  if (!isOpen) return overlayElements;
+
+  if (mode === "launcher") {
+    // Launcher mode: full window, embedded Spotify
+    return (
+      <>
+      {overlayElements}
+      <div className="h-screen w-full flex flex-col bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900">
+        <div className="flex-1 flex items-center justify-center px-8 py-12">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.2 }}
+            className="w-full max-w-4xl flex"
+            data-testid="command-palette"
+          >
+            {/* Command Input View */}
+            {viewState === "command_input" && selectedCommand ? (
+              <div className="flex-1 bg-glass-elevated backdrop-blur-glass rounded-2xl border border-glass shadow-elevated shadow-inset-border overflow-hidden flex flex-col">
+                {/* Header with back button */}
+                <div className="p-4 border-b border-glass/30 flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      setViewState("search");
+                      setSelectedCommand(null);
+                      setCommandArg("");
+                      setCommandArgCaret(null);
+                      setTimeout(() => inputRef.current?.focus(), 50);
+                    }}
+                    className="p-1.5 rounded-lg hover:bg-glass-hover transition-colors text-text-muted hover:text-text-primary"
+                    title="Back to search"
+                  >
+                    <span className="text-lg">←</span>
+                  </button>
+                  <div className="text-xl">{selectedCommand.icon}</div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-text-primary">{selectedCommand.title}</div>
+                    <div className="text-xs text-text-muted">{selectedCommand.description}</div>
+                  </div>
+                </div>
+
+                {/* Command Argument Input */}
+                <div className="flex-1 flex flex-col p-4">
+                  <input
+                    ref={commandInputRef}
+                    type="text"
+                    value={commandArg}
+                    onChange={(e) => {
+                      setCommandArg(e.target.value);
+                      recordCommandCaret(e.currentTarget);
+                    }}
+                    placeholder={selectedCommand.placeholder || "Enter argument..."}
+                    className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg font-medium"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (
+                        showCommandMetadata &&
+                        commandMetadataSuggestions.length > 0
+                      ) {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setCommandMetadataIndex((prev) =>
+                            prev === commandMetadataSuggestions.length - 1 ? 0 : prev + 1,
+                          );
+                          return;
+                        }
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setCommandMetadataIndex((prev) =>
+                            prev === 0 ? commandMetadataSuggestions.length - 1 : prev - 1,
+                          );
+                          return;
+                        }
+                        if (e.key === "Tab" || e.key === "Enter") {
+                          e.preventDefault();
+                          handleCommandMetadataSelect(
+                            commandMetadataSuggestions[commandMetadataIndex],
+                          );
+                          return;
+                        }
+                      }
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleCommandArgSubmit();
+                      }
+                    }}
+                    onSelect={(e) => recordCommandCaret(e.currentTarget)}
+                    onKeyUp={(e) => recordCommandCaret(e.currentTarget)}
+                    onClick={(e) => recordCommandCaret(e.currentTarget)}
+                  />
+                  {showCommandMetadata && (
+                    <div className="mt-3">
+                      <div className="rounded-2xl border border-glass/40 bg-glass/20 shadow-inset-border overflow-hidden">
+                        {commandMetadataSuggestions.map((suggestion, index) => {
+                          const isSelected = index === commandMetadataIndex;
+                          const descriptor = getSuggestionDescriptors(suggestion);
+                          return (
+                            <button
+                              key={`${suggestion.kind}-${descriptor.title}-${index}`}
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
+                                isSelected
+                                  ? "bg-glass-hover text-text-primary"
+                                  : "text-text-muted hover:text-text-primary hover:bg-glass-hover/60",
+                              )}
+                              onClick={() => handleCommandMetadataSelect(suggestion)}
+                              onMouseEnter={() => setCommandMetadataIndex(index)}
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{descriptor.title}</p>
+                                {descriptor.subtitle && (
+                                  <p className="text-xs text-text-subtle truncate">{descriptor.subtitle}</p>
+                                )}
+                              </div>
+                              {descriptor.badge && (
+                                <span className="ml-3 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                                  {descriptor.badge}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {commandMetadataLoading && (
+                          <div className="px-3 py-2 text-xs text-text-subtle">Fetching suggestions…</div>
+                        )}
+                        {commandMetadataError && (
+                          <div className="px-3 py-2 text-xs text-amber-300">
+                            Suggestions unavailable: {commandMetadataError}
+                          </div>
+                        )}
+                        {!commandMetadataLoading &&
+                          !commandMetadataError &&
+                          commandMetadataSuggestions.length === 0 && (
+                            <div className="px-3 py-2 text-xs text-text-subtle">Keep typing for suggestions.</div>
+                          )}
+                      </div>
+                    </div>
+                  )}
+                  {renderSlackHintPanel()}
+                  
+                  {/* Keyboard hints */}
+                  <div className="mt-4 pt-4 border-t border-glass/30">
+                    <div className="flex items-center justify-between text-xs text-text-muted">
+                      <div className="flex items-center gap-4">
+                        <span>↵ Execute</span>
+                        <span>Esc Back</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Main Search Panel */
+              <div className={cn(
+                "flex-1 bg-glass-elevated backdrop-blur-glass rounded-2xl",
+                "border border-glass shadow-elevated shadow-inset-border",
+                "overflow-hidden flex flex-col",
+                previewMode !== 'closed' ? 'rounded-r-none' : ''
+              )}>
+                {/* Search Input with Raycast-style polish */}
+                <div className="p-4 border-b border-glass/30">
+                  <div className="flex items-center gap-3">
+                    <div className="text-lg">🔍</div>
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Handle Tab to autocomplete slash command
+                        if (e.key === "Tab" && slashModeActive && filteredCommands.length > 0) {
+                          e.preventDefault();
+                          const firstCmd = filteredCommands[0];
+                          setQuery(`/${firstCmd.id} `);
+                          return;
+                        }
+                        // Handle Enter key
+                        if (e.key === "Enter" && query.trim()) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          
+                          // If it's a calculation, copy the result to clipboard
+                          if (isCalculation(query)) {
+                            const raw = getRawResult(query);
+                            if (raw) {
+                              navigator.clipboard.writeText(raw);
+                              setCurrentResponse("📋 Copied to clipboard!");
+                              setTimeout(() => setCurrentResponse(""), 2000);
+                              logger.info("[LAUNCHER] Calculator result copied", { result: raw });
+                              return;
+                            }
+                          }
+                          
+                          // Otherwise submit via WebSocket - Raycast-style behavior
+                          logger.info("[LAUNCHER] Enter pressed - submitting query", { query: query.trim() });
+                          handleSubmitQuery();
+                        }
+                      }}
+                      placeholder={source === "folder" ? "Search folders and files..." : "Type / for commands or ask anything..."}
+                      className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg font-medium"
+                      autoFocus
+                      data-testid="command-palette-query"
+                    />
+                    {isLoading && (
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full"
+                      />
+                    )}
+                    {/* Voice Recording Button */}
+                    <motion.button
+                      onClick={handleVoiceRecord}
+                      disabled={isTranscribing}
+                      className={cn(
+                        "relative p-2 rounded-lg transition-all duration-200",
+                        isRecording
+                          ? "bg-red-500/20 text-red-400 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                          : isTranscribing
+                          ? "bg-accent-primary/20 text-accent-primary cursor-wait"
+                          : "text-text-muted hover:text-text-primary hover:bg-glass-hover"
+                      )}
+                      title={isRecording ? "Stop recording" : isTranscribing ? "Transcribing..." : "Voice input"}
+                      whileHover={!isRecording && !isTranscribing ? { scale: 1.05 } : {}}
+                      whileTap={!isTranscribing ? { scale: 0.95 } : {}}
+                      animate={isRecording ? {
+                        scale: [1, 1.1, 1],
+                        transition: { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
+                      } : {}}
+                    >
+                      {isTranscribing ? (
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full"
+                        />
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                      )}
+                      {/* Pulsing ring when recording */}
+                      {isRecording && (
+                        <>
+                          <motion.span
+                            className="absolute inset-0 rounded-lg border-2 border-red-400"
+                            animate={{ scale: [1, 1.3, 1], opacity: [0.8, 0, 0.8] }}
+                            transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                          />
+                          <motion.span
+                            className="absolute inset-0 rounded-lg border-2 border-red-400"
+                            animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+                            transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.3 }}
+                          />
+                        </>
+                      )}
+                    </motion.button>
+                    {/* Expand Button - opens ChatGPT-style desktop window */}
+                    <motion.button
+                      onClick={() => {
+                        logger.info("[LAUNCHER] Expand button clicked");
+                        openExpandedWindow();
+                      }}
+                      className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-glass-hover transition-all"
+                      title="Expand to full window (ChatGPT-style)"
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                      </svg>
+                    </motion.button>
+                  </div>
+                </div>
+
+              {(primaryHint || secondaryHints.length > 0 || helpHint) && (
+                <div className="px-4 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {primaryHint && (
+                        <div
+                          key={primaryHint.id}
+                          className={cn(
+                            "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium tracking-tight",
+                            getHintPillClasses(primaryHint.tone || "neutral")
+                          )}
+                        >
+                          <span className="text-sm">{primaryHint.icon}</span>
+                          <span className="text-white">{primaryHint.label}</span>
+                          {primaryHint.detail && (
+                            <span className="text-white/70 text-xs font-normal">
+                              {primaryHint.detail}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {secondaryHints.map((pill) => (
+                        <div
+                          key={pill.id}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide",
+                            getHintPillClasses(pill.tone || "neutral")
+                          )}
+                        >
+                          <span className="text-xs">{pill.icon}</span>
+                          <span className="text-white/80">{pill.label}</span>
+                          {pill.detail && (
+                            <span className="text-white/60 lowercase normal-case">
+                              {pill.detail}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {helpHint && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowHelpOverlay(true);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-white/15 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/80 hover:border-white/40 hover:text-white transition-colors"
+                      >
+                        <span className="text-sm">{helpHint.icon}</span>
+                        <span>{helpHint.label}</span>
+                        {helpHint.detail && (
+                          <span className="text-white/60 normal-case font-normal">
+                            {helpHint.detail}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {mode === "launcher" && planState && (planState.status === "planning" || planState.status === "executing") && (
+                <div className="px-4 pb-3">
+                  <div className="rounded-2xl border border-glass/30 bg-glass/15 px-3 py-2 flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wide text-text-muted">Task disambiguation</p>
+                        <p className="text-sm font-semibold text-text-primary truncate">
+                          {planState.goal || "Doc insights plan"}
+                        </p>
+                        <p className="text-xs text-text-muted">
+                          {planState.status === "planning" ? "Planning" : "Executing"} ·{" "}
+                          {planState.steps.filter((s) => s.status === "completed").length}/{planState.steps.length} steps
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          logger.info("[PLAN] Expand from inline summary");
+                          openExpandedWindow();
+                        }}
+                        className="shrink-0 rounded-full border border-accent-primary/50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent-primary hover:bg-accent-primary/20"
+                      >
+                        Expand
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-text-muted">
+                      {planState.steps.slice(0, 4).map((step) => (
+                        <span
+                          key={step.id}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 border",
+                            step.status === "completed" && "border-green-500/40 text-green-300",
+                            step.status === "running" && "border-accent-primary/40 text-accent-primary",
+                            step.status === "failed" && "border-red-400/40 text-red-300",
+                            step.status === "pending" && "border-white/10 text-text-muted"
+                          )}
+                        >
+                          <span className="text-[10px]">
+                            {step.status === "completed" ? "✓" : step.status === "running" ? "⚙️" : step.status === "failed" ? "✗" : "○"}
+                          </span>
+                          <span className="truncate max-w-[110px]">{step.action}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+                {/* Spotify Mini Player - portrait card widget (Raycast-style) */}
+                <div className="px-4 pt-3 pb-3">
+                  <SpotifyMiniPlayer variant="launcher-mini" />
+                </div>
+
+                {connectionBanner && (
+                  <div
+                    className={cn(
+                      "px-4 py-2 border-y border-glass/20 text-xs font-medium flex items-center gap-2",
+                      connectionBanner.level === "error"
+                        ? "bg-red-500/10 text-red-200 border-red-500/30"
+                        : connectionBanner.level === "warning"
+                        ? "bg-amber-500/10 text-amber-100 border-amber-500/30"
+                        : "bg-blue-500/10 text-blue-100 border-blue-500/30"
+                    )}
+                  >
+                    <span>🛰️</span>
+                    <span>{connectionBanner.message}</span>
+                  </div>
+                )}
+
+                {/* Response Area - shows immediately below Spotify when processing or has response */}
+                <AnimatePresence>
+                  {showResponseSurface && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="border-b border-glass/30 bg-gradient-to-b from-glass/30 to-glass/10"
+                    >
+                      {/* Plan Progress Rail - shows orchestration steps (planning or executing) */}
+                      {planState && (planState.status === "executing" || planState.status === "planning") && (
+                        <div className="px-4 py-3 border-b border-glass/20">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-xs font-medium text-accent-primary uppercase tracking-wide">
+                              {planState.status === "planning" ? "🧠 Planning..." : "🎯 Executing Plan"}
+                            </span>
+                            {planState.steps.length > 0 && (
+                              <span className="text-xs text-text-muted">
+                                {planState.steps.filter(s => s.status === "completed").length}/{planState.steps.length} steps
+                              </span>
+                            )}
+                          </div>
+                          {/* Inline step indicators */}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {planState.steps.map((step, idx) => (
+                              <motion.div
+                                key={step.id}
+                                className={cn(
+                                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs",
+                                  step.status === "running" && "bg-accent-primary/20 text-accent-primary border border-accent-primary/40",
+                                  step.status === "completed" && "bg-green-500/20 text-green-400",
+                                  step.status === "failed" && "bg-red-500/20 text-red-400",
+                                  step.status === "pending" && "bg-glass/30 text-text-muted"
+                                )}
+                                animate={step.status === "running" ? {
+                                  boxShadow: ["0 0 0px rgba(59,130,246,0)", "0 0 10px rgba(59,130,246,0.5)", "0 0 0px rgba(59,130,246,0)"]
+                                } : {}}
+                                transition={{ duration: 1.5, repeat: Infinity }}
+                              >
+                                {step.status === "running" && (
+                                  <motion.span
+                                    animate={{ rotate: 360 }}
+                                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                  >
+                                    ⚙️
+                                  </motion.span>
+                                )}
+                                {step.status === "completed" && <span>✓</span>}
+                                {step.status === "failed" && <span>✗</span>}
+                                {step.status === "pending" && <span className="opacity-50">○</span>}
+                                <span className="truncate max-w-24">{step.action}</span>
+                              </motion.div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wide flex items-center gap-2">
+                        <span>🤖</span>
+                        <span>Response</span>
+                        {isProcessing && (
+                          <motion.span
+                            animate={{ opacity: [0.5, 1, 0.5] }}
+                            transition={{ duration: 1.5, repeat: Infinity }}
+                            className="text-accent-primary"
+                          >
+                            processing...
+                          </motion.span>
+                        )}
+                      </div>
+                      <div className="px-4 pb-3 max-h-48 overflow-y-auto">
+                        {/* Show what was submitted */}
+                        {submittedQuery && (
+                          <div className="mb-2 pb-2 border-b border-glass/20">
+                            <span className="text-xs text-text-muted">Query: </span>
+                            <span className="text-sm text-text-secondary">{submittedQuery}</span>
+                          </div>
+                        )}
+                        
+                        {isWaitingForReconnect && (
+                          <div className="flex flex-col gap-1 py-2 text-sm text-amber-200">
+                            <div className="flex items-center gap-2">
+                              <motion.span
+                                animate={{ opacity: [0.4, 1, 0.4] }}
+                                transition={{ duration: 1.5, repeat: Infinity }}
+                              >
+                                🛰️
+                              </motion.span>
+                              <span>Waiting for Cerebros to reconnect...</span>
+                            </div>
+                            {queuedSubmission && (
+                              <span className="text-xs text-amber-200/80">
+                                Queued: {queuedSubmission}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {isProcessing && !currentResponse && !isWaitingForReconnect ? (
+                          <div className="flex items-center gap-2 py-2">
+                            <TypingIndicator />
+                            <span className="text-sm text-text-muted animate-pulse">Thinking...</span>
+                          </div>
+                        ) : currentResponse ? (
+                          <div className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
+                            {currentResponse}
+                          </div>
+                        ) : null}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+              {/* Results List - scrollable (only shows when relevant) */}
+              <div className="flex-1 overflow-y-auto min-h-0">
+                {/* Quick Calculator Result */}
+                {isCalculation(query) && evaluateCalculation(query) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="px-4 py-3 border-b border-glass/30 bg-gradient-to-r from-accent-primary/10 to-transparent"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">🧮</span>
+                        <div>
+                          <div className="text-2xl font-mono text-text-primary font-semibold">
+                            {evaluateCalculation(query)}
+                          </div>
+                          <div className="text-xs text-text-muted font-mono">
+                            = {query}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            const raw = getRawResult(query);
+                            if (raw) {
+                              navigator.clipboard.writeText(raw);
+                              setCurrentResponse("Copied to clipboard!");
+                              setTimeout(() => setCurrentResponse(""), 2000);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary rounded-lg transition-colors"
+                        >
+                          Copy
+                        </button>
+                        <span className="text-xs text-text-muted">↵ to copy</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {fileSearchActive && results.length === 0 && !isLoading && (
+                  <div className="p-8 text-center text-text-muted">
+                    <div className="text-4xl mb-2">📭</div>
+                    <p>No files match &quot;{trimmedQuery.replace(/^\/(file|folder|files)\s*/, '')}&quot;</p>
+                    <p className="text-sm mt-1">Try different keywords</p>
+                  </div>
+                )}
+
+                {!fileSearchActive && filteredCommands.length === 0 && !isLoading && trimmedQuery && !slashModeActive && !isCalculation(trimmedQuery) && (
+                  <div className="p-8 text-center text-text-muted">
+                    <div className="text-4xl mb-2">⌨️</div>
+                    <p>Press Enter to ask Cerebros</p>
+                    <p className="text-sm mt-1">Use /files for semantic file search</p>
+                  </div>
+                )}
+
+                {/* Slash Command Autocomplete Dropdown */}
+                {slashModeActive && filteredCommands.length > 0 && (
+                  <div className="border-b border-glass/30">
+                    <div className="px-4 py-2 text-xs font-medium text-accent-primary uppercase tracking-wide flex items-center gap-2">
+                      <span>/</span>
+                      <span>Commands</span>
+                      <span className="text-text-muted ml-auto">Tab to complete</span>
+                    </div>
+                    {filteredCommands.map((command, cmdIndex) => {
+                      const globalIndex = allItems.findIndex(
+                        item => item.type === 'command' && (item.data as Command).id === command.id
+                      );
+                      return (
+                        <motion.button
+                          key={command.id}
+                          onClick={() => {
+                            // Insert the command into input
+                            setQuery(`/${command.id} `);
+                            inputRef.current?.focus();
+                          }}
+                          onMouseEnter={() => setSelectedIndex(globalIndex)}
+                          whileHover={{ scale: 1.01 }}
+                          whileTap={{ scale: 0.99 }}
+                          className={cn(
+                            "w-full text-left p-3 border-b border-glass/30 transition-colors flex items-center gap-3",
+                            globalIndex === selectedIndex
+                              ? "bg-accent-primary/10 border-l-2 border-l-accent-primary"
+                              : "hover:bg-glass-hover/50"
+                          )}
+                        >
+                          <span className="text-lg">{command.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-accent-primary">/{command.id}</span>
+                              <span className="text-sm text-text-primary">{command.title}</span>
+                            </div>
+                            <div className="text-xs text-text-muted truncate">{command.description}</div>
+                          </div>
+                          {command.command_type === "with_input" && (
+                            <span className="text-xs text-text-muted bg-glass/30 px-2 py-0.5 rounded">+ args</span>
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Slash mode - no commands found */}
+                {slashModeActive && filteredCommands.length === 0 && slashQueryMeta.normalizedQuery && (
+                  <div className="p-6 text-center text-text-muted">
+                    <div className="text-2xl mb-2">🔍</div>
+                    <p>No command matches &quot;/{slashQueryMeta.normalizedQuery}&quot;</p>
+                    <p className="text-sm mt-1">Try /bluesky, /calendar, /files, etc.</p>
+                  </div>
+                )}
+
+                {/* Show commands section (non-slash mode) - Raycast-style Actions */}
+                {!slashModeActive && filteredCommands.length > 0 && (
+                  <div className="border-b border-glass/30">
+                    <div className="px-4 py-2 text-xs font-semibold text-accent-primary/80 uppercase tracking-wider flex items-center gap-2">
+                      <span>⚡</span>
+                      <span>Actions</span>
+                      <span className="text-text-muted font-normal ml-auto">{filteredCommands.length}</span>
+                    </div>
+                    {filteredCommands.slice(0, 6).map((command, cmdIndex) => {
+                      const globalIndex = allItems.findIndex(
+                        item => item.type === 'command' && (item.data as Command).id === command.id
+                      );
+                      return (
+                        <CommandItem
+                          key={command.id}
+                          command={command}
+                          isSelected={globalIndex === selectedIndex}
+                          onClick={() => handleExecuteCommand(command)}
+                          onMouseEnter={() => setSelectedIndex(globalIndex)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Show files section - always show header when there are files */}
+                {results.length > 0 && (
+                  <div>
+                    <div className="px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-2">
+                      <span>📄</span>
+                      <span>Files</span>
+                      <span className="font-normal ml-auto">{results.length}</span>
+                    </div>
+                    {results.map((result, fileIndex) => {
+                      const globalIndex = allItems.findIndex(
+                        item => item.type === 'file' && (item.data as SearchResult).file_path === result.file_path
+                      );
+                      return (
+                        <SearchResultItem
+                          key={result.file_path}
+                          result={result}
+                          isSelected={globalIndex === selectedIndex}
+                          onClick={() => handleSelectResult(result)}
+                          onMouseEnter={() => setSelectedIndex(globalIndex)}
+                          onPreviewToggle={() => togglePreview(result)}
+                          getFileIcon={getFileIcon}
+                          dataTestId={`files-result-item-${fileIndex}`}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Conversation History Panel */}
+              {chatMessages.length > 0 && (
+                <div className="mt-4">
+                  <LauncherHistoryPanel
+                    messages={chatMessages}
+                    planState={planState}
+                    isProcessing={isProcessing}
+                    maxHeight={spotlightUi.historyPanel.maxHeight}
+                    maxTurns={miniConversationTurns}
+                  />
+                </div>
+              )}
+
+              {/* Footer with keyboard hints */}
+              <div className="px-4 py-3 border-t border-glass/20 bg-glass/15">
+                <div className="flex items-center justify-between text-xs text-white/60">
+                  <div className="flex items-center gap-4">
+                    <span>↵ Submit</span>
+                    <span>Esc Close</span>
+                  </div>
+                  <span className="text-white/40">Spotlight</span>
+                </div>
+              </div>
+            </div>
+            )}
+
+            {/* Preview Panel - only show in search view */}
+            {viewState === "search" && (
+              <AnimatePresence>
+                {previewMode !== 'closed' && previewData && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 20, width: 0 }}
+                    animate={{ opacity: 1, x: 0, width: 400 }}
+                    exit={{ opacity: 0, x: 20, width: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="bg-glass-elevated backdrop-blur-glass rounded-r-2xl border border-glass border-l-0 shadow-elevated overflow-hidden"
+                    data-testid="files-preview-pane"
+                  >
+                    <DocumentPreview
+                      result={previewData}
+                      mode={previewMode}
+                      onClose={() => {
+                        setPreviewMode('closed');
+                        setPreviewData(null);
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            )}
+          </motion.div>
+        </div>
+
+        {/* Voice Recording Overlay */}
+        <RecordingIndicator
+          isRecording={isRecording}
+          isTranscribing={isTranscribing}
+          onStop={handleStopRecording}
+          error={voiceError || voiceRecorderError}
+          onRetry={() => {
+            setVoiceError(null);
+            handleVoiceRecord();
+          }}
+          onCancel={() => {
+            setVoiceError(null);
+          }}
+        />
+      </div>
+      </>
+    );
+  }
+
+  // Overlay mode (original behavior)
+  return (
+    <>
+    {overlayElements}
+    <AnimatePresence>
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        exit="hidden"
+        variants={overlayFade}
+        className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            onClose();
+          }
+        }}
+      >
+        {/* Backdrop */}
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+        {/* Modal Container */}
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          exit="hidden"
+          variants={modalSlideDown}
+          className="relative w-full max-w-4xl max-h-[80vh] flex"
+          onClick={(e) => e.stopPropagation()}
+          data-testid="command-palette"
+        >
+          {/* Command Input View */}
+          {viewState === "command_input" && selectedCommand ? (
+            <div className="flex-1 bg-glass-elevated backdrop-blur-glass rounded-2xl border border-glass shadow-elevated shadow-inset-border overflow-hidden flex flex-col">
+              {/* Header with back button */}
+              <div className="p-4 border-b border-glass/30 flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setViewState("search");
+                    setSelectedCommand(null);
+                    setCommandArg("");
+                    setCommandArgCaret(null);
+                    setTimeout(() => inputRef.current?.focus(), 50);
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-glass-hover transition-colors text-text-muted hover:text-text-primary"
+                  title="Back to search"
+                >
+                  <span className="text-lg">←</span>
+                </button>
+                <div className="text-xl">{selectedCommand.icon}</div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-text-primary">{selectedCommand.title}</div>
+                  <div className="text-xs text-text-muted">{selectedCommand.description}</div>
+                </div>
+              </div>
+
+              {/* Command Argument Input */}
+              <div className="flex-1 flex flex-col p-4">
+                <input
+                  ref={commandInputRef}
+                  type="text"
+                  value={commandArg}
+                  onChange={(e) => {
+                    setCommandArg(e.target.value);
+                    recordCommandCaret(e.currentTarget);
+                  }}
+                  placeholder={selectedCommand.placeholder || "Enter argument..."}
+                  className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg font-medium"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (
+                      showCommandMetadata &&
+                      commandMetadataSuggestions.length > 0
+                    ) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setCommandMetadataIndex((prev) =>
+                          prev === commandMetadataSuggestions.length - 1 ? 0 : prev + 1,
+                        );
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setCommandMetadataIndex((prev) =>
+                          prev === 0 ? commandMetadataSuggestions.length - 1 : prev - 1,
+                        );
+                        return;
+                      }
+                      if (e.key === "Tab" || e.key === "Enter") {
+                        e.preventDefault();
+                        handleCommandMetadataSelect(
+                          commandMetadataSuggestions[commandMetadataIndex],
+                        );
+                        return;
+                      }
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleCommandArgSubmit();
+                    }
+                  }}
+                  onSelect={(e) => recordCommandCaret(e.currentTarget)}
+                  onKeyUp={(e) => recordCommandCaret(e.currentTarget)}
+                  onClick={(e) => recordCommandCaret(e.currentTarget)}
+                />
+                {showCommandMetadata && (
+                  <div className="mt-3">
+                    <div className="rounded-2xl border border-glass/40 bg-glass/20 shadow-inset-border overflow-hidden">
+                      {commandMetadataSuggestions.map((suggestion, index) => {
+                        const isSelected = index === commandMetadataIndex;
+                        const descriptor = getSuggestionDescriptors(suggestion);
+                        return (
+                          <button
+                            key={`${suggestion.kind}-${descriptor.title}-${index}`}
+                            type="button"
+                            className={cn(
+                              "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
+                              isSelected
+                                ? "bg-glass-hover text-text-primary"
+                                : "text-text-muted hover:text-text-primary hover:bg-glass-hover/60",
+                            )}
+                            onClick={() => handleCommandMetadataSelect(suggestion)}
+                            onMouseEnter={() => setCommandMetadataIndex(index)}
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{descriptor.title}</p>
+                              {descriptor.subtitle && (
+                                <p className="text-xs text-text-subtle truncate">{descriptor.subtitle}</p>
+                              )}
+                            </div>
+                            {descriptor.badge && (
+                              <span className="ml-3 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+                                {descriptor.badge}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      {commandMetadataLoading && (
+                        <div className="px-3 py-2 text-xs text-text-subtle">Fetching suggestions…</div>
+                      )}
+                      {commandMetadataError && (
+                        <div className="px-3 py-2 text-xs text-amber-300">
+                          Suggestions unavailable: {commandMetadataError}
+                        </div>
+                      )}
+                      {!commandMetadataLoading &&
+                        !commandMetadataError &&
+                        commandMetadataSuggestions.length === 0 && (
+                          <div className="px-3 py-2 text-xs text-text-subtle">Keep typing for suggestions.</div>
+                        )}
+                    </div>
+                  </div>
+                )}
+                {renderSlackHintPanel()}
+                
+                {/* Keyboard hints */}
+                <div className="mt-4 pt-4 border-t border-glass/30">
+                  <div className="flex items-center justify-between text-xs text-text-muted">
+                    <div className="flex items-center gap-4">
+                      <span>↵ Execute</span>
+                      <span>Esc Back</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Main Search Panel */
+            <div className={cn(
+              "flex-1 bg-glass-elevated backdrop-blur-glass rounded-2xl",
+              "border border-glass shadow-elevated shadow-inset-border",
+              "overflow-hidden",
+              previewMode !== 'closed' ? 'rounded-r-none' : ''
+            )}>
+              {/* Search Input */}
+              <div className="p-4 border-b border-glass">
+                <div className="flex items-center gap-3">
+                  <div className="text-lg">🔍</div>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={source === "folder" ? "Search folders and files..." : "Search documents..."}
+                    className="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg"
+                    autoFocus
+                    data-testid="command-palette-query"
+                  />
+                  {isLoading && (
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full"
+                    />
+                  )}
+                </div>
+              </div>
+
+            {/* Results List */}
+            <div className="max-h-96 overflow-y-auto">
+              {/* Quick Calculator Result (Overlay mode) */}
+              {isCalculation(query) && evaluateCalculation(query) && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="px-4 py-3 border-b border-glass/30 bg-gradient-to-r from-accent-primary/10 to-transparent"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">🧮</span>
+                      <div>
+                        <div className="text-2xl font-mono text-text-primary font-semibold">
+                          {evaluateCalculation(query)}
+                        </div>
+                        <div className="text-xs text-text-muted font-mono">
+                          = {query}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const raw = getRawResult(query);
+                          if (raw) {
+                            navigator.clipboard.writeText(raw);
+                          }
+                        }}
+                        className="px-3 py-1.5 text-xs bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary rounded-lg transition-colors"
+                      >
+                        Copy
+                      </button>
+                      <span className="text-xs text-text-muted">↵ to copy</span>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {allItems.length === 0 && !isLoading && query && !isCalculation(query) && (
+                <div className="p-8 text-center text-text-muted">
+                  <div className="text-4xl mb-2">📭</div>
+                  <p>No results match &quot;{query}&quot;</p>
+                  <p className="text-sm mt-1">Try different keywords</p>
+                </div>
+              )}
+
+              {/* Show commands section */}
+              {filteredCommands.length > 0 && (
+                <div className="border-b border-glass/30">
+                  <div className="px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wide">
+                    Actions
+                  </div>
+                  {filteredCommands.map((command, cmdIndex) => {
+                    const globalIndex = allItems.findIndex(
+                      item => item.type === 'command' && (item.data as Command).id === command.id
+                    );
+                    return (
+                      <CommandItem
+                        key={command.id}
+                        command={command}
+                        isSelected={globalIndex === selectedIndex}
+                        onClick={() => handleExecuteCommand(command)}
+                        onMouseEnter={() => setSelectedIndex(globalIndex)}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Show files section */}
+              {results.length > 0 && (
+                <div>
+                  {filteredCommands.length > 0 && (
+                    <div className="px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wide">
+                      Files
+                    </div>
+                  )}
+                  {results.map((result, fileIndex) => {
+                    const globalIndex = allItems.findIndex(
+                      item => item.type === 'file' && (item.data as SearchResult).file_path === result.file_path
+                    );
+                    return (
+                      <SearchResultItem
+                        key={result.file_path}
+                        result={result}
+                        isSelected={globalIndex === selectedIndex}
+                        onClick={() => handleSelectResult(result)}
+                        onMouseEnter={() => setSelectedIndex(globalIndex)}
+                        onPreviewToggle={() => togglePreview(result)}
+                        getFileIcon={getFileIcon}
+                        dataTestId={`files-result-item-${fileIndex}`}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 border-t border-glass bg-glass-elevated/50">
+              <div className="flex items-center justify-between text-xs text-text-muted">
+                <div className="flex items-center gap-4">
+                  <span>↑↓ Navigate</span>
+                  <span>↵ Open in App</span>
+                  <span>␣ Preview</span>
+                  <span>⌘↵ Open External</span>
+                </div>
+                <div>Esc to close</div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* Preview Panel - only show in search view */}
+          {viewState === "search" && (
+            <AnimatePresence>
+              {previewMode !== 'closed' && previewData && (
+              <motion.div
+                initial={{ opacity: 0, x: 20, width: 0 }}
+                animate={{ opacity: 1, x: 0, width: 400 }}
+                exit={{ opacity: 0, x: 20, width: 0 }}
+                transition={{ duration: 0.2 }}
+                className="bg-glass-elevated backdrop-blur-glass rounded-r-2xl border border-glass border-l-0 shadow-elevated overflow-hidden"
+                data-testid="files-preview-pane"
+              >
+                <DocumentPreview
+                  result={previewData}
+                  mode={previewMode}
+                  onClose={() => {
+                    setPreviewMode('closed');
+                    setPreviewData(null);
+                  }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          )}
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+    </>
+  );
+}
+
+interface SearchResultItemProps {
+  result: SearchResult;
+  isSelected: boolean;
+  onClick: () => void;
+  onMouseEnter: () => void;
+  onPreviewToggle: () => void;
+  getFileIcon: (fileType: string) => string;
+  dataTestId?: string;
+}
+
+function SearchResultItem({
+  result,
+  isSelected,
+  onClick,
+  onMouseEnter,
+  onPreviewToggle,
+  getFileIcon,
+  dataTestId
+}: SearchResultItemProps) {
+  let indexedLabel: string | null = null;
+  if (result.indexed_at) {
+    const date = new Date(result.indexed_at);
+    indexedLabel = Number.isNaN(date.getTime())
+      ? result.indexed_at
+      : date.toLocaleString();
+  }
+
+  return (
+    <motion.button
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.99 }}
+      className={cn(
+        "w-full text-left p-4 border-b border-glass/50 transition-colors",
+        isSelected
+          ? "bg-glass-hover shadow-inset-border"
+          : "hover:bg-glass-hover/50"
+      )}
+      data-testid={dataTestId || "files-result-item"}
+    >
+      <div className="flex items-start gap-3">
+        {/* File Icon or Thumbnail */}
+        <div className="w-8 h-8 mt-1 flex-shrink-0 flex items-center justify-center">
+          {result.result_type === "image" && result.thumbnail_url ? (
+            <img
+              src={getApiBaseUrl() + result.thumbnail_url}
+              alt={result.file_name}
+              className="w-full h-full object-cover rounded border border-glass"
+              onError={(e) => {
+                // Fallback to icon if thumbnail fails
+                e.currentTarget.style.display = 'none';
+                e.currentTarget.parentElement!.innerHTML = getFileIcon(result.file_type);
+              }}
+            />
+          ) : (
+            <div className="text-2xl">{getFileIcon(result.file_type)}</div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {/* File Name and Type */}
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="font-medium text-text-primary truncate">
+              {result.file_name}
+            </h3>
+            <span className="text-xs text-text-muted uppercase px-2 py-0.5 bg-glass rounded">
+              {result.file_type}
+            </span>
+            {result.page_number && (
+              <span className="text-xs text-text-muted px-2 py-0.5 bg-accent-primary/10 rounded">
+                Page {result.page_number}
+              </span>
+            )}
+          </div>
+
+          {/* Breadcrumb */}
+          <div className="text-sm text-text-muted mb-2 truncate">
+            {result.breadcrumb}
+          </div>
+
+          {/* Snippet with Highlights */}
+          <div className="text-sm text-text-primary leading-relaxed">
+            <HighlightedText
+              text={result.snippet}
+              highlights={result.highlight_offsets}
+            />
+          </div>
+
+          {/* Similarity Score */}
+          <div className="text-xs text-text-muted mt-2">
+            Match: {(result.similarity_score * 100).toFixed(1)}%
+          </div>
+
+          {(result.folder_label || indexedLabel) && (
+            <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-2">
+              {result.folder_label && (
+                <span className="px-2 py-0.5 rounded-full border border-glass/60 bg-glass/20">
+                  {result.folder_label}
+                </span>
+              )}
+              {indexedLabel && (
+                <span title={indexedLabel}>
+                  Indexed {indexedLabel}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Preview Toggle */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreviewToggle();
+          }}
+          className="flex-shrink-0 p-2 text-text-muted hover:text-text-primary hover:bg-glass-hover rounded transition-colors"
+          title="Quick preview (Space)"
+        >
+          👁️
+        </button>
+      </div>
+    </motion.button>
+  );
+}
+
+interface CommandItemProps {
+  command: Command;
+  isSelected: boolean;
+  onClick: () => void;
+  onMouseEnter: () => void;
+}
+
+function CommandItem({
+  command,
+  isSelected,
+  onClick,
+  onMouseEnter
+}: CommandItemProps) {
+  return (
+    <motion.button
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.99 }}
+      className={cn(
+        "w-full text-left p-4 border-b border-glass/50 transition-colors",
+        isSelected
+          ? "bg-glass-hover shadow-inset-border"
+          : "hover:bg-glass-hover/50"
+      )}
+      data-testid="command-item"
+    >
+      <div className="flex items-start gap-3">
+        {/* Icon */}
+        <div className="w-8 h-8 mt-1 flex-shrink-0 flex items-center justify-center text-2xl">
+          {command.icon}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {/* Title and Category */}
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="font-medium text-text-primary">
+              {command.title}
+            </h3>
+            <span className="text-xs text-text-muted uppercase px-2 py-0.5 bg-glass rounded">
+              {command.category}
+            </span>
+          </div>
+
+          {/* Description */}
+          <div className="text-sm text-text-muted">
+            {command.description}
+          </div>
+        </div>
+
+        {/* Action indicator */}
+        <div className="flex-shrink-0 mt-1 text-text-muted text-xs">
+          ↵
+        </div>
+      </div>
+    </motion.button>
+  );
+}
+
+interface HighlightedTextProps {
+  text: string;
+  highlights: [number, number][];
+}
+
+function HighlightedText({ text, highlights }: HighlightedTextProps) {
+  if (!highlights || highlights.length === 0) {
+    return <span>{text}</span>;
+  }
+
+  // Sort highlights by start position
+  const sortedHighlights = [...highlights].sort((a, b) => a[0] - b[0]);
+
+  const parts: { text: string; highlighted: boolean }[] = [];
+  let lastEnd = 0;
+
+  for (const [start, end] of sortedHighlights) {
+    // Add non-highlighted text before this highlight
+    if (start > lastEnd) {
+      parts.push({
+        text: text.slice(lastEnd, start),
+        highlighted: false
+      });
+    }
+
+    // Add highlighted text
+    parts.push({
+      text: text.slice(start, end),
+      highlighted: true
+    });
+
+    lastEnd = end;
+  }
+
+  // Add remaining text
+  if (lastEnd < text.length) {
+    parts.push({
+      text: text.slice(lastEnd),
+      highlighted: false
+    });
+  }
+
+  return (
+    <>
+      {parts.map((part, index) => (
+        part.highlighted ? (
+          <mark
+            key={index}
+            className="bg-accent-primary/20 text-accent-primary px-0.5 rounded"
+          >
+            {part.text}
+          </mark>
+        ) : (
+          <span key={index}>{part.text}</span>
+        )
+      ))}
+    </>
+  );
+}
+
+interface DocumentPreviewProps {
+  result: SearchResult;
+  mode: 'loading' | 'previewing';
+  onClose: () => void;
+}
+
+function DocumentPreview({ result, mode, onClose }: DocumentPreviewProps) {
+  const baseUrl = getApiBaseUrl();
+  const [fileMetadata, setFileMetadata] = useState<{ size?: number; modified?: string } | null>(null);
+
+  // Fetch file metadata
+  useEffect(() => {
+    if (mode === 'previewing' && result.file_path) {
+      fetch(`${baseUrl}/api/files/metadata?path=${encodeURIComponent(result.file_path)}`)
+        .then(res => res.json())
+        .then(data => setFileMetadata(data))
+        .catch(() => {
+          // Silently fail - metadata is optional
+        });
+    }
+  }, [mode, result.file_path, baseUrl]);
+
+  const handleCopyPath = () => {
+    navigator.clipboard.writeText(result.file_path);
+    // Could show a toast here
+  };
+
+  const handleRevealInFinder = () => {
+    if (isElectron()) {
+      revealInFinder(result.file_path);
+    } else {
+      // Fallback: use API
+      fetch(`${baseUrl}/api/reveal-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: result.file_path }),
+      }).catch(() => {});
+    }
+  };
+
+  if (mode === 'loading') {
+    return (
+      <div className="h-full flex items-center justify-center p-8">
+        <div className="text-center">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            className="w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full mx-auto mb-4"
+          />
+          <p className="text-text-muted">Loading preview...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isImage = result.result_type === "image";
+  const isPDF = result.file_type?.toLowerCase() === 'pdf';
+  const previewUrl = `${baseUrl}/api/files/preview?path=${encodeURIComponent(result.file_path)}`;
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="p-4 border-b border-glass flex items-center justify-between">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="text-lg flex-shrink-0">{isImage ? '🖼️' : (isPDF ? '📄' : '📝')}</span>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-medium text-text-primary truncate" title={result.file_name}>
+              {result.file_name}
+            </h3>
+            <p className="text-xs text-text-muted">
+              {isImage ? (
+                result.metadata?.width && result.metadata?.height ?
+                  `${result.metadata.width} × ${result.metadata.height}px` :
+                  'Image'
+              ) : (
+                result.page_number ? `Page ${result.page_number} of ${result.total_pages || 1}` : 'Document'
+              )}
+            </p>
+            {fileMetadata && (
+              <p className="text-xs text-text-muted mt-1">
+                {fileMetadata.size && `${(fileMetadata.size / 1024).toFixed(1)} KB`}
+                {fileMetadata.modified && ` • Modified: ${new Date(fileMetadata.modified).toLocaleDateString()}`}
+              </p>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-text-muted hover:text-text-primary transition-colors p-1 rounded hover:bg-glass-hover flex-shrink-0"
+          title="Close preview"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Preview Content */}
+      <div className="flex-1 p-4 overflow-y-auto">
+        {isImage ? (
+          <div className="flex flex-col items-center justify-center h-full">
+            {result.preview_url && (
+              <img
+                src={baseUrl + result.preview_url}
+                alt={result.file_name}
+                className="max-w-full max-h-full object-contain rounded-lg border border-glass shadow-lg"
+                onError={(e) => {
+                  // Fallback to thumbnail if preview fails
+                  if (result.thumbnail_url) {
+                    (e.target as HTMLImageElement).src = baseUrl + result.thumbnail_url;
+                  }
+                }}
+              />
+            )}
+            {result.snippet && (
+              <div className="text-center mt-4 max-w-md">
+                <p className="text-sm text-text-primary mb-2">{result.snippet}</p>
+                {result.metadata?.width && result.metadata?.height && (
+                  <p className="text-xs text-text-muted">
+                    {result.metadata.width} × {result.metadata.height} pixels
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ) : isPDF ? (
+          <div className="h-full w-full">
+            <iframe
+              src={previewUrl}
+              className="w-full h-full border-0 rounded-lg"
+              title={result.file_name}
+              onError={() => {
+                // Fallback to snippet if PDF preview fails
+              }}
+            />
+          </div>
+        ) : (
+          <div className="prose prose-sm max-w-none">
+            <HighlightedText
+              text={result.snippet}
+              highlights={result.highlight_offsets}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Footer with Actions */}
+      <div className="p-3 border-t border-glass bg-glass-elevated/50">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs text-text-muted">
+            <span>Match: {(result.similarity_score * 100).toFixed(1)}%</span>
+            {fileMetadata?.size && (
+              <span>• {(fileMetadata.size / 1024).toFixed(1)} KB</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyPath}
+              className="px-2 py-1 text-xs bg-glass hover:bg-glass-hover rounded transition-colors text-text-muted hover:text-text-primary"
+              title="Copy file path"
+            >
+              Copy Path
+            </button>
+            <button
+              onClick={handleRevealInFinder}
+              className="px-2 py-1 text-xs bg-glass hover:bg-glass-hover rounded transition-colors text-text-muted hover:text-text-primary"
+              title="Reveal in Finder"
+            >
+              Reveal
+            </button>
+            <span className="text-xs text-text-muted">↵ Open</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

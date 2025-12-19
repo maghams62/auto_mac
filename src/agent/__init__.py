@@ -15,6 +15,10 @@ try:
 except ImportError:
     STOCK_AGENT_TOOLS = []
 try:
+    from .stock_agent_hybrid import STOCK_AGENT_TOOLS as STOCK_AGENT_HYBRID_TOOLS
+except ImportError:
+    STOCK_AGENT_HYBRID_TOOLS = []
+try:
     from .screen_agent import SCREEN_AGENT_TOOLS
 except ImportError:
     SCREEN_AGENT_TOOLS = []
@@ -24,6 +28,10 @@ from .notifications_agent import NotificationsAgent, NOTIFICATIONS_AGENT_TOOLS
 from .vision_agent import VisionAgent, VISION_AGENT_TOOLS
 from .reply_tool import ReplyAgent, REPLY_AGENT_TOOLS, REPLY_AGENT_HIERARCHY
 from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIERARCHY
+from .weather_agent import WEATHER_AGENT_TOOLS, WEATHER_AGENT_HIERARCHY
+from .notes_agent import NOTES_AGENT_TOOLS, NOTES_AGENT_HIERARCHY
+from .reminders_agent import REMINDERS_AGENT_TOOLS, REMINDERS_AGENT_HIERARCHY
+from .doc_insights_agent import DocInsightsAgent, DOC_INSIGHTS_AGENT_TOOLS, DOC_INSIGHTS_AGENT_HIERARCHY
 
 # Import registry
 from .agent_registry import (
@@ -54,6 +62,10 @@ __all__ = [
     "VisionAgent",
     "ReplyAgent",
     "SpotifyAgent",
+    "WeatherAgent",
+    "NotesAgent",
+    "RemindersAgent",
+    "DocInsightsAgent",
 
     # Agent registry
     "AgentRegistry",
@@ -73,7 +85,12 @@ __all__ = [
     "VISION_AGENT_TOOLS",
     "REPLY_AGENT_TOOLS",
     "SPOTIFY_AGENT_TOOLS",
+    "WEATHER_AGENT_TOOLS",
+    "NOTES_AGENT_TOOLS",
+    "REMINDERS_AGENT_TOOLS",
+    "DOC_INSIGHTS_AGENT_TOOLS",
     "STOCK_AGENT_TOOLS",
+    "STOCK_AGENT_HYBRID_TOOLS",
     "SCREEN_AGENT_TOOLS",
     "ALL_AGENT_TOOLS",
 
@@ -87,4 +104,8 @@ __all__ = [
     "get_agent_tool_mapping",
     "print_agent_hierarchy",
     "REPLY_AGENT_HIERARCHY",
+    "WEATHER_AGENT_HIERARCHY",
+    "NOTES_AGENT_HIERARCHY",
+    "REMINDERS_AGENT_HIERARCHY",
+    "DOC_INSIGHTS_AGENT_HIERARCHY",
 ]

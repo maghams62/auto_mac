@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_config_path_resolution",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_path_handling.TestPathHandling object at 0x161691250>\n\n    def test_config_path_resolution(self):\n        \"\"\"Test that config file paths are properly resolved.\"\"\"\n>       from src.config import Config\nE       ImportError: cannot import name 'Config' from 'src.config' (/Users/siddharthsuresh/Downloads/auto_mac/src/config/__init__.py)\n\ntests/test_path_handling.py:188: ImportError",
+    "duration": 0.058190417010337114
+  },
+  "timestamp": "2025-11-12T13:42:44.799712",
+  "test_name": "path_handling"
+}

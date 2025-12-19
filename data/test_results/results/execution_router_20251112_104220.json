@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_song_visibility_detection",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.00014583399752154946
+  },
+  "timestamp": "2025-11-12T10:42:20.547719",
+  "test_name": "execution_router"
+}

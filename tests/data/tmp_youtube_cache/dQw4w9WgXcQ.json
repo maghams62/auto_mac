@@ -1,0 +1,50 @@
+{
+  "video": {
+    "video_id": "dQw4w9WgXcQ",
+    "title": "Mixture-of-Experts AMA",
+    "channel_title": "Cerebros",
+    "description": null,
+    "thumbnail_url": null,
+    "duration_seconds": 600,
+    "playlist_id": null,
+    "playlist_url": null,
+    "canonical_url": "https://youtu.be/dQw4w9WgXcQ",
+    "timestamp_seconds": null,
+    "alias": "mixture-of-experts-ama",
+    "transcript_state": "ready",
+    "transcript_error": null,
+    "last_used_at": "2025-12-05T22:48:31.275079+00:00"
+  },
+  "transcript": {
+    "language": "en",
+    "segments": [
+      {
+        "text": "Intro to mixtures",
+        "start": 0.0,
+        "duration": 5.0
+      },
+      {
+        "text": "Routing discussion",
+        "start": 30.0,
+        "duration": 8.0
+      }
+    ]
+  },
+  "chunks": [
+    {
+      "video_id": "dQw4w9WgXcQ",
+      "index": 0,
+      "start_seconds": 0.0,
+      "end_seconds": 38.0,
+      "text": "Intro to mixtures\nRouting discussion",
+      "token_count": 9
+    }
+  ],
+  "metadata": {
+    "cached_at": "2025-12-05T07:41:57.020721+00:00",
+    "vector_indexed": true,
+    "graph_ingested": false,
+    "universal_ingested": true,
+    "workspace_id": "default_workspace"
+  }
+}

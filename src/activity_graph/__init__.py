@@ -1,0 +1,2 @@
+"Activity graph service package."
+

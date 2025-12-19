@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_prompt_augmentation_pattern",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 6.983298226259649e-05
+  },
+  "timestamp": "2025-11-12T09:12:17.161059",
+  "test_name": "reasoning_trace_integration"
+}

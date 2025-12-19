@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_screen_agent_capture_screenshot",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.013667332998011261
+  },
+  "timestamp": "2025-11-12T11:50:12.631666",
+  "test_name": "sub_agent_functionality"
+}

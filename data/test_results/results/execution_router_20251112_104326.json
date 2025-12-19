@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_should_use_vision_first_with_multiple_failures",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.017551333003211766
+  },
+  "timestamp": "2025-11-12T10:43:26.999895",
+  "test_name": "execution_router"
+}

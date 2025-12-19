@@ -4,15 +4,17 @@ Vision Agent - Reason about UI screenshots to unblock complex navigation flows.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
-from ..utils import load_config
+from ..utils import load_config, get_temperature_for_model
 
 
 logger = logging.getLogger(__name__)
@@ -67,11 +69,51 @@ def analyze_ui_screenshot(
     )
 
     try:
+        screenshot_file = Path(screenshot_path).expanduser()
+        if not screenshot_file.exists():
+            return {
+                "error": True,
+                "error_type": "VisionInputError",
+                "error_message": f"Screenshot not found: {screenshot_path}",
+                "screenshot_path": screenshot_path,
+                "retry_possible": False,
+            }
+
+        try:
+            image_bytes = screenshot_file.read_bytes()
+        except Exception as file_exc:
+            logger.error(f"[VISION AGENT] Failed to read screenshot: {file_exc}")
+            return {
+                "error": True,
+                "error_type": "VisionInputError",
+                "error_message": f"Unable to read screenshot: {file_exc}",
+                "screenshot_path": screenshot_path,
+                "retry_possible": False,
+            }
+
+        if not image_bytes:
+            return {
+                "error": True,
+                "error_type": "VisionInputError",
+                "error_message": "Screenshot file is empty",
+                "screenshot_path": screenshot_path,
+                "retry_possible": False,
+            }
+
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+        suffix = screenshot_file.suffix.lower()
+        mime_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".heic": "image/heic",
+        }.get(suffix, "image/png")
+
         config = load_config()
         openai_config = config.get("openai", {})
         llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,
+            temperature=get_temperature_for_model(config, default_temperature=0.0),
             api_key=openai_config.get("api_key")
         )
 
@@ -90,7 +132,15 @@ def analyze_ui_screenshot(
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            HumanMessage(content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{encoded_image}",
+                    },
+                },
+            ]),
         ]
 
         response = llm.invoke(messages)
@@ -109,6 +159,13 @@ def analyze_ui_screenshot(
         data.setdefault("status", "action_required")
         data.setdefault("actions", [])
         data["screenshot_path"] = screenshot_path
+        data["metadata"] = {
+            "goal": goal,
+            "tool_name": tool_name,
+            "attempt": attempt,
+            "recent_errors": recent_errors or [],
+            "model": openai_config.get("model", "gpt-4o"),
+        }
 
         return data
 

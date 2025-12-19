@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mac Automation Assistant - Main Application
+Cerebro OS - Main Application
 
 AI-powered document search and email automation for macOS.
 """
@@ -8,7 +8,7 @@ AI-powered document search and email automation for macOS.
 import sys
 import logging
 import re
-from typing import Dict
+from typing import Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,12 +26,15 @@ else:
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.utils import load_config, setup_logging, ensure_directories
+from src.utils.message_personality import get_task_completed_message
 from src.workflow import WorkflowOrchestrator
 from src.agent import AutomationAgent
 from src.agent.agent_registry import AgentRegistry
 from src.memory import SessionManager
 from src.ui import ChatUI
 from src.ui.slash_commands import create_slash_command_handler
+from src.services.slack_metadata import SlackMetadataService
+from src.services.git_metadata import GitMetadataService
 
 
 logger = logging.getLogger(__name__)
@@ -46,10 +49,9 @@ def main():
         # Load configuration
         config = load_config()
 
-        # Setup logging
+        # Setup logging (uses module-level logger)
         setup_logging(config)
-
-        logger.info("Starting Mac Automation Assistant")
+        logger.info("Starting Cerebro OS")
 
         # Check for OpenAI API key
         if not config['openai']['api_key'] or config['openai']['api_key'].startswith('${'):
@@ -57,10 +59,16 @@ def main():
             print("Please set it with: export OPENAI_API_KEY='your-key-here'")
             sys.exit(1)
 
-        # Initialize session manager
-        session_manager = SessionManager(storage_dir="data/sessions")
+        # Initialize session manager (retry logging config is handled internally if supported)
+        retry_logging_enabled = config.get("retry_logging", {}).get("enabled", True)
+        session_manager = SessionManager(
+            storage_dir="data/sessions",
+            config=config,
+        )
         session_id = "default"  # Single-user mode
         logger.info(f"Session manager initialized with session ID: {session_id}")
+        if retry_logging_enabled:
+            logger.info("Retry logging enabled for better error recovery")
 
         # Initialize agent registry with session support
         agent_registry = AgentRegistry(config, session_manager=session_manager)
@@ -71,8 +79,18 @@ def main():
         # Initialize LangGraph agent with session support
         agent = AutomationAgent(config, session_manager=session_manager)
 
-        # Initialize slash command handler with session support
-        slash_handler = create_slash_command_handler(agent_registry, session_manager)
+        # Shared metadata services for live autocomplete
+        slack_metadata_service = SlackMetadataService(config=config)
+        git_metadata_service = GitMetadataService(config)
+
+        # Initialize slash command handler with session support and config
+        slash_handler = create_slash_command_handler(
+            agent_registry,
+            session_manager,
+            config,
+            slack_metadata_service=slack_metadata_service,
+            git_metadata_service=git_metadata_service,
+        )
 
         # Initialize chat UI with session support
         ui = ChatUI(slash_command_handler=slash_handler, session_manager=session_manager)
@@ -187,8 +205,6 @@ def main():
                         # Fix URL format if it uses "via" in daddr (incorrect format)
                         # Convert: daddr=DEST via STOP1, STOP2 to daddr=STOP1&daddr=STOP2&daddr=DEST
                         from urllib.parse import unquote, quote, urlparse, parse_qs, urlencode, urlunparse
-                        import logging
-                        logger = logging.getLogger(__name__)
                         
                         try:
                             parsed = urlparse(maps_url)
@@ -264,8 +280,6 @@ def main():
                         
                         # Also provide a command to open it programmatically
                         import subprocess
-                        import logging
-                        logger = logging.getLogger(__name__)
                         try:
                             # Try to open the URL automatically
                             result = subprocess.run(["open", maps_url], check=False, capture_output=True, timeout=2)
@@ -299,7 +313,7 @@ def main():
                             }
                             status = reply_payload.get("status", result.get("status", "success"))
                             icon, style = status_map.get(status, ("✅", "green"))
-                            message_text = reply_payload.get("message") or "Task completed."
+                            message_text = reply_payload.get("message") or get_task_completed_message()
                             ui.show_message(f"{icon} {message_text}", style=style)
 
                             details_text = (reply_payload.get("details") or "").strip()
@@ -314,7 +328,7 @@ def main():
                                 artifact_lines = "\n".join(f"- {artifact}" for artifact in artifacts)
                                 ui.console.print(Panel(artifact_lines, border_style="cyan", title="📎 Artifacts"))
                         else:
-                            ui.show_message("✅ Task completed successfully!", style="green")
+                            ui.show_message(get_task_completed_message(), style="green")
 
                         ui.show_message(f"Goal: {result.get('goal', 'N/A')}", style="cyan")
                         ui.show_message(f"Steps executed: {result.get('steps_executed', 0)}", style="cyan")

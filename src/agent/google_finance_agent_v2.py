@@ -36,7 +36,7 @@ def search_google_finance_stock(company: str) -> Dict[str, Any]:
 
     try:
         from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.utils import load_config
 
         config = load_config()
 
@@ -156,7 +156,7 @@ def extract_google_finance_research(url: str) -> Dict[str, Any]:
 
     try:
         from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.utils import load_config
 
         config = load_config()
         browser = SyncWebBrowser(config, headless=False)
@@ -275,7 +275,7 @@ def capture_google_finance_chart(url: str, output_name: Optional[str] = None) ->
 
     try:
         from automation.web_browser import SyncWebBrowser
-        from utils import load_config
+        from src.utils import load_config
 
         config = load_config()
         browser = SyncWebBrowser(config, headless=False)
@@ -391,7 +391,7 @@ def create_stock_report_from_google_finance(company: str, output_format: str = "
         logger.info(f"[GOOGLE FINANCE V2] Creating {output_format}")
 
         from automation.report_generator import ReportGenerator
-        from utils import load_config
+        from src.utils import load_config
 
         config = load_config()
         report_gen = ReportGenerator(config)

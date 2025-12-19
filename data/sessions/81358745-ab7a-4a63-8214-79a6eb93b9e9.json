@@ -1,0 +1,38 @@
+{
+  "session_id": "81358745-ab7a-4a63-8214-79a6eb93b9e9",
+  "status": "active",
+  "created_at": "2025-11-11T03:00:24.792268",
+  "last_active_at": "2025-11-11T03:00:44.878203",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T03:00:44.878203",
+      "user_request": "Error transcribing audio. Please try typing instead.",
+      "agent_response": {
+        "error": true,
+        "message": "Cannot complete request: The available tools do not support audio transcription or typing as an alternative. The current capabilities include document search, content synthesis, presentation creation, email operations, and web browsing, but not audio processing or manual typing.",
+        "missing_capabilities": "The available tools do not support audio transcription or typing as an alternative. The current capabilities include document search, content synthesis, presentation creation, email operations, and web browsing, but not audio processing or manual typing."
+      },
+      "plan": [],
+      "step_results": {},
+      "metadata": {
+        "goal": "",
+        "status": "error"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 0,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

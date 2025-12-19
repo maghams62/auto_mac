@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Web-based Chat UI for Mac Automation Assistant
+Web-based Chat UI for Cerebro OS
 """
 
 import gradio as gr
@@ -15,6 +15,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.utils import load_config, setup_logging
+from src.utils.message_personality import get_task_completed_message
 from src.workflow import WorkflowOrchestrator
 from src.agent import AutomationAgent
 
@@ -44,9 +45,14 @@ def process_message(message, history):
     try:
         result = agent.run(message)
 
-        if result and not result.get('error'):
+        status = (result or {}).get("status", "").lower() if result else ""
+
+        if result and status in {"cancelled", "noop"} and not result.get("error"):
+            ack_message = result.get("message") or ("Request cancelled." if status == "cancelled" else "Okay, I'll wait for your next request.")
+            response = f"**Status:** {status.capitalize()}\n\n{ack_message}"
+        elif result and not result.get('error'):
             # Build success response
-            response = "✅ **Task completed successfully!**\n\n"
+            response = f"**{get_task_completed_message()}**\n\n"
             response += f"**Goal:** {result.get('goal', 'N/A')}\n\n"
 
             # Add step summary
@@ -108,9 +114,9 @@ Type your request naturally, like:
 
 
 # Create Gradio interface
-with gr.Blocks(title="Mac Automation Assistant", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Cerebro OS", theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
-    # 🤖 Mac Automation Assistant
+    # 🤖 Cerebro OS
 
     AI-powered document search and email automation for macOS.
     """)
@@ -182,7 +188,7 @@ with gr.Blocks(title="Mac Automation Assistant", theme=gr.themes.Soft()) as demo
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Mac Automation Assistant...")
+    print("🚀 Starting Cerebro OS...")
     print("📊 Indexed documents:", orchestrator.indexer.get_stats()['unique_files'])
     print("🌐 Opening web interface...")
 

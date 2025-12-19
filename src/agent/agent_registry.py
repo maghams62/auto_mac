@@ -24,6 +24,7 @@ from .presentation_agent import PresentationAgent, PRESENTATION_AGENT_TOOLS, PRE
 from .email_agent import EmailAgent, EMAIL_AGENT_TOOLS, EMAIL_AGENT_HIERARCHY
 from .critic_agent import CriticAgent, CRITIC_AGENT_TOOLS, CRITIC_AGENT_HIERARCHY
 from .writing_agent import WritingAgent, WRITING_AGENT_TOOLS, WRITING_AGENT_HIERARCHY
+from .knowledge_agent import KnowledgeAgent, KNOWLEDGE_AGENT_TOOLS, KNOWLEDGE_AGENT_HIERARCHY
 # Optional imports for agents with external dependencies
 try:
     from .stock_agent import STOCK_AGENT_TOOLS, STOCK_AGENT_HIERARCHY
@@ -31,12 +32,17 @@ except ImportError:
     STOCK_AGENT_TOOLS = []
     STOCK_AGENT_HIERARCHY = ""
 try:
+    from .stock_agent_hybrid import STOCK_AGENT_TOOLS as STOCK_AGENT_HYBRID_TOOLS
+except ImportError:
+    STOCK_AGENT_HYBRID_TOOLS = []
+try:
     from .screen_agent import SCREEN_AGENT_TOOLS, SCREEN_AGENT_HIERARCHY
 except ImportError:
     SCREEN_AGENT_TOOLS = []
     SCREEN_AGENT_HIERARCHY = ""
 from .report_agent import ReportAgent, REPORT_AGENT_TOOLS, REPORT_AGENT_HIERARCHY
 from .google_finance_agent import GoogleFinanceAgent, GOOGLE_FINANCE_AGENT_TOOLS, GOOGLE_FINANCE_AGENT_HIERARCHY
+from .enriched_stock_agent import EnrichedStockAgent, ENRICHED_STOCK_AGENT_TOOLS
 from .maps_agent import MapsAgent, MAPS_AGENT_TOOLS, MAPS_AGENT_HIERARCHY
 from .imessage_agent import iMessageAgent, IMESSAGE_AGENT_TOOLS, IMESSAGE_AGENT_HIERARCHY
 from .discord_agent import DiscordAgent, DISCORD_AGENT_TOOLS, DISCORD_AGENT_HIERARCHY
@@ -51,6 +57,12 @@ from .whatsapp_agent import WhatsAppAgent, WHATSAPP_AGENT_TOOLS, WHATSAPP_AGENT_
 from .reply_tool import ReplyAgent, REPLY_AGENT_TOOLS, REPLY_AGENT_HIERARCHY
 from .spotify_agent import SpotifyAgent, SPOTIFY_AGENT_TOOLS, SPOTIFY_AGENT_HIERARCHY
 from .celebration_agent import CelebrationAgent, CELEBRATION_AGENT_TOOLS, CELEBRATION_AGENT_HIERARCHY
+from .weather_agent import WEATHER_AGENT_TOOLS, WEATHER_AGENT_HIERARCHY
+from .notes_agent import NOTES_AGENT_TOOLS, NOTES_AGENT_HIERARCHY
+from .reminders_agent import REMINDERS_AGENT_TOOLS, REMINDERS_AGENT_HIERARCHY
+from .calendar_agent import CalendarAgent, CALENDAR_AGENT_TOOLS, CALENDAR_AGENT_HIERARCHY
+from .daily_overview_agent import DailyOverviewAgent, DAILY_OVERVIEW_AGENT_TOOLS, DAILY_OVERVIEW_AGENT_HIERARCHY
+from .doc_insights_agent import DocInsightsAgent, DOC_INSIGHTS_AGENT_TOOLS, DOC_INSIGHTS_AGENT_HIERARCHY
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +77,9 @@ ALL_AGENT_TOOLS = (
     EMAIL_AGENT_TOOLS +
     WRITING_AGENT_TOOLS +
     CRITIC_AGENT_TOOLS +
+    KNOWLEDGE_AGENT_TOOLS +
     STOCK_AGENT_TOOLS +
+    STOCK_AGENT_HYBRID_TOOLS +
     SCREEN_AGENT_TOOLS +
     REPORT_AGENT_TOOLS +
     GOOGLE_FINANCE_AGENT_TOOLS +
@@ -82,7 +96,13 @@ ALL_AGENT_TOOLS = (
     WHATSAPP_AGENT_TOOLS +
     REPLY_AGENT_TOOLS +
     SPOTIFY_AGENT_TOOLS +
-    CELEBRATION_AGENT_TOOLS
+    CELEBRATION_AGENT_TOOLS +
+    WEATHER_AGENT_TOOLS +
+    NOTES_AGENT_TOOLS +
+    REMINDERS_AGENT_TOOLS +
+    CALENDAR_AGENT_TOOLS +
+    DAILY_OVERVIEW_AGENT_TOOLS +
+    DOC_INSIGHTS_AGENT_TOOLS
 )
 # Legacy compatibility
 ALL_TOOLS = FILE_AGENT_TOOLS + PRESENTATION_AGENT_TOOLS + EMAIL_AGENT_TOOLS
@@ -117,59 +137,94 @@ for its domain:
    └─ Domain: Content synthesis and writing
    └─ Tools: synthesize_content, create_slide_deck_content, create_detailed_report, create_meeting_notes
 
-6. CRITIC AGENT (4 tools)
+6. KNOWLEDGE AGENT (1 tool)
+   └─ Domain: External knowledge sources and factual information
+   └─ Tools: wiki_lookup
+   └─ Integration: Uses Wikipedia REST API with caching for fast factual lookups
+
+7. CRITIC AGENT (4 tools)
    └─ Domain: Verification, reflection, and quality assurance
    └─ Tools: verify_output, reflect_on_failure, validate_plan, check_quality
 
-7. TWITTER AGENT (1 tool)
+8. TWITTER AGENT (1 tool)
    └─ Domain: Twitter list ingestion/summarization
    └─ Tools: summarize_list_activity
 
-8. BLUESKY AGENT (3 tools)
+9. BLUESKY AGENT (3 tools)
    └─ Domain: Bluesky social discovery, summaries, and posting
    └─ Tools: search_bluesky_posts, summarize_bluesky_posts, post_bluesky_update
 
-9. MAPS AGENT (2 tools)
-   └─ Domain: Apple Maps trip planning and navigation
-   └─ Tools: plan_trip_with_stops, open_maps_with_route
-   └─ Integration: Uses AppleScript automation (MapsAutomation) for native macOS Maps.app control
+10. MAPS AGENT (2 tools)
+    └─ Domain: Apple Maps trip planning and navigation
+    └─ Tools: plan_trip_with_stops, open_maps_with_route
+    └─ Integration: Uses AppleScript automation (MapsAutomation) for native macOS Maps.app control
 
-10. MICRO ACTIONS AGENT (3 tools)
-   └─ Domain: Lightweight everyday utilities
-   └─ Tools: launch_app, copy_snippet, set_timer
-   └─ Integration: Built on simple AppleScript/open calls for fast micro-actions
+11. MICRO ACTIONS AGENT (3 tools)
+    └─ Domain: Lightweight everyday utilities
+    └─ Tools: launch_app, copy_snippet, set_timer
+    └─ Integration: Built on simple AppleScript/open calls for fast micro-actions
 
-11. VISION AGENT (1 tool)
-   └─ Domain: Vision-assisted UI disambiguation
-   └─ Tools: analyze_ui_screenshot
-   └─ Purpose: Inspect screenshots when scripted flows fail or become ambiguous
+12. VISION AGENT (1 tool)
+    └─ Domain: Vision-assisted UI disambiguation
+    └─ Tools: analyze_ui_screenshot
+    └─ Purpose: Inspect screenshots when scripted flows fail or become ambiguous
 
-12. VOICE AGENT (2 tools)
-   └─ Domain: Speech-to-text and text-to-speech
-   └─ Tools: transcribe_audio_file, text_to_speech
-   └─ Integration: Uses OpenAI Whisper API for STT and OpenAI TTS API for speech generation
+13. VOICE AGENT (2 tools)
+    └─ Domain: Speech-to-text and text-to-speech
+    └─ Tools: transcribe_audio_file, text_to_speech
+    └─ Integration: Uses OpenAI Whisper API for STT and OpenAI TTS API for speech generation
 
-13. WHATSAPP AGENT (9 tools)
-   └─ Domain: WhatsApp message reading and analysis
-   └─ Tools: whatsapp_ensure_session, whatsapp_navigate_to_chat, whatsapp_read_messages, whatsapp_read_messages_from_sender, whatsapp_read_group_messages, whatsapp_detect_unread, whatsapp_list_chats, whatsapp_summarize_messages, whatsapp_extract_action_items
-   └─ Integration: Uses macOS UI automation (AppleScript/System Events) for WhatsApp Desktop, similar to Discord agent pattern
+14. WHATSAPP AGENT (9 tools)
+    └─ Domain: WhatsApp message reading and analysis
+    └─ Tools: whatsapp_ensure_session, whatsapp_navigate_to_chat, whatsapp_read_messages, whatsapp_read_messages_from_sender, whatsapp_read_group_messages, whatsapp_detect_unread, whatsapp_list_chats, whatsapp_summarize_messages, whatsapp_extract_action_items
+    └─ Integration: Uses macOS UI automation (AppleScript/System Events) for WhatsApp Desktop, similar to Discord agent pattern
 
-14. REPLY AGENT (1 tool)
-   └─ Domain: User communication
-   └─ Tools: reply_to_user
-   └─ Purpose: Centralizes UI-facing messaging so agents deliver polished summaries instead of raw JSON payloads
+15. REPLY AGENT (1 tool)
+    └─ Domain: User communication
+    └─ Tools: reply_to_user
+    └─ Purpose: Centralizes UI-facing messaging so agents deliver polished summaries instead of raw JSON payloads
 
-15. SPOTIFY AGENT (3 tools)
-   └─ Domain: Music playback control
-   └─ Tools: play_music, pause_music, get_spotify_status
-   └─ Integration: Uses AppleScript to control Spotify desktop app on macOS
+16. SPOTIFY AGENT (4 tools)
+    └─ Domain: Music playback control
+    └─ Tools: play_music, pause_music, get_spotify_status, play_song
+    └─ Integration: Uses AppleScript to control Spotify desktop app on macOS
+    └─ Features: LLM-powered semantic song name disambiguation for fuzzy/imprecise song names
 
-16. CELEBRATION AGENT (1 tool)
-   └─ Domain: Celebratory effects and fun interactions
-   └─ Tools: trigger_confetti
-   └─ Integration: Uses AppleScript to trigger macOS celebration effects
+17. CELEBRATION AGENT (1 tool)
+    └─ Domain: Celebratory effects and fun interactions
+    └─ Tools: trigger_confetti
+    └─ Integration: Uses AppleScript to trigger macOS celebration effects
 
-Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 60+ tools (and growing).
+18. WEATHER AGENT (1 tool)
+    └─ Domain: Weather forecast retrieval and conditional logic
+    └─ Tools: get_weather_forecast
+    └─ Integration: Uses macOS Weather.app via AppleScript/System Events
+    └─ Pattern: Returns structured data → LLM interprets → Conditional actions (reminders/notes)
+
+19. NOTES AGENT (3 tools)
+    └─ Domain: Apple Notes creation and management
+    └─ Tools: create_note, append_note, get_note
+    └─ Integration: Uses macOS Notes.app via AppleScript
+    └─ Pattern: Persistent storage for LLM-generated content, reports, and summaries
+
+20. REMINDERS AGENT (2 tools)
+    └─ Domain: Time-based reminders and task management
+    └─ Tools: create_reminder, complete_reminder
+    └─ Integration: Uses macOS Reminders.app via AppleScript
+    └─ Pattern: LLM-inferred timing from natural language, conditional reminder creation
+
+21. CALENDAR AGENT (3 tools)
+   └─ Domain: Calendar event reading and meeting preparation
+   └─ Tools: list_calendar_events, get_calendar_event_details, prepare_meeting_brief
+   └─ Integration: Uses Calendar.app via AppleScript, DocumentIndexer for semantic search
+   └─ Pattern: Reads events → LLM generates search queries → Searches documents → Synthesizes briefs
+
+22. DOC INSIGHTS AGENT (6 tools)
+   └─ Domain: Activity graph, doc issues, doc drift, and context resolution
+   └─ Tools: resolve_component_id, get_component_activity, get_top_dissatisfied_components, list_doc_issues, get_context_impacts, analyze_doc_drift
+   └─ Purpose: Gives the NL planner direct access to Option 1/Option 2 data without slash commands
+
+Additional agents are wired for iMessage, Discord, Reddit, Stock, Screen, Report, etc., bringing the total to 65+ tools (and growing).
 
 Each agent:
 - Has a clear domain of responsibility
@@ -205,8 +260,7 @@ class AgentRegistry:
         if self.session_manager:
             logger.info("[AGENT REGISTRY] Session management enabled")
 
-        # LAZY INITIALIZATION: Store agent classes, not instances
-        # Only instantiate agents when they're actually needed
+        # Agent class registry (lazy-loaded)
         self._agent_classes = {
             "file": FileAgent,
             "folder": FolderAgent,
@@ -216,8 +270,10 @@ class AgentRegistry:
             "email": EmailAgent,
             "writing": WritingAgent,
             "critic": CriticAgent,
+            "knowledge": KnowledgeAgent,
             "report": ReportAgent,
             "google_finance": GoogleFinanceAgent,
+            "enriched_stock": EnrichedStockAgent,
             "maps": MapsAgent,
             "imessage": iMessageAgent,
             "discord": DiscordAgent,
@@ -232,9 +288,12 @@ class AgentRegistry:
             "reply": ReplyAgent,
             "spotify": SpotifyAgent,
             "celebration": CelebrationAgent,
+            "calendar": CalendarAgent,
+            "daily_overview": DailyOverviewAgent,
+            "doc_insights": DocInsightsAgent,
         }
 
-        # Cache for instantiated agents (lazy initialization)
+        # Registry of instantiated agents (lazy-loaded on demand)
         self.agents = {}
 
         # Create tool-to-agent mapping (using tool lists, not instances)
@@ -248,6 +307,7 @@ class AgentRegistry:
             "email": EMAIL_AGENT_TOOLS,
             "writing": WRITING_AGENT_TOOLS,
             "critic": CRITIC_AGENT_TOOLS,
+            "knowledge": KNOWLEDGE_AGENT_TOOLS,
             "report": REPORT_AGENT_TOOLS,
             "google_finance": GOOGLE_FINANCE_AGENT_TOOLS,
             "maps": MAPS_AGENT_TOOLS,
@@ -264,58 +324,66 @@ class AgentRegistry:
             "reply": REPLY_AGENT_TOOLS,
             "spotify": SPOTIFY_AGENT_TOOLS,
             "celebration": CELEBRATION_AGENT_TOOLS,
+            "calendar": CALENDAR_AGENT_TOOLS,
+            "daily_overview": DAILY_OVERVIEW_AGENT_TOOLS,
+            "doc_insights": DOC_INSIGHTS_AGENT_TOOLS,
         }
 
         for agent_name, tools in tool_lists.items():
             for tool in tools:
                 self.tool_to_agent[tool.name] = agent_name
 
-        logger.info(f"[AGENT REGISTRY] Initialized with {len(self._agent_classes)} agent classes and {len(self.tool_to_agent)} tools (lazy loading enabled)")
+        logger.info(f"[AGENT REGISTRY] Lazy loading enabled - agents will be initialized on first use")
 
     def get_agent(self, agent_name: str):
         """
-        Get a specific agent by name (lazy initialization).
+        Get a specific agent by name.
 
-        Only instantiates the agent if it hasn't been created yet.
-        Caches the instance for future use.
+        Agents are lazy-loaded on first access to improve startup time.
         """
-        # Check if already instantiated
         if agent_name in self.agents:
             return self.agents[agent_name]
 
-        # Lazy instantiation
+        # Lazy load the agent
         if agent_name in self._agent_classes:
-            logger.info(f"[AGENT REGISTRY] Lazy initializing {agent_name} agent")
-            agent_class = self._agent_classes[agent_name]
-            agent_instance = agent_class(self.config)
-            self.agents[agent_name] = agent_instance
-            return agent_instance
+            try:
+                logger.debug(f"[AGENT REGISTRY] Lazy loading {agent_name} agent")
+                agent_class = self._agent_classes[agent_name]
+                self.agents[agent_name] = agent_class(self.config)
+                logger.debug(f"[AGENT REGISTRY] ✓ Initialized {agent_name} agent")
+                return self.agents[agent_name]
+            except Exception as e:
+                logger.error(f"[AGENT REGISTRY] ✗ Failed to initialize {agent_name} agent: {e}")
+                return None
 
         logger.warning(f"[AGENT REGISTRY] Unknown agent: {agent_name}")
         return None
 
     def get_agent_for_tool(self, tool_name: str):
-        """Get the agent responsible for a specific tool (lazy initialization)."""
+        """Get the agent responsible for a specific tool."""
         agent_name = self.tool_to_agent.get(tool_name)
         if agent_name:
-            return self.get_agent(agent_name)  # Use lazy loading
+            return self.get_agent(agent_name)
         return None
 
     def initialize_agents(self, agent_names: List[str]) -> None:
         """
         Pre-initialize specific agents (called by intent planner).
 
-        This allows the orchestrator to only initialize the agents
-        that are actually needed for the current request.
+        With lazy loading enabled, this method pre-loads agents that are likely to be used,
+        improving response time for the first tool call.
 
         Args:
             agent_names: List of agent names to initialize
         """
+        initialized_count = 0
         for agent_name in agent_names:
-            if agent_name not in self.agents and agent_name in self._agent_classes:
-                logger.info(f"[AGENT REGISTRY] Pre-initializing {agent_name} agent")
-                agent_class = self._agent_classes[agent_name]
-                self.agents[agent_name] = agent_class(self.config)
+            if agent_name in self._agent_classes and agent_name not in self.agents:
+                if self.get_agent(agent_name):  # This will lazy-load it
+                    initialized_count += 1
+
+        if initialized_count > 0:
+            logger.info(f"[AGENT REGISTRY] Pre-initialized {initialized_count} agents: {agent_names}")
 
     def get_all_tools(self) -> List:
         """Get all tools from all agents."""
@@ -336,9 +404,24 @@ class AgentRegistry:
         docs.append("\nDETAILED AGENT HIERARCHIES:\n")
         docs.append("=" * 80)
 
-        for agent_name, agent in self.agents.items():
-            docs.append(f"\n{agent_name.upper()} AGENT:")
-            docs.append(agent.get_hierarchy())
+        # With lazy loading, only show initialized agents, but note others are available
+        initialized_agents = list(self.agents.keys())
+        all_agents = list(self._agent_classes.keys())
+
+        if initialized_agents:
+            docs.append(f"\nINITIALIZED AGENTS ({len(initialized_agents)}):")
+            for agent_name in sorted(initialized_agents):
+                agent = self.agents[agent_name]
+                docs.append(f"\n{agent_name.upper()} AGENT:")
+                docs.append(agent.get_hierarchy())
+        else:
+            docs.append("\nNo agents initialized yet (lazy loading enabled)")
+
+        uninitialized = set(all_agents) - set(initialized_agents)
+        if uninitialized:
+            docs.append(f"\n\nAVAILABLE AGENTS ({len(uninitialized)} not yet loaded):")
+            for agent_name in sorted(uninitialized):
+                docs.append(f"- {agent_name}")
 
         return "\n".join(docs)
 
@@ -413,8 +496,14 @@ class AgentRegistry:
 
     def get_agent_stats(self) -> Dict[str, Any]:
         """Get statistics about registered agents and tools."""
+        # Initialize all agents to get complete stats
+        for agent_name in self._agent_classes:
+            if agent_name not in self.agents:
+                self.get_agent(agent_name)  # This will lazy-load it
+
         return {
-            "total_agents": len(self.agents),
+            "total_agents": len(self._agent_classes),
+            "initialized_agents": len(self.agents),
             "total_tools": len(self.tool_to_agent),
             "agents": {
                 agent_name: len(agent.get_tools())
@@ -459,6 +548,9 @@ def get_agent_tool_mapping() -> Dict[str, str]:
 
     for tool in CRITIC_AGENT_TOOLS:
         mapping[tool.name] = "critic"
+
+    for tool in KNOWLEDGE_AGENT_TOOLS:
+        mapping[tool.name] = "knowledge"
 
     for tool in REPORT_AGENT_TOOLS:
         mapping[tool.name] = "report"
@@ -507,7 +599,7 @@ def print_agent_hierarchy():
     print("=" * 80)
 
     mapping = get_agent_tool_mapping()
-    for agent_name in ["file", "browser", "presentation", "email", "writing", "critic", "twitter"]:
+    for agent_name in ["file", "browser", "presentation", "email", "writing", "critic", "knowledge", "twitter"]:
         tools = [tool for tool, agent in mapping.items() if agent == agent_name]
         print(f"\n{agent_name.upper()} AGENT ({len(tools)} tools):")
         for tool in tools:

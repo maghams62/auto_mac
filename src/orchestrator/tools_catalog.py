@@ -2,12 +2,19 @@
 Tool catalog generation from existing tools.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
+import re
+import hashlib
 from ..agent import ALL_AGENT_TOOLS
 from .state import ToolSpec
 
 logger = logging.getLogger(__name__)
+
+
+# Global cache for tool catalog
+_tool_catalog_cache: Optional[List[ToolSpec]] = None
+_tool_catalog_hash: Optional[str] = None
 
 
 def _build_parameter_metadata(tool) -> List[Dict[str, Any]]:
@@ -46,13 +53,262 @@ def _build_parameter_metadata(tool) -> List[Dict[str, Any]]:
     return metadata
 
 
-def generate_tool_catalog() -> List[ToolSpec]:
+def _extract_io_from_tool(tool) -> Dict[str, List[str]]:
+    """
+    Extract input/output information from a LangChain tool.
+    
+    Args:
+        tool: LangChain tool instance
+        
+    Returns:
+        Dictionary with "in" and "out" lists
+    """
+    inputs = []
+    outputs = []
+    
+    # Extract from args_schema
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema:
+        try:
+            schema_dict = args_schema.schema()
+            properties = schema_dict.get("properties", {}) or {}
+            for name, prop in properties.items():
+                param_type = prop.get("type", "any")
+                inputs.append(f"{name}: {param_type}")
+        except Exception:
+            pass
+    
+    # Default outputs based on common patterns
+    # Most tools return dicts with common fields
+    outputs = ["result", "message", "status"]
+    
+    return {"in": inputs, "out": outputs}
+
+
+def _infer_tool_kind(tool_name: str, description: str) -> str:
+    """
+    Infer tool kind from tool name and description using reasoning.
+    
+    Args:
+        tool_name: Name of the tool
+        description: Tool description
+        
+    Returns:
+        Tool kind ("tool", "browser_tool", "maps_tool", "worker", etc.)
+    """
+    name_lower = tool_name.lower()
+    desc_lower = description.lower()
+    
+    # Browser tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["browser", "web", "url", "navigate", "screenshot", "page"]):
+        return "browser_tool"
+    
+    # Maps tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["map", "trip", "route", "direction", "navigation"]):
+        return "maps_tool"
+    
+    # Worker tools
+    if "worker" in name_lower or "llamaindex" in name_lower:
+        return "worker"
+    
+    # Stock/finance tools
+    if any(keyword in name_lower or keyword in desc_lower 
+           for keyword in ["stock", "finance", "ticker", "price", "market"]):
+        return "tool"  # Stock tools are regular tools
+    
+    # Default
+    return "tool"
+
+
+def _extract_strengths_and_limits_from_docstring(docstring: str) -> tuple:
+    """
+    Extract strengths and limits from tool docstring using reasoning.
+    
+    Analyzes the docstring to infer:
+    - Strengths: What the tool does well, capabilities mentioned
+    - Limits: Constraints, requirements, limitations mentioned
+    
+    Args:
+        docstring: Tool docstring
+        
+    Returns:
+        Tuple of (strengths list, limits list)
+    """
+    if not docstring:
+        return [], []
+    
+    strengths = []
+    limits = []
+    
+    # Look for "Use this when" patterns (strengths)
+    use_pattern = re.compile(r"Use this when[:\s]+(.*?)(?=\n\n|Args?:|Returns?:|Example?:|$)", re.IGNORECASE | re.DOTALL)
+    use_matches = use_pattern.findall(docstring)
+    for match in use_matches:
+        # Split by bullet points, dashes, or newlines
+        use_cases = re.split(r"\n\s*[-•]\s+", match)
+        for case in use_cases:
+            # Also split by commas if no bullets
+            if "\n" not in case and "," in case:
+                use_cases.extend([c.strip() for c in case.split(",")])
+                continue
+            case = case.strip()
+            # Remove leading dashes/bullets
+            case = re.sub(r"^[-•]\s+", "", case)
+            if case and len(case) > 10:  # Meaningful length
+                strengths.append(case)
+    
+    # Look for "Args:" section to understand capabilities
+    args_section = re.search(r"Args?:[\s\S]*?(?=Returns?:|$)", docstring, re.IGNORECASE)
+    if args_section:
+        # Parameters indicate capabilities
+        param_lines = args_section.group(0).split('\n')
+        for line in param_lines:
+            if ':' in line and not line.strip().startswith('Args'):
+                param_desc = line.split(':', 1)[1].strip() if ':' in line else line.strip()
+                if param_desc and len(param_desc) > 10:
+                    strengths.append(f"Supports {param_desc.lower()}")
+    
+    # Look for explicit limitations
+    limit_keywords = ["requires", "only", "limited", "must", "cannot", "doesn't", "may not"]
+    sentences = re.split(r"[.!?]\s+", docstring)
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        if any(keyword in sentence_lower for keyword in limit_keywords):
+            # Check if it's a limitation
+            if any(indicator in sentence_lower 
+                   for indicator in ["only", "limited to", "requires", "must be", "cannot"]):
+                limits.append(sentence.strip())
+    
+    # Extract from "Returns:" section
+    returns_section = re.search(r"Returns?:[\s\S]*?$", docstring, re.IGNORECASE)
+    if returns_section:
+        returns_text = returns_section.group(0)
+        # Returns indicate capabilities
+        if "dictionary" in returns_text.lower() or "dict" in returns_text.lower():
+            strengths.append("Returns structured data")
+    
+    # Default strengths if none found
+    if not strengths:
+        # Infer from description
+        if "get" in docstring.lower() or "fetch" in docstring.lower():
+            strengths.append("Retrieves data")
+        if "create" in docstring.lower() or "generate" in docstring.lower():
+            strengths.append("Creates content")
+        if "search" in docstring.lower():
+            strengths.append("Searches for information")
+    
+    # Default limits if none found
+    if not limits:
+        # Common limitations based on tool type
+        if "macos" in docstring.lower() or "mac" in docstring.lower():
+            limits.append("macOS only")
+        if "api" in docstring.lower() or "key" in docstring.lower():
+            limits.append("May require API keys or credentials")
+    
+    return strengths[:5], limits[:5]  # Limit to 5 each
+
+
+def _generate_toolspec_from_tool(tool) -> ToolSpec:
+    """
+    Dynamically generate a ToolSpec from a LangChain tool using reasoning.
+    
+    Extracts metadata from the tool's schema and docstring to create a ToolSpec
+    without hardcoding. Uses programmatic reasoning to infer:
+    - Description from docstring
+    - Inputs/outputs from schema
+    - Strengths and limits from docstring analysis
+    - Tool kind from name and description
+    
+    Args:
+        tool: LangChain tool instance
+        
+    Returns:
+        ToolSpec object
+    """
+    tool_name = tool.name
+    description = tool.description or ""
+    
+    # Extract I/O from schema
+    io = _extract_io_from_tool(tool)
+    
+    # Infer tool kind
+    kind = _infer_tool_kind(tool_name, description)
+    
+    # Extract strengths and limits from docstring
+    strengths, limits = _extract_strengths_and_limits_from_docstring(description)
+    
+    # If no strengths/limits found, use minimal defaults
+    if not strengths:
+        strengths = ["Provides functionality for the requested operation"]
+    if not limits:
+        limits = ["See tool documentation for specific constraints"]
+    
+    # Build parameters metadata
+    parameters = _build_parameter_metadata(tool)
+    
+    return ToolSpec(
+        name=tool_name,
+        kind=kind,
+        io=io,
+        strengths=strengths,
+        limits=limits,
+        description=description or f"Tool: {tool_name}",
+        parameters=parameters
+    )
+
+
+def generate_tool_catalog(force_refresh: bool = False, config: Optional[Dict[str, Any]] = None) -> List[ToolSpec]:
     """
     Generate tool catalog from existing LangChain tools.
+    
+    Results are cached globally for performance. The cache is invalidated
+    if the tool signatures change.
+    
+    Caching can be disabled via performance.caching.tool_catalog config flag.
 
+    Args:
+        force_refresh: Force regeneration even if cached
+        config: Optional configuration dictionary to check caching flags
+        
     Returns:
-        List of ToolSpec objects
+        List of ToolSpec objects (cached after first call)
     """
+    global _tool_catalog_cache, _tool_catalog_hash
+    
+    # Check if caching is enabled
+    caching_enabled = True
+    if config:
+        perf_config = config.get("performance", {})
+        caching_config = perf_config.get("caching", {})
+        caching_enabled = caching_config.get("tool_catalog", True)
+    
+    # Compute hash of available tools for cache invalidation
+    tool_signatures = [f"{t.name}:{t.description[:50]}" for t in ALL_AGENT_TOOLS]
+    current_hash = hashlib.md5("".join(tool_signatures).encode()).hexdigest()
+    
+    # Return cached catalog if available and unchanged (only if caching enabled)
+    if caching_enabled and not force_refresh and _tool_catalog_cache is not None and _tool_catalog_hash == current_hash:
+        logger.debug(f"[TOOL CATALOG] Using cached catalog ({len(_tool_catalog_cache)} tools)")
+        # Track cache hit
+        try:
+            from ..utils.performance_monitor import get_performance_monitor
+            get_performance_monitor().record_cache_hit("tool_catalog")
+        except Exception:
+            pass
+        return _tool_catalog_cache
+    
+    # Track cache miss
+    if caching_enabled:
+        try:
+            from ..utils.performance_monitor import get_performance_monitor
+            get_performance_monitor().record_cache_miss("tool_catalog")
+        except Exception:
+            pass
+    
+    logger.info(f"[TOOL CATALOG] Generating tool catalog (force_refresh={force_refresh})")
+    
     catalog = []
 
     # Map existing tools to catalog specs
@@ -173,25 +429,6 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Create Keynote presentations with images/screenshots as slides. Use this when user wants to display screenshots or images in a presentation."
         ),
-        "create_pages_doc": ToolSpec(
-            name="create_pages_doc",
-            kind="tool",
-            io={
-                "in": ["title: str", "content: str", "output_path: Optional[str]"],
-                "out": ["pages_path", "message"]
-            },
-            strengths=[
-                "Formatted document creation",
-                "macOS Pages integration",
-                "Preserves text structure"
-            ],
-            limits=[
-                "macOS Pages required",
-                "Basic formatting only",
-                "No advanced styling"
-            ],
-            description="Create Pages documents from content"
-        ),
         "reply_to_user": ToolSpec(
             name="reply_to_user",
             kind="tool",
@@ -228,23 +465,42 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Search Bluesky for recent posts matching a query."
         ),
+        "get_bluesky_author_feed": ToolSpec(
+            name="get_bluesky_author_feed",
+            kind="tool",
+            io={
+                "in": ["actor: Optional[str]", "max_posts: int"],
+                "out": ["actor", "count", "posts"]
+            },
+            strengths=[
+                "Gets posts from a specific Bluesky user or authenticated user",
+                "Useful for queries like 'last 3 tweets' or 'my tweets'",
+                "Returns posts in chronological order (most recent first)"
+            ],
+            limits=[
+                "Requires Bluesky credentials (identifier + app password)",
+                "Limited to public posts from the specified user"
+            ],
+            description="Get posts from a specific Bluesky author/handle. If actor is None, gets posts from authenticated user."
+        ),
         "summarize_bluesky_posts": ToolSpec(
             name="summarize_bluesky_posts",
             kind="tool",
             io={
-                "in": ["query: str", "lookback_hours: Optional[int]", "max_items: Optional[int]"],
+                "in": ["query: str", "lookback_hours: Optional[int]", "max_items: Optional[int]", "actor: Optional[str]"],
                 "out": ["summary", "items", "query", "time_window"]
             },
             strengths=[
-                "Combines Bluesky search results with LLM summarization",
-                "Ranks posts by engagement before summarizing top highlights",
+                "Combines Bluesky search results or author feed with LLM summarization",
+                "Automatically detects queries like 'last N tweets' and fetches from user's feed",
+                "Ranks posts by engagement (for search) or chronologically (for author feed)",
                 "Supports time filtering for fresh updates"
             ],
             limits=[
                 "Dependent on Bluesky search quality and rate limits",
                 "Summaries rely on configured LLM (OpenAI)"
             ],
-            description="Gather and summarize top Bluesky posts for a query within an optional time window."
+            description="Gather and summarize top Bluesky posts for a query or from a specific author within an optional time window. Handles queries like 'last 3 tweets' or 'my tweets'."
         ),
         "post_bluesky_update": ToolSpec(
             name="post_bluesky_update",
@@ -263,6 +519,114 @@ def generate_tool_catalog() -> List[ToolSpec]:
                 "Posts limited to 300 characters (no media attachments via this tool)"
             ],
             description="Publish a status update to Bluesky using the configured account."
+        ),
+        "fetch_bluesky_following_feed": ToolSpec(
+            name="fetch_bluesky_following_feed",
+            kind="tool",
+            io={
+                "in": ["max_posts: int"],
+                "out": ["count", "posts"]
+            },
+            strengths=[
+                "Gets recent posts from accounts you follow",
+                "Shows timeline activity including replies and reposts",
+                "Useful for monitoring followed accounts in real-time"
+            ],
+            limits=[
+                "Requires Bluesky credentials",
+                "Limited to your following feed (not global timeline)"
+            ],
+            description="Fetch recent posts from the authenticated user's following feed (timeline)."
+        ),
+        "fetch_bluesky_list_feed": ToolSpec(
+            name="fetch_bluesky_list_feed",
+            kind="tool",
+            io={
+                "in": ["list_uri: str", "max_posts: int"],
+                "out": ["list_uri", "count", "posts"]
+            },
+            strengths=[
+                "Gets posts from curated Bluesky lists",
+                "Useful for monitoring specific communities or topics",
+                "Supports AT Protocol list URIs"
+            ],
+            limits=[
+                "Requires valid list URI",
+                "Limited to public lists and your access permissions"
+            ],
+            description="Fetch posts from a specific Bluesky list."
+        ),
+        "list_bluesky_notifications": ToolSpec(
+            name="list_bluesky_notifications",
+            kind="tool",
+            io={
+                "in": ["max_notifications: int"],
+                "out": ["count", "notifications"]
+            },
+            strengths=[
+                "Retrieves mentions, replies, likes, follows, and other notifications",
+                "Includes post context for notifications about specific posts",
+                "Supports real-time monitoring of social interactions"
+            ],
+            limits=[
+                "Requires Bluesky credentials",
+                "Limited to authenticated user's notifications"
+            ],
+            description="Fetch recent notifications (mentions, replies, likes, follows, etc.)."
+        ),
+        "reply_to_bluesky_post": ToolSpec(
+            name="reply_to_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "text: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "url", "message"]
+            },
+            strengths=[
+                "Creates threaded replies to existing posts",
+                "Automatically fetches post CID if not provided",
+                "Maintains conversation context and threading"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Replies limited to 300 characters"
+            ],
+            description="Reply to a Bluesky post, creating a threaded conversation."
+        ),
+        "like_bluesky_post": ToolSpec(
+            name="like_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "message"]
+            },
+            strengths=[
+                "Adds likes to posts via AT Protocol",
+                "Automatically fetches post CID if not provided",
+                "Provides engagement feedback to post authors"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Can only like posts once per account"
+            ],
+            description="Like a Bluesky post."
+        ),
+        "repost_bluesky_post": ToolSpec(
+            name="repost_bluesky_post",
+            kind="tool",
+            io={
+                "in": ["uri: str", "cid: Optional[str]"],
+                "out": ["uri", "cid", "message"]
+            },
+            strengths=[
+                "Reposts (boosts) content to your followers",
+                "Automatically fetches post CID if not provided",
+                "Increases post visibility and engagement"
+            ],
+            limits=[
+                "Requires valid post URI",
+                "Can only repost posts once per account"
+            ],
+            description="Repost (boost) a Bluesky post to your followers."
         ),
         "organize_files": ToolSpec(
             name="organize_files",
@@ -318,6 +682,31 @@ def generate_tool_catalog() -> List[ToolSpec]:
             ],
             description="Create ZIP archives with optional filename pattern and extension filters."
         ),
+        # Knowledge Tools (Factual Information)
+        "wiki_lookup": ToolSpec(
+            name="wiki_lookup",
+            kind="knowledge_tool",
+            io={
+                "in": ["query: str"],
+                "out": ["title", "summary", "url", "confidence", "error", "error_type", "error_message"]
+            },
+            strengths=[
+                "FASTEST way to get factual overviews and background information",
+                "Uses Wikipedia REST API with intelligent caching (24-hour TTL)",
+                "Returns structured data: title, summary, source URL, confidence score",
+                "Perfect for quick reference, definitions, and factual verification",
+                "No web scraping or browser automation - pure API calls",
+                "Cached responses load instantly on repeat queries"
+            ],
+            limits=[
+                "Limited to Wikipedia content only (no other knowledge sources yet)",
+                "May return low confidence for ambiguous or non-existent topics",
+                "Summaries are excerpts only - use browser tools for full articles",
+                "Requires internet connection for uncached queries",
+                "404s are handled gracefully with structured error responses"
+            ],
+            description="Look up factual information on Wikipedia with fast API access and caching."
+        ),
         # Browser Tools (Separate Hierarchy)
         "google_search": ToolSpec(
             name="google_search",
@@ -327,17 +716,18 @@ def generate_tool_catalog() -> List[ToolSpec]:
                 "out": ["query", "results", "num_results", "message"]
             },
             strengths=[
-                "PRIMARY web search tool - use this first for finding information online",
+                "PRIMARY web search tool - uses DuckDuckGo ONLY (no Google)",
+                "DuckDuckGo HTML endpoint - free, no API keys required",
                 "Returns structured results with titles, links, and snippets",
-                "Fast and reliable Google search integration",
+                "Fast and reliable, privacy-focused search",
                 "Good for finding documentation, websites, and general information"
             ],
             limits=[
                 "Requires internet connection",
                 "Limited to search results (doesn't extract page content)",
-                "Subject to Google rate limiting"
+                "DuckDuckGo HTML payload occasionally omits snippets for certain pages"
             ],
-            description="Search Google and extract results. LEVEL 1 tool in browser hierarchy - use this first when you need to find information on the web."
+            description="Perform DuckDuckGo web searches (DuckDuckGo ONLY, no Google). LEVEL 1 tool in browser hierarchy—use this first when you need to find information on the web. Uses DuckDuckGo exclusively."
         ),
         "navigate_to_url": ToolSpec(
             name="navigate_to_url",
@@ -492,26 +882,54 @@ def generate_tool_catalog() -> List[ToolSpec]:
         )
     }
 
-    # Add all mapped tools from all agents
+    # Track which tools we've added
+    added_tool_names = set()
+    
+    # First, add all mapped tools (these have curated metadata)
     for tool in ALL_AGENT_TOOLS:
         tool_name = tool.name
         if tool_name in tool_mappings:
             spec = tool_mappings[tool_name]
             spec.parameters = _build_parameter_metadata(tool)
             catalog.append(spec)
-            logger.debug(f"Added tool to catalog: {tool_name}")
-        else:
-            logger.debug(f"Tool '{tool_name}' not in catalog mapping; skipping")
+            added_tool_names.add(tool_name)
+            logger.debug(f"Added mapped tool to catalog: {tool_name}")
+    
+    # Then, dynamically generate ToolSpecs for unmapped tools
+    for tool in ALL_AGENT_TOOLS:
+        tool_name = tool.name
+        if tool_name not in added_tool_names:
+            try:
+                spec = _generate_toolspec_from_tool(tool)
+                catalog.append(spec)
+                added_tool_names.add(tool_name)
+                logger.info(f"✅ Dynamically generated ToolSpec for: {tool_name}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to generate ToolSpec for {tool_name}: {e}")
+                # Continue with other tools even if one fails
+    
+    # Always ensure LlamaIndex worker is included
+    if "llamaindex_worker" not in added_tool_names:
+        llamaindex_tool = next((tool for tool in ALL_AGENT_TOOLS if tool.name == "llamaindex_worker"), None)
+        if llamaindex_tool:
+            if "llamaindex_worker" in tool_mappings:
+                spec = tool_mappings["llamaindex_worker"]
+                spec.parameters = _build_parameter_metadata(llamaindex_tool)
+            else:
+                spec = _generate_toolspec_from_tool(llamaindex_tool)
+            catalog.append(spec)
+            added_tool_names.add("llamaindex_worker")
 
-    # Always add the LlamaIndex worker
-    if "llamaindex_worker" not in [t.name for t in catalog]:
-        spec = tool_mappings["llamaindex_worker"]
-        spec.parameters = _build_parameter_metadata(
-            next((tool for tool in ALL_AGENT_TOOLS if tool.name == "llamaindex_worker"), None)
-        )
-        catalog.append(spec)
-
-    logger.info(f"Generated tool catalog with {len(catalog)} tools")
+    logger.info(f"Generated tool catalog with {len(catalog)} tools ({len(added_tool_names)} unique)")
+    
+    # Cache the generated catalog (only if caching enabled)
+    if caching_enabled:
+        _tool_catalog_cache = catalog
+        _tool_catalog_hash = current_hash
+        logger.info(f"[TOOL CATALOG] Cached tool catalog for future requests")
+    else:
+        logger.debug(f"[TOOL CATALOG] Caching disabled, not storing catalog")
+    
     return catalog
 
 

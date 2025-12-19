@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from .screen_capture import ScreenCapture
+from ..utils.screenshot import get_screenshot_dir
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,7 @@ class StocksAppAutomation:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.screenshots_dir = Path("data/screenshots")
-        self.screenshots_dir.mkdir(parents=True, exist_ok=True)
+        self.screenshots_dir = get_screenshot_dir(config)
 
     def open_and_capture_stock(
         self,

@@ -1,0 +1,35 @@
+# Component fixtures for Neo4j graph testing
+# These represent logical product/service boundaries in the system
+
+components:
+  - id: "comp:payments"
+    name: "Payments"
+    description: "Core payment processing component"
+    owner: "payments-team"
+    tags:
+      - "critical"
+      - "pci-compliant"
+
+  - id: "comp:auth"
+    name: "Authentication"
+    description: "User authentication and authorization"
+    owner: "security-team"
+    tags:
+      - "security"
+      - "critical"
+
+  - id: "comp:billing"
+    name: "Billing"
+    description: "Subscription and invoice management"
+    owner: "billing-team"
+    tags:
+      - "revenue"
+
+  - id: "comp:notifications"
+    name: "Notifications"
+    description: "Email, SMS, and push notification delivery"
+    owner: "platform-team"
+    tags:
+      - "async"
+      - "messaging"
+

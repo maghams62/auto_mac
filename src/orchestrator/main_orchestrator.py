@@ -21,12 +21,16 @@ Architecture:
 """
 
 import logging
+import asyncio
+import time
 from typing import Dict, Any, Optional
 
 from ..memory import SessionManager
+from ..memory.session_memory import SessionContext
 from .planner import Planner
 from .executor import PlanExecutor, ExecutionStatus
 from .tools_catalog import generate_tool_catalog, get_tool_specs_as_dicts
+from telemetry.config import get_tracer, sanitize_value, set_span_error
 
 
 logger = logging.getLogger(__name__)
@@ -70,24 +74,37 @@ class MainOrchestrator:
         if self.session_manager:
             logger.info("[MAIN ORCHESTRATOR] Session management enabled")
 
-        # Initialize tool catalog
-        self.tool_catalog = generate_tool_catalog()
-        self.tool_specs = get_tool_specs_as_dicts(self.tool_catalog)
-
-        # Initialize components
+        # Initialize components (tool catalog generated lazily)
         self.planner = Planner(config)
         self.executor = PlanExecutor(config, enable_verification=True)
+        self._tool_catalog = None  # Lazy-loaded
+        
+        # Initialize OpenTelemetry tracer
+        self.tracer = get_tracer("orchestrator")
 
-        logger.info(f"MainOrchestrator initialized with {len(self.tool_specs)} tools")
+        logger.info("MainOrchestrator initialized (lazy tool loading)")
 
-    def execute(
+    @property
+    def tool_catalog(self):
+        """Lazily generate tool catalog when first accessed."""
+        if self._tool_catalog is None:
+            logger.info("[MAIN ORCHESTRATOR] Generating tool catalog (lazy loading)")
+            self._tool_catalog = generate_tool_catalog(config=self.config)
+        return self._tool_catalog
+
+    @property
+    def tool_specs(self):
+        """Get tool specs as dictionaries."""
+        return get_tool_specs_as_dicts(self.tool_catalog)
+
+    async def execute_async(
         self,
         user_request: str,
         context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Execute a user request.
+        Execute a user request asynchronously (for better performance).
 
         Args:
             user_request: User's request/goal
@@ -98,18 +115,41 @@ class MainOrchestrator:
             Execution result dictionary
         """
         logger.info("=" * 80)
-        logger.info(f"Processing request: {user_request}")
+        logger.info(f"Processing request: {user_request} (async)")
         logger.info("=" * 80)
-
-        # Merge session context with provided context
+        
+        # Create main orchestrator span
+        main_span = self.tracer.start_span("orchestrator.execute")
+        main_span.set_attribute("orchestrator.user_request", sanitize_value(user_request[:200], "user_request"))
+        main_span.set_attribute("orchestrator.session_id", sanitize_value(session_id or "unknown", "session_id"))
+        
+        try:
+            # Build SessionContext for structured memory access
+        session_context_obj = None
         if self.session_manager and session_id:
+            session_memory = self.session_manager.get_or_create_session(session_id)
+
+            # Determine profile based on model capabilities
+            model_name = self.config.get("openai", {}).get("model", "gpt-4o")
+            if "o1" in model_name.lower() or "reasoning" in model_name.lower():
+                profile = "reasoning"
+            else:
+                profile = "compact"
+
+            session_context_obj = session_memory.build_context(
+                profile=profile,
+                purpose="planner",
+                max_tokens=self.config.get("openai", {}).get("max_tokens")
+            )
+
+            # Also get legacy langgraph context for backward compatibility
             session_context = self.session_manager.get_langgraph_context(session_id)
             if context is None:
                 context = session_context
             else:
                 # Merge contexts
                 context = {**session_context, **context}
-            logger.info(f"[SESSION] Loaded context for session: {session_id}")
+            logger.info(f"[SESSION] Loaded context for session: {session_id} (profile: {profile})")
 
         # Initialize state
         attempt = 0
@@ -123,9 +163,43 @@ class MainOrchestrator:
 
             # Step 1: Create plan
             logger.info(">>> PLANNING PHASE")
-            plan_result = self.planner.create_plan(
+            
+            # Create planning span
+            planning_span = self.tracer.start_span("orchestrator.plan")
+            planning_span.set_attribute("orchestrator.attempt", attempt)
+            planning_start = time.time()
+
+            # Ensure we have a SessionContext (create minimal one if needed)
+            if session_context_obj is None:
+                # Fallback for cases without session management
+                from ..memory.session_memory import SessionMemory
+                temp_memory = SessionMemory(config=self.config)
+                
+                # Try to attach user memory store if persistent memory is enabled
+                if self.config and self.config.get("persistent_memory", {}).get("enabled", False):
+                    if self.session_manager:
+                        # Try to get user memory store from session manager
+                        user_id = "default_user"  # Default user ID
+                        try:
+                            user_memory_store = self.session_manager._get_or_create_user_memory_store(user_id)
+                            temp_memory.user_memory_store = user_memory_store
+                            logger.info("[ORCHESTRATOR] Attached user memory store to fallback session")
+                        except Exception as e:
+                            logger.warning(f"[ORCHESTRATOR] Failed to attach user memory store: {e}")
+                    else:
+                        logger.warning("[ORCHESTRATOR] Session manager not available - persistent memory will not be queried")
+                
+                temp_memory.add_interaction(user_request)
+                session_context_obj = temp_memory.build_context(profile="compact", purpose="planner")
+                
+                # Log if persistent memory was not queried
+                if not temp_memory.user_memory_store:
+                    logger.warning("[ORCHESTRATOR] Fallback session created without persistent memory - ambiguous queries may lack context")
+
+            plan_result = await self.planner.create_plan(
                 goal=user_request,
                 available_tools=self.tool_catalog,  # Pass ToolSpec objects, not dicts
+                session_context=session_context_obj,
                 context=context,
                 previous_plan=previous_plan,
                 feedback=feedback
@@ -133,6 +207,16 @@ class MainOrchestrator:
 
             if not plan_result["success"]:
                 logger.error(f"Planning failed: {plan_result['error']}")
+                planning_span.set_attribute("orchestrator.plan.success", False)
+                planning_span.set_attribute("orchestrator.plan.error", sanitize_value(plan_result.get('error', ''), "error"))
+                set_span_error(planning_span, Exception(plan_result.get('error', 'Planning failed')))
+                planning_span.end()
+                
+                main_span.set_attribute("orchestrator.success", False)
+                main_span.set_attribute("orchestrator.error", sanitize_value(f"Planning failed: {plan_result.get('error', '')}", "error"))
+                set_span_error(main_span, Exception(f"Planning failed: {plan_result.get('error', '')}"))
+                main_span.end()
+                
                 return {
                     "status": "failed",
                     "error": f"Planning failed: {plan_result['error']}",
@@ -140,16 +224,37 @@ class MainOrchestrator:
                 }
 
             plan = plan_result["plan"]
+            planning_latency = (time.time() - planning_start) * 1000
+            planning_span.set_attribute("orchestrator.plan.steps_count", len(plan))
+            planning_span.set_attribute("orchestrator.plan.latency_ms", planning_latency)
+            planning_span.set_attribute("orchestrator.plan.success", True)
+            planning_span.end()
+            
             logger.info(f"Plan created: {len(plan)} steps")
             for step in plan:
                 logger.info(f"  Step {step.get('id')}: {step.get('action')} - {step.get('reasoning', '')}")
 
             # Step 2: Validate plan
             logger.info("\n>>> VALIDATION PHASE")
+            
+            # Create validation span
+            validation_span = self.tracer.start_span("orchestrator.validate")
+            validation_span.set_attribute("orchestrator.validate.plan_steps", len(plan))
+            validation_start = time.time()
+            
             validation = self.planner.validate_plan(plan, self.tool_specs)
+            
+            validation_latency = (time.time() - validation_start) * 1000
+            validation_span.set_attribute("orchestrator.validate.latency_ms", validation_latency)
+            validation_span.set_attribute("orchestrator.validate.valid", validation["valid"])
+            validation_span.set_attribute("orchestrator.validate.issues_count", len(validation.get("issues", [])))
+            validation_span.set_attribute("orchestrator.validate.warnings_count", len(validation.get("warnings", [])))
 
             if not validation["valid"]:
                 logger.error(f"Plan validation failed: {validation['issues']}")
+                validation_span.set_attribute("orchestrator.validate.error", sanitize_value(str(validation['issues']), "error"))
+                set_span_error(validation_span, Exception(f"Validation failed: {validation['issues']}"))
+                validation_span.end()
                 feedback = f"Plan validation failed: {', '.join(validation['issues'])}"
                 previous_plan = plan
                 attempt += 1
@@ -157,18 +262,36 @@ class MainOrchestrator:
 
             if validation["warnings"]:
                 logger.warning(f"Plan warnings: {validation['warnings']}")
+            
+            validation_span.end()
 
             # Step 3: Execute plan
             logger.info("\n>>> EXECUTION PHASE")
+            
+            # Create execution span
+            execution_span = self.tracer.start_span("orchestrator.execute_plan")
+            execution_span.set_attribute("orchestrator.execute.plan_steps", len(plan))
+            execution_start = time.time()
+            
             exec_result = self.executor.execute_plan(
                 plan=plan,
                 goal=user_request,
-                context=context
+                context=context,
+                session_id=session_id,
+                interaction_id=getattr(session_context_obj, 'interaction_id', None) if session_context_obj else None
             )
+            
+            execution_latency = (time.time() - execution_start) * 1000
+            execution_span.set_attribute("orchestrator.execute.latency_ms", execution_latency)
+            execution_span.set_attribute("orchestrator.execute.status", exec_result["status"].value if hasattr(exec_result["status"], "value") else str(exec_result["status"]))
+            execution_span.set_attribute("orchestrator.execute.steps_completed", exec_result.get("steps_completed", 0))
+            execution_span.set_attribute("orchestrator.execute.steps_total", exec_result.get("steps_total", 0))
 
             # Check execution status
             if exec_result["status"] == ExecutionStatus.SUCCESS:
                 logger.info("\n✅ Execution successful!")
+                execution_span.set_attribute("orchestrator.execute.success", True)
+                execution_span.end()
                 
                 # Extract Maps URLs from step results and include at top level for easy access
                 maps_url = None
@@ -268,6 +391,26 @@ class MainOrchestrator:
 
         emit("complete", result)
         return result
+    
+    def execute(
+        self,
+        user_request: str,
+        context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a user request (synchronous wrapper for async execution).
+
+        Args:
+            user_request: User's request/goal
+            context: Optional context
+            session_id: Optional session ID for context tracking
+
+        Returns:
+            Execution result dictionary
+        """
+        # Run async version in sync context
+        return asyncio.run(self.execute_async(user_request, context, session_id))
 
 
 if __name__ == "__main__":

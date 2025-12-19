@@ -1,0 +1,200 @@
+{
+  "session_id": "2e41c7e4-7cf0-4dfb-ab81-a19b669bc052",
+  "status": "active",
+  "created_at": "2025-11-11T20:06:52.673974",
+  "last_active_at": "2025-11-11T20:07:20.762135",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T20:07:20.762135",
+      "user_request": "Search the stock price of Apple and create a slideshow and email it to me",
+      "agent_response": {
+        "goal": "Search Apple stock price, create a slideshow, and email it to the user",
+        "steps_executed": 6,
+        "results": {
+          "1": {
+            "found": true,
+            "symbol": "AAPL",
+            "company_name": "Apple Inc.",
+            "query": "Apple",
+            "source": "local_cache",
+            "message": "Found: Apple Inc. (AAPL)",
+            "tool": "search_stock_symbol"
+          },
+          "2": {
+            "error": true,
+            "error_type": "DataNotAvailable",
+            "error_message": "Unable to fetch price data for symbol: $STEP1.STOCK_SYMBOL",
+            "retry_possible": true,
+            "tool": "get_stock_price"
+          },
+          "3": {
+            "error": true,
+            "skipped": true,
+            "message": "Skipped due to failed dependencies: [2]"
+          },
+          "4": {
+            "error": true,
+            "skipped": true,
+            "message": "Skipped due to failed dependencies: [3]"
+          },
+          "5": {
+            "error": true,
+            "skipped": true,
+            "message": "Skipped due to failed dependencies: [4]"
+          },
+          "6": {
+            "error": true,
+            "skipped": true,
+            "message": "Skipped due to failed dependencies: [5]"
+          }
+        },
+        "status": "partial_success",
+        "message": "Found: Apple Inc. (AAPL). Email step was not executed. Please retry the request."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "search_stock_symbol",
+          "parameters": {
+            "query": "Apple",
+            "use_web_fallback": true
+          },
+          "dependencies": [],
+          "reasoning": "Resolve the ticker symbol for Apple",
+          "expected_output": "Dictionary with stock symbol (e.g., 'AAPL')"
+        },
+        {
+          "id": 2,
+          "action": "get_stock_price",
+          "parameters": {
+            "symbol": "$step1.stock_symbol"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Fetch the current stock price and metrics for Apple",
+          "expected_output": "Dictionary with current price, change, volume, etc."
+        },
+        {
+          "id": 3,
+          "action": "create_slide_deck_content",
+          "parameters": {
+            "content": "$step2.message",
+            "title": "Apple Stock Price"
+          },
+          "dependencies": [
+            2
+          ],
+          "reasoning": "Convert the price and metrics into concise bullet points for slides",
+          "expected_output": "Formatted slide content and list of slides"
+        },
+        {
+          "id": 4,
+          "action": "create_keynote",
+          "parameters": {
+            "title": "Apple Stock Price",
+            "content": "$step3.formatted_content"
+          },
+          "dependencies": [
+            3
+          ],
+          "reasoning": "Generate a Keynote presentation from the slide content",
+          "expected_output": "Dictionary with keynote_path and slide_count"
+        },
+        {
+          "id": 5,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Apple Stock Price Presentation",
+            "body": "Attached is the slide deck summarizing Apple's current stock price and metrics.",
+            "attachments": [
+              "$step4.keynote_path"
+            ],
+            "send": true
+          },
+          "dependencies": [
+            4
+          ],
+          "reasoning": "Email the generated slideshow to the user",
+          "expected_output": "Dictionary with status 'sent'"
+        },
+        {
+          "id": 6,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Created an Apple stock price slideshow and emailed it to you.",
+            "artifacts": [
+              "$step4.keynote_path"
+            ],
+            "status": "success"
+          },
+          "dependencies": [
+            5
+          ],
+          "reasoning": "Confirm completion and surface the artifact to the user",
+          "expected_output": "Structured UI reply"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "found": true,
+          "symbol": "AAPL",
+          "company_name": "Apple Inc.",
+          "query": "Apple",
+          "source": "local_cache",
+          "message": "Found: Apple Inc. (AAPL)",
+          "tool": "search_stock_symbol"
+        },
+        "2": {
+          "error": true,
+          "error_type": "DataNotAvailable",
+          "error_message": "Unable to fetch price data for symbol: $STEP1.STOCK_SYMBOL",
+          "retry_possible": true,
+          "tool": "get_stock_price"
+        },
+        "3": {
+          "error": true,
+          "skipped": true,
+          "message": "Skipped due to failed dependencies: [2]"
+        },
+        "4": {
+          "error": true,
+          "skipped": true,
+          "message": "Skipped due to failed dependencies: [3]"
+        },
+        "5": {
+          "error": true,
+          "skipped": true,
+          "message": "Skipped due to failed dependencies: [4]"
+        },
+        "6": {
+          "error": true,
+          "skipped": true,
+          "message": "Skipped due to failed dependencies: [5]"
+        }
+      },
+      "metadata": {
+        "goal": "Search Apple stock price, create a slideshow, and email it to the user",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 6,
+    "agents_used": [],
+    "tools_used": [
+      "get_stock_price",
+      "search_stock_symbol"
+    ]
+  }
+}

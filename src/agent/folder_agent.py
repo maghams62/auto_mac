@@ -29,14 +29,14 @@ def folder_list(folder_path: Optional[str] = None) -> Dict[str, Any]:
     in the specified directory. Returns items sorted alphabetically.
 
     Args:
-        folder_path: Path to list (defaults to sandbox root: test_data)
+        folder_path: Path to list (defaults to primary document directory from config)
 
     Returns:
         Dictionary with items (list), total_count (int), folder_path (str)
         Each item includes: name, type (file/dir), size, modified, extension
 
     Security:
-        - All paths validated against sandbox (test_data by default)
+        - All paths validated against sandbox (configured document folders)
         - Symlinks resolved and validated
         - Parent directory traversal (..) rejected
     """
@@ -79,7 +79,7 @@ def folder_plan_alpha(folder_path: Optional[str] = None) -> Dict[str, Any]:
     NO files are modified. This is always a dry-run.
 
     Args:
-        folder_path: Path to analyze (defaults to sandbox root: test_data)
+        folder_path: Path to analyze (defaults to primary document directory from config)
 
     Returns:
         Dictionary with:
@@ -231,6 +231,330 @@ def folder_organize_by_type(
 
 
 @tool
+def folder_find_duplicates(
+    folder_path: Optional[str] = None,
+    recursive: bool = False
+) -> Dict[str, Any]:
+    """
+    Find duplicate files by content hash (SHA-256).
+
+    FOLDER AGENT - LEVEL 2: Analysis (READ-ONLY)
+    Use this when user asks to find, list, or identify duplicate files.
+
+    This is a read-only operation that identifies files with identical
+    content by computing SHA-256 hashes. Files are grouped by hash,
+    and the tool reports wasted disk space.
+
+    Behavior:
+    - Compares files by content (not just name or size)
+    - Groups duplicates together with metadata
+    - Calculates wasted disk space
+    - Can search recursively or just top-level
+
+    Args:
+        folder_path: Path to analyze (defaults to primary document directory from config)
+        recursive: Search subdirectories (default: False, top-level only)
+
+    Returns:
+        Dictionary with:
+        - duplicates: List of duplicate groups (hash, size, count, files)
+        - total_duplicate_files: Total count of duplicate files
+        - total_duplicate_groups: Number of duplicate groups
+        - wasted_space_bytes: Total bytes wasted
+        - wasted_space_mb: Wasted space in MB
+
+    Security:
+        - All paths validated against sandbox
+        - No write operations performed
+        - Skips hidden files and directories
+
+    Example workflow:
+    1. User: "Find duplicate files in my folder"
+    2. Agent: folder_find_duplicates(folder_path=None, recursive=False)
+    3. Agent: Summarize results and present to user
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_find_duplicates(folder_path='{folder_path}', recursive={recursive})")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.find_duplicates(folder_path, recursive)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_find_duplicates: {e}")
+        return {
+            "error": True,
+            "error_type": "DuplicateDetectionError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def folder_summarize(folder_path: Optional[str] = None, items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Generate comprehensive folder overview with statistics and insights.
+
+    FOLDER AGENT - LEVEL 2: Analysis (READ-ONLY)
+    Use this to provide users with natural language summaries of folder contents.
+
+    This tool analyzes file types, sizes, dates, and generates actionable insights
+    about the folder's contents and potential organization improvements.
+
+    Args:
+        folder_path: Path to analyze (defaults to sandbox root)
+        items: Pre-fetched folder items (optional, avoids redundant listing)
+
+    Returns:
+        Dictionary with:
+        - summary: Natural language overview
+        - statistics: Quantitative data (counts, sizes, distributions)
+        - insights: Key observations about the folder
+        - recommendations: Actionable suggestions
+
+    Security:
+        - All paths validated against sandbox
+        - No write operations performed
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_summarize(folder_path='{folder_path}')")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.summarize_folder(folder_path, items)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_summarize: {e}")
+        return {
+            "error": True,
+            "error_type": "SummaryError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def folder_sort_by(
+    folder_path: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    criteria: str = "name",
+    direction: str = "ascending"
+) -> Dict[str, Any]:
+    """
+    Sort folder contents by specified criteria with explanation.
+
+    FOLDER AGENT - LEVEL 2: Analysis (READ-ONLY)
+    Use this when users want to view files in a specific order.
+
+    Supported criteria: name, date, size, type, extension
+
+    Args:
+        folder_path: Path to analyze (defaults to sandbox root)
+        items: Pre-fetched folder items (optional)
+        criteria: Sort criteria (name|date|size|type|extension)
+        direction: Sort direction (ascending|descending)
+
+    Returns:
+        Dictionary with:
+        - sorted_items: Sorted file list
+        - criteria: Sort criteria used
+        - direction: Sort direction used
+        - explanation: Why this sorting is useful
+        - insights: Key observations from the sorted view
+
+    Security:
+        - All paths validated against sandbox
+        - No write operations performed
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_sort_by(criteria='{criteria}', direction='{direction}')")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.sort_folder_by(folder_path, items, criteria, direction)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_sort_by: {e}")
+        return {
+            "error": True,
+            "error_type": "SortError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def folder_explain_file(file_path: str) -> Dict[str, Any]:
+    """
+    Explain file content and purpose using metadata and semantic analysis.
+
+    FOLDER AGENT - LEVEL 2: Analysis (READ-ONLY) with Cross-Agent Integration
+    Use this when users want to understand what a specific file contains.
+
+    This tool combines file metadata with content analysis from the file agent
+    to provide comprehensive explanations of files.
+
+    Args:
+        file_path: Path to the file to explain
+
+    Returns:
+        Dictionary with:
+        - explanation: Natural language file description
+        - key_topics: Main topics/content areas
+        - suggested_actions: Recommended next steps
+        - content_summary: Brief content overview
+
+    Security:
+        - File path validated against sandbox
+        - No write operations performed
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_explain_file(file_path='{file_path}')")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.explain_file(file_path)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_explain_file: {e}")
+        return {
+            "error": True,
+            "error_type": "ExplainError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def folder_archive_old(
+    folder_path: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    age_threshold_days: int = 180,
+    dry_run: bool = True
+) -> Dict[str, Any]:
+    """
+    Archive old files to reduce folder clutter.
+
+    FOLDER AGENT - LEVEL 3: Execution (WRITE OPERATION)
+    Use this to move old/unused files to timestamped archive folders.
+
+    Args:
+        folder_path: Source folder path (defaults to sandbox root)
+        items: Pre-fetched folder items (optional)
+        age_threshold_days: Files older than this many days will be archived
+        dry_run: If True, only show plan (default: True, requires confirmation)
+
+    Returns:
+        Dictionary with archive plan or execution results:
+        - archive_plan: What will be archived (dry_run=True)
+        - files_moved: Successfully archived files (dry_run=False)
+        - archive_created: Archive folder path
+        - space_freed_mb: Space recovered
+
+    Security:
+        - All paths validated against sandbox
+        - Files are moved, not deleted
+        - Atomic operations with rollback on failure
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_archive_old(age_threshold={age_threshold_days}, dry_run={dry_run})")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.archive_old_files(folder_path, items, age_threshold_days, dry_run)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_archive_old: {e}")
+        return {
+            "error": True,
+            "error_type": "ArchiveError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
+def folder_organize_by_category(
+    folder_path: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    categorization: Optional[Dict[str, Any]] = None,
+    dry_run: bool = True
+) -> Dict[str, Any]:
+    """
+    Organize files into semantic categories based on content analysis.
+
+    FOLDER AGENT - LEVEL 3: Execution (WRITE OPERATION) with Cross-Agent Integration
+    Use this for intelligent content-based file organization.
+
+    This tool uses content analysis to group files by topics/themes
+    and creates category folders automatically.
+
+    Args:
+        folder_path: Source folder path (defaults to sandbox root)
+        items: Pre-fetched folder items (optional)
+        categorization: Pre-computed categorization results (optional)
+        dry_run: If True, only show plan (default: True, requires confirmation)
+
+    Returns:
+        Dictionary with organization plan or execution results:
+        - categories: Semantic categories and file assignments
+        - new_structure: Proposed folder structure
+        - folders_created: New category folders
+        - files_moved: Successfully organized files
+
+    Security:
+        - All paths validated against sandbox
+        - Atomic operations with rollback on failure
+        - Cross-agent calls for content analysis
+    """
+    logger.info(f"[FOLDER AGENT] Tool: folder_organize_by_category(dry_run={dry_run})")
+
+    try:
+        from src.automation.folder_tools import FolderTools
+        from src.utils import load_config
+
+        config = load_config()
+        tools = FolderTools(config)
+
+        result = tools.organize_by_category(folder_path, items, categorization, dry_run)
+        return result
+
+    except Exception as e:
+        logger.error(f"[FOLDER AGENT] Error in folder_organize_by_category: {e}")
+        return {
+            "error": True,
+            "error_type": "OrganizeByCategoryError",
+            "error_message": str(e),
+            "retry_possible": False
+        }
+
+
+@tool
 def folder_check_sandbox(path: str) -> Dict[str, Any]:
     """
     Verify a path is within the allowed sandbox.
@@ -239,7 +563,7 @@ def folder_check_sandbox(path: str) -> Dict[str, Any]:
     Use this to verify scope before operations.
 
     This validates that a given path is within the configured
-    sandbox directory (test_data by default). All folder tools
+    sandbox directory (configured document folders). All folder tools
     perform this check internally, but you can call this explicitly
     to verify scope or show the user the sandbox boundaries.
 
@@ -282,44 +606,61 @@ def folder_check_sandbox(path: str) -> Dict[str, Any]:
 
 # Folder Agent Tool Registry
 FOLDER_AGENT_TOOLS = [
-    folder_check_sandbox,  # Level 0: Security
-    folder_list,           # Level 1: Discovery
-    folder_plan_alpha,     # Level 2: Planning
-    folder_apply,          # Level 3: Execution (Renames)
+    folder_check_sandbox,     # Level 0: Security
+    folder_list,              # Level 1: Discovery
+    folder_summarize,         # Level 2: Analysis (Summary & insights)
+    folder_sort_by,           # Level 2: Analysis (Sorting with explanation)
+    folder_explain_file,      # Level 2: Analysis (File explanation with cross-agent)
+    folder_find_duplicates,   # Level 2: Analysis (Duplicate detection)
+    folder_plan_alpha,        # Level 2: Planning (Normalization)
+    folder_apply,             # Level 3: Execution (Renames)
     folder_organize_by_type,  # Level 3: Execution (Type-based moves)
+    folder_archive_old,       # Level 3: Execution (Archive old files)
+    folder_organize_by_category,  # Level 3: Execution (Semantic grouping)
 ]
 
 
 # Folder Agent Hierarchy
 FOLDER_AGENT_HIERARCHY = """
-Folder Agent Hierarchy:
-======================
+Folder Agent - Expanded Capabilities
+===================================
 
 LEVEL 0: Security Validation
-└─ folder_check_sandbox → Verify path is within sandbox
+└─ folder_check_sandbox → Verify path within sandbox
 
 LEVEL 1: Discovery
-└─ folder_list → List folder contents (non-recursive, alphabetically sorted)
+└─ folder_list → List folder contents (non-recursive, sorted)
 
-LEVEL 2: Planning (Dry-run)
+LEVEL 2: Analysis & Planning (Read-only)
+├─ folder_summarize → Generate folder overview and statistics
+├─ folder_sort_by → Sort files by criteria with explanation
+├─ folder_explain_file → Explain file content and purpose (cross-agent)
+├─ folder_find_duplicates → Detect content-based duplicates
 └─ folder_plan_alpha → Generate normalization plan (no writes)
 
 LEVEL 3: Execution (Write Operations)
 ├─ folder_apply → Apply rename plan (requires confirmation)
-└─ folder_organize_by_type → Group files into extension-based subfolders (dry-run first!)
+├─ folder_organize_by_type → Group files by extension
+├─ folder_archive_old → Move old files to archive folders
+└─ folder_organize_by_category → Semantic grouping by content
 
-Typical Workflow:
+Cross-Agent Integration:
+├─ File Agent: search_documents, extract_section (for content analysis)
+├─ Email Agent: compose_email (for reports and summaries)
+└─ Writing Agent: synthesize_content (for detailed analysis)
+
+Expanded Workflow:
 1. [Optional] folder_check_sandbox(path) → Verify scope
-2. folder_list(folder_path) → Show current state
-3. folder_plan_alpha(folder_path) → Generate plan (dry-run)
-4. [USER CONFIRMATION REQUIRED]
-5. folder_apply(plan, dry_run=True) → Validate plan
-6. [USER CONFIRMATION REQUIRED]
-7. folder_apply(plan, dry_run=False) → Execute renames
-8. [Optional] folder_organize_by_type(folder_path, dry_run=True/False) → Extension-based organization
+2. folder_list(folder_path) → Get current state
+3. folder_summarize/folder_sort_by/folder_explain_file → Analyze contents
+4. folder_plan_alpha/folder_find_duplicates → Plan changes
+5. [USER CONFIRMATION REQUIRED] → Show preview
+6. folder_apply/folder_organize_by_type/folder_archive_old → Execute
+7. [Optional] Cross-agent: email results or create reports
+8. [Optional] folder_list(folder_path) → Show final state
 
-Security Invariants:
-- All operations sandboxed to configured folder (test_data by default)
+Security Invariants (Unchanged):
+- All operations sandboxed to configured document folders
 - Symlinks resolved and validated
 - Parent directory traversal rejected
 - Write operations require explicit dry_run=False

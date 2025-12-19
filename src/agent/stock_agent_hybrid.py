@@ -1,306 +1,300 @@
 """
-Stock/Finance Agent - Hybrid approach using web + Mac Stocks app
+Hybrid Stock Agent - blends first-party market data with targeted DuckDuckGo lookups.
 
-Strategy:
-1. Use browser navigation to get comprehensive stock data from Yahoo Finance
-2. Use Mac Stocks app screenshot for visual charts/graphs
-3. Combine both for complete stock analysis with visuals
+The agent exposes a single high-level tool that:
+1. Normalizes user-specified periods into yfinance-supported windows (Lane 1).
+2. Falls back to DuckDuckGo search when structured history is incomplete (Lane 2).
+3. Surfaces a meta-level reflection when uncertainty remains (Lane 3).
+
+Each response includes:
+- normalized_period & normalization_note (if the original request was adjusted)
+- confidence_level (high/medium/low)
+- reasoning_channels (diverse lanes the LLM can reference)
+- search metadata (query, reason, results) when DuckDuckGo is used
 """
 
+from __future__ import annotations
+
 import logging
-import asyncio
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
 from langchain_core.tools import tool
+
+from .stock_agent import (  # Reuse structured helpers & first-party data tools
+    _normalize_history_period,
+    _fallback_stock_history_via_search,
+    get_stock_price as _core_get_stock_price,
+    get_stock_history as _core_get_stock_history,
+    search_stock_symbol as _core_search_stock_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro):
-    """Helper to run async functions in sync context."""
+def _invoke_tool(tool_obj, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Call LangChain tool objects safely whether they expose invoke() or are plain functions."""
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
-
-
-async def _get_stock_data_from_web(symbol: str) -> Dict[str, Any]:
-    """
-    Get stock data by browsing Yahoo Finance.
-
-    Args:
-        symbol: Stock ticker symbol (e.g., 'NVDA', 'AAPL')
-
-    Returns:
-        Dictionary with stock data extracted from web
-    """
-    from ..automation.web_browser import WebBrowser
-    from ..utils import load_config
-
-    symbol = symbol.upper()
-    url = f"https://finance.yahoo.com/quote/{symbol}"
-
-    config = load_config()
-    browser = WebBrowser(config, headless=True)
-
-    try:
-        # Initialize and navigate
-        await browser.initialize()
-        logger.info(f"Navigating to Yahoo Finance for {symbol}...")
-
-        nav_result = await browser.navigate(url, wait_until="networkidle", timeout=30000)
-
-        if not nav_result.get("success"):
-            raise Exception(f"Failed to load page: {nav_result.get('error')}")
-
-        # Wait for page to fully load
-        await asyncio.sleep(2)
-
-        # Extract page content
-        content_result = await browser.extract_content(use_langextract=True)
-
-        if not content_result.get("success"):
-            raise Exception("Failed to extract content")
-
-        # Get the text content
-        text = content_result.get("content", "")
-
-        # Parse the data from Yahoo Finance page text
-        stock_data = _parse_yahoo_finance_text(text, symbol)
-        stock_data["source"] = "finance.yahoo.com"
-        stock_data["source_url"] = url
-
-        return stock_data
-
-    finally:
-        await browser.close()
-
-
-def _parse_yahoo_finance_text(text: str, symbol: str) -> Dict[str, Any]:
-    """
-    Parse stock data from Yahoo Finance page text.
-
-    Yahoo Finance pages typically contain text like:
-    "NVIDIA Corporation (NVDA) ... 181.50 +2.30 (+1.28%) ... Market Cap: 4.47T"
-    """
-    import re
-
-    # Extract company name (usually appears near the symbol)
-    company_match = re.search(r'([A-Z][A-Za-z\s&.,]+(?:Corporation|Inc|LLC|Ltd|Company|Corp)?)[^\w]*\(' + re.escape(symbol) + r'\)', text)
-    company_name = company_match.group(1).strip() if company_match else symbol
-
-    # Find all numbers that could be prices (format: 123.45 or 1,234.56)
-    price_pattern = r'[\d,]+\.\d{2}'
-    numbers = re.findall(price_pattern, text)
-
-    # First substantial number is usually the current price
-    current_price = None
-    if numbers:
-        for num_str in numbers:
-            try:
-                num = float(num_str.replace(',', ''))
-                if num > 1:  # Stock prices are usually > $1
-                    current_price = num
-                    break
-            except ValueError:
-                continue
-
-    # Extract change and percent change
-    # Pattern: +2.30 (+1.28%) or -1.50 (-0.82%)
-    change_pattern = r'([+\-−])[\s]*(\d+\.\d{2})[\s]*\(([+\-−])(\d+\.\d{2})%\)'
-    change_match = re.search(change_pattern, text)
-
-    change = None
-    change_percent = None
-    if change_match:
-        change_sign = -1 if change_match.group(1) in ['-', '−'] else 1
-        percent_sign = -1 if change_match.group(3) in ['-', '−'] else 1
-        try:
-            change = change_sign * float(change_match.group(2))
-            change_percent = percent_sign * float(change_match.group(4))
-        except ValueError:
-            pass
-
-    # Calculate previous close
-    previous_close = None
-    if current_price is not None and change is not None:
-        previous_close = round(current_price - change, 2)
-
-    # Extract market cap if available
-    market_cap_match = re.search(r'Market Cap[:\s]+(\d+\.?\d*[KMBT])', text, re.IGNORECASE)
-    market_cap = None
-    if market_cap_match:
-        market_cap = _parse_market_cap(market_cap_match.group(1))
-
-    # Format message
-    if current_price and change_percent is not None:
-        message = f"{company_name} ({symbol}): ${current_price:.2f} ({change_percent:+.2f}%)"
-    else:
-        message = f"{company_name} ({symbol}): Price data unavailable"
-
-    return {
-        "symbol": symbol,
-        "company_name": company_name,
-        "current_price": current_price,
-        "previous_close": previous_close,
-        "change": change,
-        "change_percent": change_percent,
-        "currency": "USD",
-        "market_cap": market_cap,
-        "message": message
-    }
-
-
-def _parse_market_cap(text: str) -> Optional[float]:
-    """Parse market cap from text like '4.47T' or '500B'."""
-    import re
-
-    if not text:
-        return None
-
-    try:
-        match = re.search(r'([\d.]+)\s*([KMBT])?', text.upper())
-        if not match:
-            return None
-
-        value = float(match.group(1))
-        multiplier = match.group(2)
-
-        multipliers = {
-            'K': 1_000,
-            'M': 1_000_000,
-            'B': 1_000_000_000,
-            'T': 1_000_000_000_000
-        }
-
-        if multiplier:
-            value *= multipliers.get(multiplier, 1)
-
-        return value
-
-    except Exception:
-        return None
-
-
-@tool
-def get_stock_price(symbol: str) -> Dict[str, Any]:
-    """
-    Get current stock price and information by browsing Yahoo Finance.
-
-    This tool provides comprehensive stock data by visiting Yahoo Finance
-    and extracting the current price, change, market cap, and company info.
-
-    Use this when you need to:
-    - Find the current price of a stock
-    - Get today's stock performance
-    - Understand company valuation (market cap)
-    - Get comprehensive stock data for analysis
-
-    Args:
-        symbol: Stock ticker symbol (e.g., 'AAPL' for Apple, 'NVDA' for Nvidia)
-
-    Returns:
-        Dictionary with current price, change, market cap, and other details
-
-    Examples:
-        get_stock_price("NVDA")  # Get Nvidia stock data
-        get_stock_price("AAPL")  # Get Apple stock data
-    """
-    logger.info(f"[STOCK AGENT] Tool: get_stock_price(symbol='{symbol}') - Using web browser")
-
-    try:
-        result = _run_async(_get_stock_data_from_web(symbol))
-        return result
-
-    except Exception as e:
-        logger.error(f"Error getting stock price for {symbol}: {e}")
+        if hasattr(tool_obj, "invoke"):
+            return tool_obj.invoke(params)
+        return tool_obj(**params)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.error("Tool invocation failed: %s", exc)
         return {
             "error": True,
-            "error_type": "StockDataError",
-            "error_message": f"Failed to get stock data: {str(e)}",
-            "retry_possible": True
+            "error_type": "ToolInvocationError",
+            "error_message": str(exc),
+            "retry_possible": False,
         }
+
+
+def _build_reasoning_lane(
+    lane: str,
+    confidence: str,
+    summary: str,
+    justification: str,
+    search_query: Optional[str] = None,
+    sources: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Structure reasoning metadata for downstream LLM steps."""
+    payload: Dict[str, Any] = {
+        "lane": lane,
+        "confidence": confidence,
+        "summary": summary,
+        "justification": justification,
+    }
+    if search_query:
+        payload["search_query"] = search_query
+    if sources:
+        payload["sources"] = sources
+    return payload
+
+
+def _should_trigger_search(history_result: Dict[str, Any]) -> bool:
+    """Decide whether DuckDuckGo should be used based on the primary history payload."""
+    if not history_result:
+        return True
+    if history_result.get("error"):
+        return True
+    if history_result.get("fallback_used"):
+        return True
+    if not history_result.get("data_points"):
+        return True
+    return False
+
+
+def _calculate_confidence(
+    price_result: Dict[str, Any],
+    history_result: Dict[str, Any],
+    used_search: bool,
+) -> str:
+    """Compute confidence level for the final response."""
+    if price_result.get("error"):
+        return "low"
+    if history_result.get("error"):
+        return "low"
+    if used_search:
+        return "medium" if history_result.get("history") else "low"
+    return "high"
+
+
+def _refine_search_payload(
+    symbol: str,
+    normalized_period: str,
+    original_reason: Optional[str],
+    region_hint: str = "US market",
+) -> Dict[str, Any]:
+    """
+    Invoke DuckDuckGo fallback with an explicit region/time hint so the LLM sees structured metadata.
+    """
+    refined_reason = original_reason or "Insufficient structured history"
+    fallback_result = _fallback_stock_history_via_search(
+        symbol,
+        normalized_period,
+        original_error=refined_reason,
+    )
+
+    if not fallback_result.get("error"):
+        search_query = fallback_result.get("search_query") or ""
+        search_query = f"{search_query} {region_hint}".strip()
+        fallback_result["search_query"] = search_query
+        fallback_result.setdefault("fallback_reason", refined_reason)
+        fallback_result["fallback_used"] = True
+
+    return fallback_result
 
 
 @tool
-def search_stock_symbol(query: str) -> Dict[str, Any]:
+def hybrid_stock_brief(
+    symbol: str,
+    period: str = "1mo",
+    allow_search: bool = True,
+    region_hint: str = "US market",
+) -> Dict[str, Any]:
     """
-    Search for a stock ticker symbol by company name.
-
-    Use this when you have a company name but need the ticker symbol.
+    Produce a concise stock briefing with multi-lane reasoning.
 
     Args:
-        query: Company name (e.g., "Nvidia", "Apple", "Microsoft")
+        symbol: Stock ticker or company string (e.g., "AAPL", "NVIDIA").
+        period: Natural language period (e.g., "past week", "2 months", "ytd").
+        allow_search: Whether DuckDuckGo can be used when confidence is low.
+        region_hint: Optional region to append to fallback search queries.
 
     Returns:
-        Dictionary with matching symbols
-
-    Examples:
-        search_stock_symbol("Nvidia")  # Returns NVDA
-        search_stock_symbol("Apple")   # Returns AAPL
+        Dict containing price snapshot, historical summary, reasoning channels, and confidence level.
     """
-    logger.info(f"[STOCK AGENT] Tool: search_stock_symbol(query='{query}')")
+    symbol_clean = symbol.upper().strip()
+    normalized_period, normalization_note = _normalize_history_period(period)
 
-    # Comprehensive mapping of companies to ticker symbols
-    symbol_map = {
-        "nvidia": "NVDA",
-        "apple": "AAPL",
-        "microsoft": "MSFT",
-        "google": "GOOGL",
-        "alphabet": "GOOGL",
-        "amazon": "AMZN",
-        "tesla": "TSLA",
-        "meta": "META",
-        "facebook": "META",
-        "netflix": "NFLX",
-        "intel": "INTC",
-        "amd": "AMD",
-        "ibm": "IBM",
-        "oracle": "ORCL",
-        "salesforce": "CRM",
-        "adobe": "ADBE",
-        "cisco": "CSCO",
-        "qualcomm": "QCOM",
+    logger.info(
+        "[STOCK HYBRID] Requested %s for %s (normalized -> %s)",
+        period,
+        symbol_clean,
+        normalized_period,
+    )
+
+    reasoning_channels: List[Dict[str, Any]] = []
+    search_reason: Optional[str] = None
+    fallback_payload: Optional[Dict[str, Any]] = None
+    used_search = False
+    primary_lane = "local_confident"
+
+    price_result = _invoke_tool(_core_get_stock_price, {"symbol": symbol_clean})
+    history_result = _invoke_tool(
+        _core_get_stock_history,
+        {"symbol": symbol_clean, "period": normalized_period},
+    )
+
+    if _should_trigger_search(history_result):
+        primary_lane = "investigative_duckduckgo"
+        used_search = allow_search
+        search_reason = (
+            history_result.get("fallback_reason")
+            or history_result.get("error_message")
+            or "Structured history incomplete"
+        )
+
+        justification = (
+            f"History lookup for {symbol_clean} over {normalized_period} returned "
+            f"{'an error' if history_result.get('error') else 'insufficient data'}."
+        )
+        reasoning_channels.append(
+            _build_reasoning_lane(
+                lane="local_confident",
+                confidence="low",
+                summary="Structured feed incomplete",
+                justification=justification,
+            )
+        )
+
+        if allow_search:
+            fallback_payload = _refine_search_payload(
+                symbol_clean,
+                normalized_period,
+                original_reason=search_reason,
+                region_hint=region_hint,
+            )
+            history_result = fallback_payload
+            reasoning_channels.append(
+                _build_reasoning_lane(
+                    lane="investigative_duckduckgo",
+                    confidence="medium"
+                    if not fallback_payload.get("error")
+                    else "low",
+                    summary=f"DuckDuckGo query executed for {symbol_clean}",
+                    justification=(
+                        f"Used search query '{fallback_payload.get('search_query')}' "
+                        f"to supplement missing history."
+                    ),
+                    search_query=fallback_payload.get("search_query"),
+                    sources=fallback_payload.get("history"),
+                )
+            )
+        else:
+            reasoning_channels.append(
+                _build_reasoning_lane(
+                    lane="investigative_duckduckgo",
+                    confidence="low",
+                    summary="Search disabled by configuration",
+                    justification="allow_search set to False; skipping DuckDuckGo.",
+                )
+            )
+    else:
+        change = history_result.get("period_change")
+        change_pct = history_result.get("period_change_percent")
+        summary_parts = [
+            f"{symbol_clean} over {normalized_period}:",
+            f"change {change:+.2f}" if change is not None else "no change data",
+            f"({change_pct:+.2f}%)" if change_pct is not None else "",
+        ]
+        reasoning_channels.append(
+            _build_reasoning_lane(
+                lane="local_confident",
+                confidence="high",
+                summary=" ".join(part for part in summary_parts if part).strip(),
+                justification="Structured history returned sufficent data; no search required.",
+            )
+        )
+
+    confidence_level = _calculate_confidence(price_result, history_result, used_search)
+
+    if confidence_level == "low":
+        meta_summary = (
+            f"Unable to secure high-confidence data for {symbol_clean} ({normalized_period}). "
+            "Recommend user clarification or alternative timeframe."
+        )
+        reasoning_channels.append(
+            _build_reasoning_lane(
+                lane="meta_reflection",
+                confidence="low",
+                summary=meta_summary,
+                justification="Multiple attempts failed to produce reliable data.",
+                search_query=history_result.get("search_query") if history_result else None,
+            )
+        )
+
+    response: Dict[str, Any] = {
+        "symbol": symbol_clean,
+        "requested_period": period,
+        "normalized_period": normalized_period,
+        "confidence_level": confidence_level,
+        "primary_lane": primary_lane,
+        "reasoning_channels": reasoning_channels,
+        "price_snapshot": price_result,
+        "history": history_result,
+        "fallback_used": bool(history_result.get("fallback_used")) if history_result else False,
     }
 
-    query_lower = query.lower()
-    matches = []
+    if normalization_note:
+        response["normalization_note"] = normalization_note
 
-    for name, symbol in symbol_map.items():
-        if query_lower in name or name in query_lower:
-            matches.append({
-                "symbol": symbol,
-                "company_name": name.title()
-            })
+    if history_result:
+        if history_result.get("search_query"):
+            response["search_query"] = history_result.get("search_query")
+        if history_result.get("fallback_reason"):
+            response["search_reason"] = history_result.get("fallback_reason")
+        if "history" in history_result:
+            response["search_results"] = history_result.get("history")
 
-    if matches:
-        return {
-            "query": query,
-            "matches": matches,
-            "count": len(matches),
-            "message": f"Found {len(matches)} match(es) for '{query}'"
-        }
+    if search_reason and "search_reason" not in response:
+        response["search_reason"] = search_reason
 
-    return {
-        "error": True,
-        "error_type": "SymbolNotFound",
-        "error_message": f"No stock symbol found for: {query}",
-        "retry_possible": True,
-        "suggestion": "Try using the ticker symbol directly (e.g., AAPL, MSFT, NVDA)"
-    }
+    return response
 
 
-# Export tools
+@tool
+def hybrid_search_stock_symbol(query: str) -> Dict[str, Any]:
+    """Wrapper around the core search tool to keep naming consistent in hybrid workflows."""
+    return _invoke_tool(_core_search_stock_symbol, {"query": query})
+
+
 STOCK_AGENT_TOOLS = [
-    get_stock_price,
-    search_stock_symbol,
+    hybrid_stock_brief,
+    hybrid_search_stock_symbol,
 ]
 
-# Tool hierarchy for planner
 STOCK_AGENT_HIERARCHY = {
     "LEVEL 1 - Primary": [
-        "get_stock_price",      # Get current price via web browsing
-        "search_stock_symbol",  # Find ticker symbols
+        "hybrid_stock_brief",
+        "hybrid_search_stock_symbol",
     ],
 }

@@ -1,0 +1,63 @@
+{
+  "session_id": "5bdf90fb-f16d-46bc-932a-aa5853272285",
+  "status": "active",
+  "created_at": "2025-11-11T14:52:25.264372",
+  "last_active_at": "2025-11-11T14:52:42.928594",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T14:52:42.928594",
+      "user_request": "explain the ed sheeran files",
+      "agent_response": {
+        "goal": "Explain the Ed Sheeran files in your document collection",
+        "steps_executed": 0,
+        "results": {},
+        "status": "cancelled",
+        "message": "Execution cancelled by user request."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "explain_files",
+          "parameters": {},
+          "dependencies": [],
+          "reasoning": "List and get brief explanations of all files you have access to (including any Ed Sheeran files)",
+          "expected_output": "A list of file entries with explanations for each"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Here are the explanations for your files:",
+            "details": "$step1.files",
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Present the file explanations returned by explain_files in a user-friendly format",
+          "expected_output": "User-facing summary of file explanations"
+        }
+      ],
+      "step_results": {},
+      "metadata": {
+        "goal": "Explain the Ed Sheeran files in your document collection",
+        "status": "cancelled"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 2,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

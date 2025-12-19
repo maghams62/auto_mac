@@ -1,0 +1,204 @@
+[
+  {
+    "id": "git_commit:core-api:coreapi-require-vat",
+    "source_type": "git_commit",
+    "repo": "core-api",
+    "repo_url": "https://github.com/acme/core-api",
+    "branch": "main",
+    "commit_sha": "coreapi-require-vat",
+    "author": "alice",
+    "timestamp": "2025-12-05T09:00:00+00:00",
+    "message": "feat!: require vat_code for EU payments",
+    "files_changed": [
+      "core-api/src/payments.py",
+      "core-api/openapi/payments.yaml"
+    ],
+    "text_for_embedding": "feat!: require vat_code for EU payments",
+    "service_ids": [
+      "core-api-service"
+    ],
+    "component_ids": [
+      "core.payments"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "is_doc_change": false,
+    "labels": [
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "git_commit:billing-service:billing-honor-vat",
+    "source_type": "git_commit",
+    "repo": "billing-service",
+    "repo_url": "https://github.com/acme/billing-service",
+    "branch": "main",
+    "commit_sha": "billing-honor-vat",
+    "author": "bob",
+    "timestamp": "2025-12-05T17:00:00+00:00",
+    "message": "feat: update billing checkout to send vat_code",
+    "files_changed": [
+      "billing-service/src/checkout.py",
+      "billing-service/src/core_api_client.py"
+    ],
+    "text_for_embedding": "feat: update billing checkout to send vat_code",
+    "service_ids": [
+      "billing-service"
+    ],
+    "component_ids": [
+      "billing.checkout"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "is_doc_change": false,
+    "labels": [
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "git_commit:docs-portal:docs-portal-vat-refresh",
+    "source_type": "git_commit",
+    "repo": "docs-portal",
+    "repo_url": "https://github.com/acme/docs-portal",
+    "branch": "main",
+    "commit_sha": "docs-portal-vat-refresh",
+    "author": "eve",
+    "timestamp": "2025-12-05T21:00:00+00:00",
+    "message": "docs: refresh payments API guide with vat_code details",
+    "files_changed": [
+      "docs-portal/docs/payments_api.md",
+      "docs-portal/docs/billing_flows.md"
+    ],
+    "text_for_embedding": "docs: refresh payments API guide with vat_code details",
+    "service_ids": [
+      "docs-portal"
+    ],
+    "component_ids": [
+      "docs.payments"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "is_doc_change": true,
+    "labels": [
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "git_commit:billing-service:billing-guardrails",
+    "source_type": "git_commit",
+    "repo": "billing-service",
+    "repo_url": "https://github.com/acme/billing-service",
+    "branch": "main",
+    "commit_sha": "billing-guardrails",
+    "author": "carol",
+    "timestamp": "2025-12-06T07:30:00+00:00",
+    "message": "fix: respect dynamic quota config",
+    "files_changed": [
+      "billing-service/src/pricing/plan_config.py",
+      "billing-service/src/checkout.py"
+    ],
+    "text_for_embedding": "fix: respect dynamic quota config",
+    "service_ids": [
+      "billing-service"
+    ],
+    "component_ids": [
+      "billing.checkout"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "is_doc_change": false,
+    "labels": [
+      "billing_support_spike"
+    ]
+  },
+  {
+    "id": "git_commit:notifications-service:notifications-template-version",
+    "source_type": "git_commit",
+    "repo": "notifications-service",
+    "repo_url": "https://github.com/acme/notifications-service",
+    "branch": "main",
+    "commit_sha": "notifications-template-version",
+    "author": "dave",
+    "timestamp": "2025-12-06T03:00:00+00:00",
+    "message": "feat!: require template_version for receipt notifications",
+    "files_changed": [
+      "notifications-service/src/notifications.py",
+      "notifications-service/src/scheduler.py"
+    ],
+    "text_for_embedding": "feat!: require template_version for receipt notifications",
+    "service_ids": [
+      "notifications-service"
+    ],
+    "component_ids": [
+      "notifications.dispatch"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "is_doc_change": false,
+    "labels": [
+      "notifications_template_break"
+    ]
+  },
+  {
+    "id": "git_commit:docs-portal:docs-template-gap",
+    "source_type": "git_commit",
+    "repo": "docs-portal",
+    "repo_url": "https://github.com/acme/docs-portal",
+    "branch": "main",
+    "commit_sha": "docs-template-gap",
+    "author": "eve",
+    "timestamp": "2025-12-06T05:00:00+00:00",
+    "message": "docs: backlog TODO for template_version rollout",
+    "files_changed": [
+      "docs-portal/docs/notification_playbook.md",
+      "docs-portal/docs/changelog.md"
+    ],
+    "text_for_embedding": "docs: backlog TODO for template_version rollout",
+    "service_ids": [
+      "docs-portal"
+    ],
+    "component_ids": [
+      "docs.notifications"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "is_doc_change": true,
+    "labels": [
+      "notifications_template_break"
+    ]
+  },
+  {
+    "id": "git_commit:core-api:coreapi-plan-config",
+    "source_type": "git_commit",
+    "repo": "core-api",
+    "repo_url": "https://github.com/acme/core-api",
+    "branch": "main",
+    "commit_sha": "coreapi-plan-config",
+    "author": "quota-demo-bot",
+    "timestamp": "2025-12-04T23:00:00+00:00",
+    "message": "chore: tweak free tier defaults to match growth plan",
+    "files_changed": [
+      "core-api/config/plans/free_tier.yaml"
+    ],
+    "text_for_embedding": "chore: tweak free tier defaults to match growth plan",
+    "service_ids": [
+      "core-api-service"
+    ],
+    "component_ids": [
+      "core.payments"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "is_doc_change": false,
+    "labels": [
+      "docs_drift_only"
+    ]
+  }
+]

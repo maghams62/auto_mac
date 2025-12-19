@@ -1,0 +1,139 @@
+{
+  "session_id": "dc55c820-179a-4ef8-b59c-2b98655cbd31",
+  "status": "active",
+  "created_at": "2025-11-11T22:08:23.172500",
+  "last_active_at": "2025-11-11T22:09:03.685214",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T22:09:03.685214",
+      "user_request": "plan a trip from sf to la and email it to me",
+      "agent_response": {
+        "goal": "Plan a driving trip from San Francisco to Los Angeles and email the directions",
+        "steps_executed": 3,
+        "results": {
+          "1": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "transportation_mode": "driving",
+            "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "maps_service": "Apple Maps",
+            "maps_opened": false,
+            "message": "Here are driving directions from San Francisco, CA to Los Angeles, CA: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "tool": "get_directions"
+          },
+          "2": {
+            "status": "sent",
+            "message": "Email sent successfully",
+            "tool": "compose_email"
+          },
+          "3": {
+            "type": "reply",
+            "message": "Planned a driving route from San Francisco to Los Angeles and emailed the directions to you.",
+            "details": "Maps link: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 3,
+        "message": "Here are driving directions from San Francisco, CA to Los Angeles, CA: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d. Email sent as requested.",
+        "details": "Maps link: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+        "compose_email_step_id": 2
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "get_directions",
+          "parameters": {
+            "origin": "San Francisco, CA",
+            "destination": "Los Angeles, CA",
+            "open_maps": false
+          },
+          "dependencies": [],
+          "reasoning": "Generate driving directions and a Maps URL without opening the Maps app",
+          "expected_output": "Route details and maps URL"
+        },
+        {
+          "id": 2,
+          "action": "compose_email",
+          "parameters": {
+            "subject": "Trip Plan: San Francisco to Los Angeles",
+            "body": "Here is your trip plan from San Francisco to Los Angeles:\n\n$step1.route_details\n\nMaps Link: $step1.maps_url",
+            "recipient": null,
+            "send": true
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Email the user the generated route details and link",
+          "expected_output": "Email sent confirmation"
+        },
+        {
+          "id": 3,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Planned a driving route from San Francisco to Los Angeles and emailed the directions to you.",
+            "details": "Maps link: $step1.maps_url",
+            "status": "success"
+          },
+          "dependencies": [
+            2
+          ],
+          "reasoning": "Confirm task completion and point to the email for details",
+          "expected_output": "User-facing confirmation"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "origin": "San Francisco, CA",
+          "destination": "Los Angeles, CA",
+          "transportation_mode": "driving",
+          "maps_url": "https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "maps_service": "Apple Maps",
+          "maps_opened": false,
+          "message": "Here are driving directions from San Francisco, CA to Los Angeles, CA: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "tool": "get_directions"
+        },
+        "2": {
+          "status": "sent",
+          "message": "Email sent successfully",
+          "tool": "compose_email"
+        },
+        "3": {
+          "type": "reply",
+          "message": "Planned a driving route from San Francisco to Los Angeles and emailed the directions to you.",
+          "details": "Maps link: https://maps.apple.com/?saddr=San%20Francisco%2C%20CA&daddr=Los%20Angeles%2C%20CA&dirflg=d",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Plan a driving trip from San Francisco to Los Angeles and email the directions",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 3,
+    "agents_used": [],
+    "tools_used": [
+      "reply_to_user",
+      "compose_email",
+      "get_directions"
+    ]
+  }
+}

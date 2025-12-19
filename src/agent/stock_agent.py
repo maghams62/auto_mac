@@ -3,12 +3,294 @@ Stock/Finance Agent - Get stock prices and market data
 """
 
 import logging
-from typing import Dict, Any, Optional
+import re
+import time
+from typing import Dict, Any, Optional, List, Tuple
 from langchain_core.tools import tool
 import yfinance as yf
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _format_period_for_search(period: Optional[str]) -> str:
+    """Convert tool period input into a human-friendly phrase for search queries."""
+    if not period:
+        return "recent"
+
+    period_clean = period.replace("_", " ").replace("-", " ").strip().lower()
+    normalized_map = {
+        "1d": "past day",
+        "1 day": "past day",
+        "today": "today",
+        "24h": "past day",
+        "24 hours": "past day",
+        "5d": "past week",
+        "5 days": "past week",
+        "7d": "past week",
+        "one week": "past week",
+        "1week": "past week",
+        "1 wk": "past week",
+        "1 week": "past week",
+        "last week": "past week",
+        "1mo": "past month",
+        "1 month": "past month",
+        "30d": "past month",
+        "3mo": "past 3 months",
+        "3 months": "past 3 months",
+        "6mo": "past 6 months",
+        "6 months": "past 6 months",
+        "1y": "past year",
+        "1 yr": "past year",
+        "1 year": "past year",
+        "2y": "past 2 years",
+        "5y": "past 5 years",
+        "10y": "past 10 years",
+        "ytd": "year to date",
+        "year to date": "year to date",
+        "max": "historical",
+    }
+    return normalized_map.get(period_clean, period_clean)
+
+
+def _normalize_history_period(period: Optional[str]) -> Tuple[str, Optional[str]]:
+    """Map natural-language periods to yfinance-supported values."""
+    allowed_periods = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
+
+    if not period:
+        return "1mo", None
+
+    raw = period.strip().lower()
+    if raw in allowed_periods:
+        return raw, None
+
+    # Insert space between digits and letters to handle inputs like "1week"
+    spaced = re.sub(r'(?<=\d)(?=[a-zA-Z])', ' ', raw)
+    cleaned = spaced.replace("_", " ").replace("-", " ")
+
+    word_to_int = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+    }
+
+    number: Optional[int] = None
+    for token in cleaned.split():
+        if token.isdigit():
+            number = int(token)
+            break
+        if token in word_to_int:
+            number = word_to_int[token]
+            break
+
+    def note(mapped: str) -> str:
+        return f"Normalized period '{period}' to '{mapped}' for data compatibility."
+
+    if "ytd" in cleaned or "year to date" in cleaned:
+        return "ytd", note("ytd")
+    if "all time" in cleaned or "max" in cleaned:
+        return "max", note("max")
+
+    if "week" in cleaned or cleaned.endswith("wk"):
+        if not number or number <= 1:
+            return "5d", note("5d")
+        if number == 2:
+            return "1mo", note("1mo")
+        if number == 3:
+            return "3mo", note("3mo")
+        return "6mo", note("6mo")
+
+    if "day" in cleaned or cleaned.endswith("d"):
+        if not number:
+            number = 1
+        if number <= 1:
+            return "1d", note("1d")
+        if number <= 5:
+            return "5d", note("5d")
+        if number <= 10:
+            return "1mo", note("1mo")
+        if number <= 20:
+            return "1mo", note("1mo")
+        return "3mo", note("3mo")
+
+    if "month" in cleaned or cleaned.endswith("mo"):
+        if not number or number <= 1:
+            return "1mo", note("1mo")
+        if number == 2:
+            return "3mo", note("3mo")
+        if number <= 4:
+            return "3mo", note("3mo")
+        if number <= 6:
+            return "6mo", note("6mo")
+        if number <= 12:
+            return "1y", note("1y")
+        return "2y", note("2y")
+
+    if "year" in cleaned or cleaned.endswith("y"):
+        if not number or number <= 1:
+            return "1y", note("1y")
+        if number == 2:
+            return "2y", note("2y")
+        if number <= 5:
+            return "5y", note("5y")
+        return "10y", note("10y")
+
+    return raw, None
+
+
+def _fallback_stock_history_via_search(
+    symbol: str,
+    period: Optional[str],
+    original_error: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Fallback path when structured market data is unavailable.
+
+    Uses DuckDuckGo search to gather recent stock commentary so downstream steps still have
+    content to synthesize. This avoids hardcoded numbers and leans on web data.
+    """
+    logger.warning(
+        "[STOCK AGENT] Falling back to DuckDuckGo search for %s (%s) due to missing history. Reason: %s",
+        symbol,
+        period,
+        original_error or "unknown"
+    )
+
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError as import_error:
+        logger.error(
+            "[STOCK AGENT] Failed to import duckduckgo_search.DDGS for fallback: %s",
+            import_error
+        )
+        return {
+            "error": True,
+            "error_type": "HistoryFallbackImportError",
+            "error_message": (
+                f"Unable to load web search fallback after history lookup failed: {import_error}"
+            ),
+            "retry_possible": False
+        }
+
+    query_period = _format_period_for_search(period)
+    search_query = f"{symbol} stock price {query_period}".strip()
+
+    search_results: List[Dict[str, Any]] = []
+    last_error: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            with DDGS() as ddgs:
+                search_results = list(ddgs.text(search_query, max_results=6, backend="lite"))
+            if search_results:
+                break
+        except Exception as search_error:
+            last_error = search_error
+            if "ratelimit" in str(search_error).lower() and attempt == 0:
+                logger.warning(
+                    "[STOCK AGENT] DuckDuckGo rate limited %s query. Retrying after short pause.",
+                    symbol
+                )
+                time.sleep(1.5)
+                continue
+            logger.error(
+                "[STOCK AGENT] DuckDuckGo search fallback threw exception for %s: %s",
+                symbol,
+                search_error
+            )
+            return {
+                "error": True,
+                "error_type": "HistoryFallbackSearchError",
+                "error_message": (
+                    f"Stock history unavailable and web search fallback failed: {search_error}"
+                ),
+                "retry_possible": False
+            }
+
+    if not search_results and last_error:
+        logger.error(
+            "[STOCK AGENT] DuckDuckGo search fallback ultimately failed for %s: %s",
+            symbol,
+            last_error
+        )
+        return {
+            "error": True,
+            "error_type": "HistoryFallbackSearchError",
+            "error_message": (
+                f"Stock history unavailable and web search fallback failed: {last_error}"
+            ),
+            "retry_possible": False
+        }
+
+    if not search_results:
+        logger.error(
+            "[STOCK AGENT] DuckDuckGo search returned no results for %s (%s)",
+            symbol,
+            search_query
+        )
+        return {
+            "error": True,
+            "error_type": "HistoryFallbackNoResults",
+            "error_message": (
+                f"Stock history unavailable for {symbol}, and DuckDuckGo search returned no results."
+            ),
+            "retry_possible": True
+        }
+
+    history_entries: List[Dict[str, Any]] = []
+    summary_lines: List[str] = []
+    for item in search_results:
+        entry = {
+            "title": item.get("title"),
+            "snippet": item.get("body"),
+            "link": item.get("href"),
+            "source": "duckduckgo_search"
+        }
+        history_entries.append(entry)
+
+        title = entry.get("title") or "Result"
+        snippet = (entry.get("snippet") or "").strip()
+        link = entry.get("link") or ""
+        details = f"{title}: {snippet}".strip()
+        if link:
+            details = f"{details} ({link})"
+        summary_lines.append(details)
+
+    formatted_summary = (
+        f"{symbol} stock roundup ({query_period}):\n"
+        + "\n".join(f"- {line}" for line in summary_lines if line)
+    )
+
+    return {
+        "symbol": symbol,
+        "period": period,
+        "data_points": None,
+        "latest_date": None,
+        "latest_price": None,
+        "oldest_date": None,
+        "oldest_price": None,
+        "period_change": None,
+        "period_change_percent": None,
+        "history": history_entries,
+        "formatted_summary": formatted_summary,
+        "message": (
+            f"Used DuckDuckGo search results for {symbol} ({query_period}) because structured "
+            "historical data was unavailable."
+        ),
+        "search_query": search_query,
+        "search_result_count": len(history_entries),
+        "source": "duckduckgo_search",
+        "fallback_used": True,
+        "fallback_reason": original_error,
+    }
 
 
 @tool
@@ -32,6 +314,10 @@ def get_stock_price(symbol: str) -> Dict[str, Any]:
         get_stock_price("TSLA")  # Get Tesla stock price
     """
     logger.info(f"[STOCK AGENT] Tool: get_stock_price(symbol='{symbol}')")
+
+    # TODO: Add telemetry logging for regression testing
+    # [TELEMETRY] Tool get_stock_price started - correlation_id={correlation_id}, symbol={symbol}
+    # Use telemetry/tool_helpers.py: log_tool_step("get_stock_price", "start", metadata={"symbol": symbol}, correlation_id=correlation_id)
 
     try:
         # Normalize symbol to uppercase
@@ -77,9 +363,18 @@ def get_stock_price(symbol: str) -> Dict[str, Any]:
             "fifty_two_week_low": info.get('fiftyTwoWeekLow'),
             "message": f"{info.get('longName', symbol)} ({symbol}): ${current_price:.2f} ({'+' if change >= 0 else ''}{change_percent:.2f}%)"
         }
+        
+        # TODO: Add telemetry logging for regression testing
+        # [TELEMETRY] Tool get_stock_price success - correlation_id={correlation_id}, price={current_price}
+        # Use telemetry/tool_helpers.py: log_tool_step("get_stock_price", "success", metadata={"price": current_price, "symbol": symbol}, correlation_id=correlation_id)
 
     except Exception as e:
         logger.error(f"Error fetching stock price for {symbol}: {e}")
+        
+        # TODO: Add telemetry logging for regression testing
+        # [TELEMETRY] Tool get_stock_price error - correlation_id={correlation_id}, error={str(e)}
+        # Use telemetry/tool_helpers.py: log_tool_step("get_stock_price", "error", metadata={"error": str(e), "symbol": symbol}, correlation_id=correlation_id)
+        
         return {
             "error": True,
             "error_type": "StockDataError",
@@ -89,7 +384,7 @@ def get_stock_price(symbol: str) -> Dict[str, Any]:
 
 
 @tool
-def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
+def get_stock_history(symbol: str, period: str = "1mo", reasoning_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Get historical stock price data for a given ticker symbol.
 
@@ -101,6 +396,7 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
         period: Time period - "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with historical price data
@@ -110,20 +406,48 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
     """
     logger.info(f"[STOCK AGENT] Tool: get_stock_history(symbol='{symbol}', period='{period}')")
 
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[STOCK AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with stock data before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[STOCK AGENT] Learning from {past_attempts} past attempts - using more robust data fetching")
+
     try:
         symbol = symbol.upper()
         stock = yf.Ticker(symbol)
 
         # Get historical data
-        hist = stock.history(period=period)
+        allowed_periods = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
+        normalized_period, normalization_note = _normalize_history_period(period)
+
+        if normalized_period not in allowed_periods:
+            logger.info(
+                "[STOCK AGENT] Period '%s' not supported by yfinance. Switching to DuckDuckGo fallback.",
+                period
+            )
+            return _fallback_stock_history_via_search(
+                symbol,
+                period,
+                original_error=f"Unsupported period '{period}'"
+            )
+
+        hist = stock.history(period=normalized_period)
 
         if hist.empty:
-            return {
-                "error": True,
-                "error_type": "NoHistoricalData",
-                "error_message": f"No historical data available for {symbol}",
-                "retry_possible": True
-            }
+            logger.warning(
+                "[STOCK AGENT] No historical data returned for %s with period %s. Using DuckDuckGo fallback.",
+                symbol,
+                normalized_period
+            )
+            return _fallback_stock_history_via_search(
+                symbol,
+                period,
+                original_error="No historical data returned from yfinance"
+            )
 
         # Convert to readable format
         history_data = []
@@ -147,9 +471,20 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
             change = latest['close'] - oldest['close']
             change_percent = (change / oldest['close']) * 100
 
-        return {
+        # Format detailed summary for LLM consumption
+        formatted_summary = f"{symbol} Stock History ({period}):\n\n"
+        formatted_summary += f"Period: {oldest['date']} to {latest['date']}\n"
+        formatted_summary += f"Starting Price: ${oldest['close']:.2f}\n"
+        formatted_summary += f"Ending Price: ${latest['close']:.2f}\n"
+        formatted_summary += f"Change: ${change:.2f} ({'+' if change_percent > 0 else ''}{change_percent:.2f}%)\n\n"
+        formatted_summary += "Daily Prices:\n"
+        for day in history_data[-10:]:  # Last 10 days
+            formatted_summary += f"  {day['date']}: ${day['close']:.2f} (Vol: {day.get('volume', 0):,})\n"
+        
+        response = {
             "symbol": symbol,
             "period": period,
+            "normalized_period": normalized_period,
             "data_points": len(history_data),
             "latest_date": latest['date'] if latest else None,
             "latest_price": latest['close'] if latest else None,
@@ -158,8 +493,13 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
             "period_change": round(change, 2) if change else None,
             "period_change_percent": round(change_percent, 2) if change_percent else None,
             "history": history_data[-10:],  # Return last 10 data points
-            "message": f"{symbol} history for {period}: {len(history_data)} data points"
+            "formatted_summary": formatted_summary,  # NEW: Formatted text for LLM
+            "message": f"{symbol} history for {period or normalized_period}: {len(history_data)} data points"
         }
+        if normalization_note:
+            response["message"] += f" ({normalization_note})"
+            response["normalization_note"] = normalization_note
+        return response
 
     except Exception as e:
         logger.error(f"Error fetching stock history for {symbol}: {e}")
@@ -172,7 +512,7 @@ def get_stock_history(symbol: str, period: str = "1mo") -> Dict[str, Any]:
 
 
 @tool
-def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, Any]:
+def search_stock_symbol(query: str, use_web_fallback: bool = True, reasoning_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Search for stock ticker symbols by company name with intelligent web fallback.
 
@@ -190,6 +530,7 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
     Args:
         query: Company name or search query (e.g., "Apple", "Bosch", "Microsoft")
         use_web_fallback: Whether to use web search if local lookup fails (default: True)
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with stock symbol, company info, or indication if private company
@@ -200,6 +541,20 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
         search_stock_symbol("Tesla")  # Find TSLA
     """
     logger.info(f"[STOCK AGENT] Tool: search_stock_symbol(query='{query}', use_web_fallback={use_web_fallback})")
+    
+    # TODO: Add telemetry logging for regression testing
+    # [TELEMETRY] Tool search_stock_symbol started - correlation_id={correlation_id}, query={query}
+    # Use telemetry/tool_helpers.py: log_tool_step("search_stock_symbol", "start", metadata={"query": query}, correlation_id=correlation_id)
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[STOCK AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with symbol lookup before, be more thorough
+        if past_attempts > 0:
+            logger.info(f"[STOCK AGENT] Learning from {past_attempts} past attempts - using more thorough symbol lookup")
 
     try:
         # Common stock mappings (expanded)
@@ -237,6 +592,30 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
         }
 
         query_lower = query.lower().strip()
+        private_companies = {
+            "openai": "OpenAI is a private company and does not have a publicly traded stock ticker.",
+            "spacex": "SpaceX is privately held and is not listed on public stock exchanges.",
+        }
+
+        matched_private = next(
+            (name for name in private_companies.keys() if name in query_lower),
+            None
+        )
+
+        if matched_private:
+            message = private_companies[matched_private]
+            logger.info(f"[STOCK AGENT] Known private company detected for query '{query}': {message}")
+            return {
+                "found": False,
+                "error": True,
+                "error_type": "PrivateCompany",
+                "error_message": message,
+                "retry_possible": False,
+                "query": query,
+                "is_private_company": True,
+                "message": message,
+                "suggestion": "Consider asking about a publicly traded company or provide a different ticker symbol.",
+            }
 
         # Check for exact match
         if query_lower in common_stocks:
@@ -251,6 +630,7 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
                 return {
                     "found": True,
                     "symbol": symbol,
+                    "stock_symbol": symbol,  # Alias for LLM compatibility
                     "company_name": company_name,
                     "query": query,
                     "source": "local_cache",
@@ -374,12 +754,19 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
 
         # If we detected it's private, return that information
         if is_private:
+            private_message = f"'{query}' appears to be a private company (not publicly traded)."
+            logger.info(f"[STOCK AGENT] {private_message}")
             return {
                 "found": False,
-                "is_private_company": True,
+                "error": True,
+                "error_type": "PrivateCompany",
+                "error_message": private_message,
+                "retry_possible": False,
                 "query": query,
+                "is_private_company": True,
                 "source": "web_search",
-                "message": f"'{query}' appears to be a private company (not publicly traded)"
+                "message": private_message,
+                "suggestion": "Try providing a publicly traded company or a specific ticker symbol."
             }
 
         # If we found a potential ticker, verify it
@@ -402,13 +789,19 @@ def search_stock_symbol(query: str, use_web_fallback: bool = True) -> Dict[str, 
                 logger.warning(f"[STOCK AGENT] Ticker verification failed for {potential_ticker}: {e}")
 
         # Last resort: couldn't find ticker
+        fallback_message = (
+            f"Could not find a public stock ticker for '{query}'. "
+            "It may be a private company or listed under a different name."
+        )
+        logger.warning(f"[STOCK AGENT] Symbol lookup failed for '{query}': {fallback_message}")
         return {
             "found": False,
             "error": True,
             "error_type": "SymbolNotFound",
-            "error_message": f"Could not find stock ticker for '{query}' - may be private company or ticker not detected",
-            "retry_possible": True,
-            "suggestion": "Try providing the exact ticker symbol (e.g., AAPL, MSFT) or check if company is publicly traded"
+            "error_message": fallback_message,
+            "retry_possible": False,
+            "suggestion": "Try providing the exact ticker symbol (e.g., AAPL, MSFT) or verify if the company is publicly traded.",
+            "query": query
         }
 
     except Exception as e:

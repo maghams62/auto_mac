@@ -102,15 +102,19 @@ class HelpRegistry:
             name="/files",
             type="slash_command",
             category="files",
-            description="File operations - search, organize, manage files",
-            long_description="Talk directly to the File Agent for document search, file organization, screenshots, and archiving.",
+            description="File operations - search, list, organize, manage files",
+            long_description="Talk directly to the File Agent for document search, directory listing, file organization, screenshots, and archiving.",
             examples=[
+                "/files list",  # NEW: Directory listing
+                "/files list guitar",  # NEW: Filtered listing
+                "/files show folder=finance",  # NEW: Folder-specific listing
                 "/files Find documents about AI",
+                "/files show all PDF documents",  # Semantic search
                 "/files Organize my PDFs by topic",
                 "/files Create a ZIP archive of all images",
                 "/files Take a screenshot"
             ],
-            tags=["file", "document", "search", "organize", "zip", "screenshot"],
+            tags=["file", "document", "search", "list", "organize", "zip", "screenshot"],
             related=["/folder", "/organize"],
             agent="file",
             icon="📁",
@@ -177,14 +181,14 @@ class HelpRegistry:
             name="/google",
             type="slash_command",
             category="web",
-            description="Google search - find information on the web",
-            long_description="Search Google and get structured results with titles, URLs, and snippets.",
+            description="DuckDuckGo search (legacy /google alias) - find information on the web",
+            long_description="Perform a DuckDuckGo web search and receive structured results with titles, URLs, and snippets. The command retains the historical /google alias for backwards compatibility.",
             examples=[
                 "/google Search for Claude AI assistant",
                 "/google Find Python documentation",
                 "/google Look up Mac automation tools"
             ],
-            tags=["google", "search", "web", "find"],
+            tags=["duckduckgo", "search", "web", "find"],
             related=["/browse", "/search"],
             agent="google",
             icon="🔍",
@@ -436,14 +440,17 @@ class HelpRegistry:
             type="slash_command",
             category="media",
             description="Control Spotify playback",
-            long_description="Play and pause music in Spotify. Works with natural language commands like 'play music' or 'pause'.",
+            long_description="Play songs, pause music, or check status in Spotify. Supports fuzzy song names with LLM-powered semantic understanding (e.g., 'Viva la something' → 'Viva la Vida').",
             examples=[
                 "/spotify play",
                 "/spotify pause",
-                "/spotify play music",
+                "/spotify play Viva la Vida",
+                "/spotify play Viva la something",
+                "/spotify play that song called Viva la something",
+                "/spotify status",
                 "/music pause"
             ],
-            tags=["spotify", "music", "play", "pause", "playback"],
+            tags=["spotify", "music", "play", "pause", "playback", "song", "semantic"],
             related=[],
             agent="spotify",
             icon="🎵",

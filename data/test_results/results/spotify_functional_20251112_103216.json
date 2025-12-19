@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_spotify_functional",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 1.0347461669880431
+  },
+  "timestamp": "2025-11-12T10:32:16.817956",
+  "test_name": "spotify_functional"
+}

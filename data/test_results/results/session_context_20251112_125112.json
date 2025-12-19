@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_context_publish_consume",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0006537919980473816
+  },
+  "timestamp": "2025-11-12T12:51:12.484802",
+  "test_name": "session_context"
+}

@@ -1,0 +1,67 @@
+{
+  "session_id": "7632292f-6e77-4964-be43-c720919c6178",
+  "status": "active",
+  "created_at": "2025-11-11T12:22:34.146893",
+  "last_active_at": "2025-11-11T12:22:54.557815",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T12:22:54.557815",
+      "user_request": "what files are duplicated?",
+      "agent_response": {
+        "goal": "Identify and list duplicate files in the user's folder",
+        "steps_executed": 0,
+        "results": {},
+        "status": "cancelled",
+        "message": "Execution cancelled by user request."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "folder_find_duplicates",
+          "parameters": {
+            "folder_path": null,
+            "recursive": false
+          },
+          "dependencies": [],
+          "reasoning": "Use the folder_find_duplicates tool to identify duplicate files by content hash in the user's folder.",
+          "expected_output": "List of duplicate file groups with metadata including total duplicate files and wasted space."
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Found {$step1.total_duplicate_groups} groups of duplicates, wasting {$step1.wasted_space_mb} MB.",
+            "details": "Duplicate files are grouped as follows:\n$step1.duplicates",
+            "artifacts": [],
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Summarize the results of the duplicate file search and present them to the user.",
+          "expected_output": "User receives a summary of duplicate files and their details."
+        }
+      ],
+      "step_results": {},
+      "metadata": {
+        "goal": "Identify and list duplicate files in the user's folder",
+        "status": "cancelled"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 2,
+    "agents_used": [],
+    "tools_used": []
+  }
+}

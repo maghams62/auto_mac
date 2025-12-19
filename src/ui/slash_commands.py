@@ -16,24 +16,140 @@ Available Commands:
     /reddit <task>          - Talk directly to Reddit Agent
     /twitter <task>         - Talk directly to Twitter Agent
     /bluesky <task>         - Talk directly to Bluesky Agent
-    /spotify <task>         - Control Spotify playback (play/pause)
+    /spotify <task>         - Control Spotify playback (play, pause, skip)
     /music <task>           - Control Spotify playback (alias)
     /whatsapp <task>        - Read and analyze WhatsApp messages
     /wa <task>              - WhatsApp (alias)
     /confetti               - Trigger celebratory confetti effects
     /notify <task>          - Send system notifications
     /report <task>          - Generate PDF reports from local files
+    /calendar <task>        - List events & prepare meeting briefs
+    /day <filters>          - Generate comprehensive daily briefings
+    /recurring <schedule>   - Schedule recurring tasks (e.g., weekly reports)
     /help [command]         - Show help for commands
     /agents                 - List all available agents
     /                      - Show slash command palette
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 import re
+from collections import defaultdict
+
+from ..utils.screenshot import get_screenshot_dir
+from ..services.explain_pipeline import ExplainPipeline
+from ..services.git_metadata import GitMetadataService
+from ..services.hashtag_resolver import HashtagResolver
+from ..services.slack_metadata import SlackMetadataService
+from ..services.slash_query_plan import SlashQueryPlan, SlashQueryPlanner
+from ..utils.performance_monitor import get_performance_monitor
+from ..agent.slash_git_assistant import SlashGitAssistant
+from ..agent.slash_youtube_assistant import SlashYouTubeAssistant
+from ..orchestrator.slash_slack import SlashSlackOrchestrator
+from ..commands.setup_command import SetupCommand
+from ..commands.index_command import IndexCommand
+from ..commands.cerebros_command import CerebrosCommand
+from ..search import build_search_system
+from ..search.query_trace import QueryTraceStore
+from ..agent.cerebros_entrypoint import build_search_slash_cerebros_payload, run_slash_cerebros_query
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ACTIVITY_GRAPH_CONFIG = {
+    "slack_graph_path": "data/logs/slash/slack_graph.jsonl",
+    "git_graph_path": "data/logs/slash/git_graph.jsonl",
+    "doc_issues_path": "data/live/doc_issues.json",
+    "impact_events_path": "data/logs/impact_events.jsonl",
+    "cache": {
+        "enabled": True,
+        "ttl_seconds": 45,
+        "backend": "memory",
+    },
+}
+
+
+class SlashPromptContextLoader:
+    """
+    Lazy loader for subsystem context files used by slash agents.
+
+    Contexts live under agents/<agent>/context.md and are injected as tiered
+    prompt overlays only when the corresponding slash command executes.
+    """
+
+    def __init__(self, base_dir: Optional[Path] = None):
+        self.base_dir = base_dir or Path(__file__).resolve().parents[2] / "agents"
+        self._cache: Dict[str, str] = {}
+        self._registry: Dict[str, Dict[str, Any]] = {
+            "slack": {
+                "path": self.base_dir / "slash_slack" / "context.md",
+                "tier": "tier2",
+            },
+            "git": {
+                "path": self.base_dir / "slash_git" / "context.md",
+                "tier": "tier2",
+            },
+            "pr": {
+                "path": self.base_dir / "slash_git" / "context.md",
+                "tier": "tier2",
+            },
+            "youtube": {
+                "path": self.base_dir / "slash_youtube" / "context.md",
+                "tier": "tier2",
+            },
+        }
+
+    def get_layers(self, command_name: Optional[str]) -> List[Dict[str, str]]:
+        if not command_name:
+            return []
+        command_key = command_name.lower()
+        entry = self._registry.get(command_key)
+        if not entry:
+            return []
+
+        path = entry["path"]
+        try:
+            cache_key = str(path)
+            if cache_key not in self._cache and path.exists():
+                self._cache[cache_key] = path.read_text()
+            content = self._cache.get(cache_key)
+            if not content:
+                logger.warning("[SLASH CONTEXT] Context file missing for /%s at %s", command_key, path)
+                return []
+            return [{
+                "tier": entry.get("tier", "tier2"),
+                "source": cache_key,
+                "content": content,
+            }]
+        except Exception as exc:
+            logger.warning("[SLASH CONTEXT] Failed loading context for /%s: %s", command_key, exc)
+            return []
+
+
+def get_demo_documents_root(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """
+    Get the demo documents root directory from config.
+
+    This returns the first configured document folder, which should be
+    the test_docs directory for demo purposes.
+
+    Args:
+        config: Configuration dictionary (optional)
+
+    Returns:
+        Path to test documents directory, or None if not configured
+    """
+    if not config:
+        return None
+
+    # Try documents.folders[0] first
+    folders = config.get("documents", {}).get("folders", [])
+    if folders:
+        return folders[0]
+
+    # Fallback to document_directory (legacy)
+    return config.get("document_directory")
 
 
 def _extract_quoted_text(text: str) -> Optional[str]:
@@ -47,6 +163,79 @@ def _extract_quoted_text(text: str) -> Optional[str]:
     return None
 
 
+def _extract_ticker(text: str) -> Optional[str]:
+    """Extract stock ticker symbol from text (uppercase letters, typically 1-5 chars)."""
+    # Look for uppercase letter sequences that look like tickers
+    ticker_match = re.search(r'\b([A-Z]{1,5})\b', text)
+    if ticker_match:
+        candidate = ticker_match.group(1)
+        # Common tickers are 1-5 uppercase letters
+        if 1 <= len(candidate) <= 5 and candidate.isalpha():
+            return candidate
+    return None
+
+
+def _extract_time_window(text: str) -> Optional[Dict[str, int]]:
+    """Extract time window from text (hours or minutes)."""
+    text_lower = text.lower()
+    
+    # Hours pattern: "last 2 hours", "past 1 hour", "24h", "12 hours"
+    hours_match = re.search(r'(?:last|past|in|for)\s+(\d+)\s*(?:hours?|hrs?|hr|h)\b', text_lower)
+    if hours_match:
+        return {"hours": int(hours_match.group(1))}
+    
+    # Minutes pattern: "last 30 minutes", "past 15 mins"
+    minutes_match = re.search(r'(?:last|past|in|for)\s+(\d+)\s*(?:minutes?|mins?|min|m)\b', text_lower)
+    if minutes_match:
+        return {"minutes": int(minutes_match.group(1))}
+    
+    # Short form: "1h", "2h", "30m"
+    short_hours = re.search(r'\b(\d+)\s*h\b', text_lower)
+    if short_hours:
+        return {"hours": int(short_hours.group(1))}
+    
+    short_minutes = re.search(r'\b(\d+)\s*m\b', text_lower)
+    if short_minutes:
+        return {"minutes": int(short_minutes.group(1))}
+    
+    return None
+
+
+def _extract_count(text: str, default: int = 10) -> int:
+    """Extract count/number from text (e.g., "latest 5", "10 emails")."""
+    # Pattern: "latest 5", "recent 10", "first 3"
+    count_match = re.search(r'\b(latest|recent|first|last|top|next)\s+(\d+)\b', text.lower())
+    if count_match:
+        return int(count_match.group(2))
+    
+    # Pattern: "5 emails", "10 messages"
+    direct_count = re.search(r'\b(\d+)\s+(?:emails?|messages?|items?|results?|posts?|tweets?)\b', text.lower())
+    if direct_count:
+        return int(direct_count.group(1))
+    
+    # Pattern: just a number at the start
+    number_start = re.match(r'^(\d+)', text.strip())
+    if number_start:
+        return int(number_start.group(1))
+    
+    return default
+
+
+def _strip_command_verbs(text: str, verbs: List[str]) -> str:
+    """Strip command verbs from text (e.g., 'say', 'post', 'tweet' -> message text)."""
+    text_lower = text.lower()
+    for verb in verbs:
+        # Match verb at start followed by space/colon/dash
+        pattern = rf'^{re.escape(verb)}\s*[:-\s]+(.+)$'
+        match = re.match(pattern, text_lower)
+        if match:
+            return match.group(1).strip()
+        # Also match verb at start with just space
+        if text_lower.startswith(verb + ' '):
+            return text[len(verb):].strip()
+    return text.strip()
+
+
 class SlashCommandParser:
     """Parse and route slash commands to appropriate agents."""
 
@@ -56,6 +245,7 @@ class SlashCommandParser:
         "file": "file",
         "folder": "folder",  # Routes to file agent for explanation, folder agent for management
         "folders": "folder",  # Routes to file agent for explanation, folder agent for management
+        "explain": "explain",  # Dedicated explain command
         "organize": "folder",
         "google": "google",
         "search": "google",
@@ -83,8 +273,15 @@ class SlashCommandParser:
         "reddit": "reddit",
         "twitter": "twitter",
         "x": "twitter",  # Quick alias for Twitter summaries
+        "youtube": "youtube",
+        "yt": "youtube",
         "bluesky": "bluesky",
         "sky": "bluesky",
+        "sl": "slack",
+        "slack": "slack",
+        "git": "git",
+        "github": "git",
+        "pr": "git",
         "report": "report",
         "notify": "notifications",
         "notification": "notifications",
@@ -96,19 +293,40 @@ class SlashCommandParser:
         "confetti": "celebration",
         "celebrate": "celebration",
         "party": "celebration",
+        "weather": "weather",
+        "forecast": "weather",
+        "notes": "notes",
+        "note": "notes",
+        "reminders": "reminders",
+        "reminder": "reminders",
+        "remind": "reminders",
+        "calendar": "calendar",
+        "cal": "calendar",
+        "day": "daily_overview",
+        "daily": "daily_overview",
+        "recurring": "recurring",
+        "schedule": "recurring",
+        "setup": "setup",
+        "index": "index",
+        "cerebros": "cerebros",
     }
 
     # Special system commands (not agent-related)
-    SYSTEM_COMMANDS = ["help", "agents", "clear"]
+    SYSTEM_COMMANDS = ["help", "agents", "clear", "recurring"]
     
     # Commands that can execute without a task (execute immediately)
-    NO_TASK_COMMANDS = ["confetti", "celebrate", "party"]
+    NO_TASK_COMMANDS = ["confetti", "celebrate", "party", "files"]
 
     # Quick palette entries (primary commands only)
     COMMAND_TOOLTIPS = [
+        {"command": "/setup", "label": "Setup", "description": "View and configure universal search modalities"},
+        {"command": "/index", "label": "Index", "description": "Run ingestion for enabled modalities"},
+        {"command": "/cerebros", "label": "Cerebros", "description": "Universal semantic search across all sources"},
         {"command": "/files", "label": "File Ops", "description": "Search, organize, zip local files"},
         {"command": "/folder", "label": "Folder Agent", "description": "List & reorganize folders"},
+        {"command": "/explain", "label": "Explain", "description": "Explain documents using AI"},
         {"command": "/browse", "label": "Browser", "description": "Search the web & extract content"},
+        {"command": "/search", "label": "Search", "description": "Search the web using DuckDuckGo (no API key required)"},
         {"command": "/present", "label": "Presentations", "description": "Create Keynote/Pages docs"},
         {"command": "/email", "label": "Email", "description": "Read, summarize & draft emails"},
         {"command": "/write", "label": "Writing", "description": "Generate reports, notes, slides"},
@@ -120,20 +338,30 @@ class SlashCommandParser:
         {"command": "/reddit", "label": "Reddit", "description": "Scan subreddits"},
         {"command": "/twitter", "label": "Twitter", "description": "Summarize lists"},
         {"command": "/x", "label": "X/Twitter", "description": "Quick Twitter summaries"},
+        {"command": "/youtube", "label": "YouTube", "description": "Attach and query YouTube videos"},
         {"command": "/bluesky", "label": "Bluesky", "description": "Search, summarize, and post updates"},
+        {"command": "/slack", "label": "Slack", "description": "Fetch and analyze Slack messages"},
+        {"command": "/git", "label": "🐙 Git/PR", "description": "Graph-aware Git summaries & PR insights"},
         {"command": "/notify", "label": "Notifications", "description": "Send system notifications"},
         {"command": "/spotify", "label": "Spotify", "description": "Play and pause music"},
         {"command": "/whatsapp", "label": "WhatsApp", "description": "Read and analyze WhatsApp messages"},
         {"command": "/confetti", "label": "Confetti", "description": "Trigger celebratory confetti effects"},
+        {"command": "/weather", "label": "Weather", "description": "Get weather forecasts"},
+        {"command": "/notes", "label": "Notes", "description": "Create and manage Apple Notes"},
+        {"command": "/remind", "label": "Reminders", "description": "Create time-based reminders"},
+        {"command": "/calendar", "label": "Calendar", "description": "List events & prepare meeting briefs"},
+        {"command": "/day", "label": "Daily Overview", "description": "Get comprehensive daily briefings"},
+        {"command": "/recurring", "label": "Recurring Tasks", "description": "Schedule weekly/daily automated tasks"},
     ]
 
     # Agent descriptions for help
     AGENT_DESCRIPTIONS = {
         "file": "Handle file operations: search, organize, zip, screenshots",
         "folder": "Folder management: list, organize, rename files (LLM-driven, sandboxed)",
-        "google": "Google search via official API (fast, structured results, no browser)",
-        "browser": "Web browsing: search Google, navigate URLs, extract content",
-        "presentation": "Create presentations: Keynote, Pages documents",
+        "explain": "Explain document content using semantic search and AI synthesis",
+        "google": "DuckDuckGo web search (legacy name) - uses DuckDuckGo ONLY, fast structured results without a browser. Use /search as the primary command.",
+        "browser": "Web browsing: navigate URLs, extract content (use /search for DuckDuckGo search)",
+        "presentation": "Create presentations: Keynote (Pages is disabled)",
         "email": "Read, compose, send, and summarize emails via Mail.app",
         "writing": "Generate content: reports, slide decks, meeting notes",
         "maps": "Plan trips with stops, get directions, open Maps",
@@ -143,15 +371,37 @@ class SlashCommandParser:
         "discord": "Monitor Discord channels and mentions",
         "reddit": "Scan Reddit for mentions and posts",
         "twitter": "Track Twitter lists and activity",
+        "youtube": "Chat with YouTube videos: attach links, recall titles, ask timestamped questions",
         "bluesky": "Search Bluesky posts, summarize activity, and publish updates",
+        "slack": "Search Slack messages, list channels, fetch discussions with LLM-powered Q&A",
+        "git": "🐙 Graph-aware Git assistant: repo info, commits, diffs, tags, PRs",
         "report": "Create PDF reports strictly from local files (or stock data when requested)",
-        "spotify": "Control Spotify playback: play music, pause music, get status",
+        "spotify": "Control Spotify playback: play, pause, skip, go back, get status",
         "whatsapp": "Read WhatsApp messages, summarize conversations, extract action items",
         "celebration": "Trigger celebratory confetti effects with emoji notifications",
+        "weather": "Get weather forecasts for locations and timeframes (today, tomorrow, week)",
+        "notes": "Create, append, and read notes in Apple Notes (persistent storage)",
+        "reminders": "Create and manage time-based reminders in Apple Reminders",
+        "calendar": "Read calendar events and generate meeting briefs from indexed documents",
+        "daily_overview": "Generate comprehensive daily briefings: meetings, reminders, email actions",
+        "recurring": "Schedule recurring automated tasks (weekly reports, daily summaries, etc.)",
     }
 
     # Example commands
     EXAMPLES = {
+        "setup": [
+            "/setup",
+            "/setup detail slack",
+            "/setup config",
+        ],
+        "index": [
+            "/index",
+            "/index slack git",
+        ],
+        "cerebros": [
+            '/cerebros What is the latest on the auth outage?',
+            '/cerebros Explain mixture-of-experts docs + videos',
+        ],
         "files": [
             '/files Organize my PDFs by topic',
             '/files Create a ZIP of all images',
@@ -160,24 +410,34 @@ class SlashCommandParser:
             '/files List and explain files',
         ],
         "folder": [
-            '/folder /Users/siddharthsuresh/Downloads/auto_mac',
-            '/folder Explain files in test_docs',
             '/folder List files',
+            '/folder Explain files',
             '/folder organize alpha',
-            '/organize test_data',
+            '/organize music files',
+        ],
+        "explain": [
+            '/explain Edgar Allan Poe',
+            '/explain the Tell-Tale Heart story',
+            '/explain machine learning concepts',
+            '/explain this document about AI',
         ],
         "google": [
-            '/google Python async programming tutorials',
+            '/search Python async programming tutorials',
             '/search latest AI news',
-            '/google site:github.com machine learning',
+            '/search site:github.com machine learning',
         ],
         "browse": [
             '/browse Search for Python tutorials',
             '/browse Go to github.com and extract the trending repos',
         ],
+        "youtube": [
+            '/youtube https://youtu.be/dQw4w9WgXcQ summarize the intro',
+            '/youtube @mixture-of-experts what happens around 30 seconds in?',
+            '/youtube Recommend highlights from the transformer lecture',
+        ],
         "present": [
             '/present Create a Keynote about AI trends',
-            '/present Make a Pages document with this report',
+            '/present Make a Keynote presentation with this report',
         ],
         "email": [
             '/email Read the latest 10 emails',
@@ -213,7 +473,19 @@ class SlashCommandParser:
         "spotify": [
             '/spotify play',
             '/spotify pause',
-            '/spotify play music',
+            '/spotify skip',
+            '/spotify next song',
+            '/spotify back one track',
+            '/spotify play Viva la Vida',
+            '/spotify play Viva la something',
+            '/spotify play that song called Viva la something',
+            '/spotify play album Abbey Road',
+            '/spotify play artist The Beatles',
+            '/spotify status',
+            '/spotify queue up that song where mj moonwalks',
+            '/spotify put on the random access memories album',
+            '/spotify spin up some chill lofi beats',
+            "/spotify what's playing",
             '/music pause',
         ],
         "whatsapp": [
@@ -235,7 +507,56 @@ class SlashCommandParser:
         "bluesky": [
             '/bluesky search "agent ecosystems" limit:8',
             '/bluesky summarize "mac automation" 12h',
+            '/bluesky summarise "mac automation" 12h',
             '/bluesky post "Testing the Bluesky integration ✨"',
+            '/bluesky reply https://bsky.app/profile/user.bsky.social/post/abc123 "Great post!"',
+            '/bluesky like https://bsky.app/profile/user.bsky.social/post/abc123',
+            '/bluesky repost https://bsky.app/profile/user.bsky.social/post/abc123',
+        ],
+        "slack": [
+             '/slack List channels',
+             '/slack Fetch recent messages from #payments-demo',
+             '/slack Search for discussions about the auth bug',
+             '/slack Did we talk about the 500 errors?',
+         ],
+        "git": [
+             '/git List recent PRs',
+             '/git Show open PRs on main branch',
+             '/git What changed in PR #123?',
+             '/pr Show diff for PR #456',
+         ],
+        "weather": [
+            '/weather today',
+            '/weather NYC tomorrow',
+            '/weather "San Francisco" week',
+            '/forecast LA 3day',
+        ],
+        "notes": [
+            '/notes create "Meeting Notes" with body "Discussed Q4 plans"',
+            '/notes append "Daily Journal" with "Today was productive"',
+            '/notes read "Project Ideas"',
+        ],
+        "reminders": [
+            '/remind "Bring umbrella" at 7am',
+            '/remind "Call mom" tomorrow at 5pm',
+            '/reminders complete "Bring umbrella"',
+        ],
+        "calendar": [
+            '/calendar List my upcoming events',
+            '/calendar prep for Q4 Review meeting',
+            '/calendar brief docs for Team Standup',
+            '/calendar details for "Project Kickoff"',
+        ],
+        "daily_overview": [
+            '/day today',
+            '/day tomorrow morning',
+            '/day next 3 days',
+            '/day this afternoon',
+        ],
+        "recurring": [
+            '/recurring Create a weekly screen time report and email it every Friday',
+            '/recurring Generate a daily summary of my files every day at 9am',
+            '/schedule Send me a weekly summary of my documents every Monday',
         ],
     }
 
@@ -261,6 +582,10 @@ class SlashCommandParser:
         """
         # Check if message starts with /
         if not message.strip().startswith('/'):
+            return None
+
+        # Allow escaping paths: // at the start means "not a command"
+        if message.strip().startswith('//'):
             return None
 
         # Special commands
@@ -294,6 +619,14 @@ class SlashCommandParser:
             return {
                 "is_command": True,
                 "command": "clear",
+                "agent": None,
+                "task": None
+            }
+
+        if stripped in ['/stop', '/cancel']:
+            return {
+                "is_command": True,
+                "command": stripped[1:],
                 "agent": None,
                 "task": None
             }
@@ -338,6 +671,16 @@ class SlashCommandParser:
             standalone_match = re.match(r'^/(\w+)$', message.strip())
             if standalone_match:
                 command = standalone_match.group(1).lower()
+                # Only treat as a command if it's in our known command map
+                if command not in self.COMMAND_MAP:
+                    return {
+                        "is_command": True,
+                        "command": "invalid",
+                        "agent": None,
+                        "task": None,
+                        "error": f"I don't recognize '/{command}'. Type '/' to open the command palette."
+                    }
+
                 # Check if it's a command that can execute without a task
                 if command in self.NO_TASK_COMMANDS and command in self.COMMAND_MAP:
                     # Execute immediately without task
@@ -356,45 +699,25 @@ class SlashCommandParser:
                         "agent": command,
                         "task": None
                     }
-                else:
-                    # Unknown command - provide suggestions
-                    from difflib import get_close_matches
-                    suggestions = get_close_matches(command, self.COMMAND_MAP.keys(), n=3, cutoff=0.6)
-                    error_msg = f"Unknown command: /{command}."
-                    if suggestions:
-                        error_msg += f"\n\nDid you mean:\n" + "\n".join([f"  • /{s}" for s in suggestions])
-                    error_msg += "\n\nType /help for all available commands."
-                    return {
-                        "is_command": True,
-                        "command": "invalid",
-                        "error": error_msg
-                    }
 
-            return {
-                "is_command": True,
-                "command": "invalid",
-                "error": "Invalid command format. Use: /command <task>\nType /help for available commands."
-            }
+            # Invalid format, but not necessarily a slash command - could be a path
+            return None
 
         command = match.group(1).lower()
         task = match.group(2).strip()
 
-        # Map command to agent
-        agent = self.COMMAND_MAP.get(command)
-
-        if not agent:
-            # Provide suggestions for unknown commands
-            from difflib import get_close_matches
-            suggestions = get_close_matches(command, self.COMMAND_MAP.keys(), n=3, cutoff=0.6)
-            error_msg = f"Unknown command: /{command}."
-            if suggestions:
-                error_msg += f"\n\nDid you mean:\n" + "\n".join([f"  • /{s}" for s in suggestions])
-            error_msg += "\n\nType /help for all available commands."
+        # Only treat as a command if it's in our known command map
+        if command not in self.COMMAND_MAP:
             return {
                 "is_command": True,
                 "command": "invalid",
-                "error": error_msg
+                "agent": None,
+                "task": task,
+                "error": f"I don't recognize '/{command}'. Type '/' to open the command palette."
             }
+
+        # Map command to agent
+        agent = self.COMMAND_MAP.get(command)
 
         return {
             "is_command": True,
@@ -646,7 +969,7 @@ class SlashCommandParser:
             "  /browse <task>        - Search web, navigate, extract content",
             "",
             "📊 **Presentations:**",
-            "  /present <task>       - Create Keynote/Pages documents",
+            "  /present <task>       - Create Keynote presentations",
             "",
             "📧 **Email:**",
             "  /email <task>         - Compose and send emails",
@@ -725,17 +1048,66 @@ class SlashCommandParser:
 class SlashCommandHandler:
     """Handle execution of slash commands."""
 
-    def __init__(self, agent_registry, session_manager=None):
+    def __init__(
+        self,
+        agent_registry,
+        session_manager=None,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        slack_metadata_service: Optional[SlackMetadataService] = None,
+        git_metadata_service: Optional[GitMetadataService] = None,
+    ):
         """
         Initialize handler with agent registry.
 
         Args:
             agent_registry: AgentRegistry instance with all agents
             session_manager: Optional SessionManager for /clear command
+            config: Configuration dictionary for demo constraints
         """
         self.registry = agent_registry
         self.session_manager = session_manager
+        self.config = config or {}
+        self._ensure_graph_config()
         self.parser = SlashCommandParser()
+        self.explain_pipeline = ExplainPipeline(agent_registry)
+        self.slack_metadata_service = slack_metadata_service or SlackMetadataService(config=self.config)
+        self.git_metadata_service = git_metadata_service or GitMetadataService(self.config)
+        self.git_assistant = SlashGitAssistant(
+            agent_registry,
+            session_manager,
+            self.config,
+            metadata_service=self.git_metadata_service,
+        )
+        self.hashtag_resolver = HashtagResolver(
+            config=self.config,
+            slack_metadata_service=self.slack_metadata_service,
+        )
+        self.query_planner = SlashQueryPlanner(
+            config=self.config,
+            hashtag_resolver=self.hashtag_resolver,
+        )
+        self.youtube_assistant = SlashYouTubeAssistant(
+            agent_registry,
+            session_manager,
+            self.config,
+        )
+        # Inject trace store for youtube so answers can expose /brain/trace links
+        try:
+            self.youtube_assistant.query_trace_store = self.query_trace_store
+        except Exception:
+            logger.debug("[SLASH COMMANDS] Unable to attach query_trace_store to youtube assistant")
+        self.search_config, self.search_registry = build_search_system(self.config)
+        self.setup_command = SetupCommand(self.search_config, self.search_registry)
+        self.index_command = IndexCommand(self.search_registry)
+        self.query_trace_store = QueryTraceStore()
+        self.cerebros_command = CerebrosCommand(self.search_registry, trace_store=self.query_trace_store)
+        self.slash_slack = SlashSlackOrchestrator(
+            config=self.config,
+            metadata_service=self.slack_metadata_service,
+        )
+        self.prompt_context_loader = SlashPromptContextLoader()
+        self._usage_metrics = defaultdict(int)
         logger.info("[SLASH COMMANDS] Handler initialized")
 
     def handle(self, message: str, session_id: Optional[str] = None) -> Tuple[bool, Any]:
@@ -756,6 +1128,17 @@ class SlashCommandHandler:
         if not parsed:
             # Not a slash command
             return False, None
+
+        command_name = parsed.get("command", "unknown")
+        self._usage_metrics[command_name] += 1
+        logger.info(
+            "[SLASH COMMANDS] Command invoked",
+            extra={"command": command_name, "count": self._usage_metrics[command_name]},
+        )
+        try:
+            get_performance_monitor().record_batch_operation("slash_command_usage", 1)
+        except Exception:
+            pass
 
         # Handle special commands
         if parsed["command"] == "help":
@@ -785,14 +1168,121 @@ class SlashCommandHandler:
                     "content": "❌ Session management not enabled"
                 }
 
+        if parsed["command"] == "recurring" or parsed["agent"] == "recurring":
+            return True, {
+                "type": "recurring",
+                "content": "Scheduling recurring task...",
+                "task": parsed.get("task", ""),
+                "raw_command": message
+            }
+
+        if parsed["command"] in {"stop", "cancel"}:
+            return True, {
+                "type": "status",
+                "content": "Okay, stopping here. Let me know when you want to resume."
+            }
+
         if parsed["command"] == "invalid":
-            return True, {"type": "error", "content": parsed.get("error")}
+            error_msg = parsed.get("error") or "Unknown slash command. Type '/' for the palette."
+            return True, {"type": "error", "content": error_msg}
+
+        if parsed["command"] in {"setup", "index", "cerebros"}:
+            result_payload = self._handle_search_command(parsed, session_id)
+            return True, result_payload
 
         # Execute agent command
         original_agent = parsed["agent"]
         agent_name = parsed["agent"]
         task = parsed["task"]
         task_lower = (task or "").lower().strip()
+        plan_context: Optional[SlashQueryPlan] = None
+        if parsed["agent"] in {"slack", "git"}:
+            plan_context = self._build_query_plan(task or "", parsed.get("command"))
+
+        if parsed["agent"] == "git":
+            git_payload = self.git_assistant.handle(
+                parsed.get("task") or "",
+                session_id=session_id,
+                plan=plan_context,
+            )
+
+            is_git_summary = isinstance(git_payload, dict) and git_payload.get("type") == "slash_git_summary"
+            if is_git_summary:
+                formatted = git_payload
+            else:
+                formatted = self._format_generic_reply(
+                    "git",
+                    parsed["command"],
+                    parsed.get("task") or "",
+                    git_payload,
+                    session_id=session_id,
+                )
+
+            def _attach_git_metadata(payload: Any) -> None:
+                if isinstance(payload, dict):
+                    metadata = payload.setdefault("metadata", {})
+                    metadata["slash_route"] = "slash_git_assistant"
+
+            _attach_git_metadata(git_payload)
+            _attach_git_metadata(formatted)
+
+            git_result = {
+                "type": "result",
+                "agent": "git",
+                "original_agent": "git",
+                "command": parsed["command"],
+                "result": formatted or git_payload,
+                "raw": git_payload,
+            }
+            return True, self._attach_prompt_context(parsed, git_result)
+
+        if parsed["agent"] == "slack":
+            task_text = parsed.get("task") or ""
+            slack_payload = self.slash_slack.handle(
+                task_text,
+                session_id=session_id,
+                plan=plan_context,
+            )
+            if slack_payload.get("error"):
+                slack_error = {
+                     "type": "error",
+                     "agent": "slack",
+                     "original_agent": "slack",
+                     "command": parsed["command"],
+                     "content": slack_payload.get("message") or "Slack command failed.",
+                     "raw": slack_payload,
+                }
+                return True, self._attach_prompt_context(parsed, slack_error)
+
+            if isinstance(slack_payload, dict):
+                slack_metadata = slack_payload.setdefault("metadata", {})
+                slack_metadata["slash_route"] = "slash_slack_assistant"
+            slack_result = {
+                "type": "result",
+                "agent": "slack",
+                "original_agent": "slack",
+                "command": parsed["command"],
+                "result": slack_payload,
+                "raw": slack_payload,
+            }
+            return True, self._attach_prompt_context(parsed, slack_result)
+
+        if parsed["agent"] == "youtube":
+            task_text = parsed.get("task") or ""
+            yt_payload = self.youtube_assistant.handle(task_text, session_id=session_id)
+            if isinstance(yt_payload, dict):
+                yt_metadata = yt_payload.setdefault("data", {})
+                if isinstance(yt_metadata, dict):
+                    yt_metadata.setdefault("slash_route", "slash_youtube_assistant")
+            youtube_result = {
+                "type": "result",
+                "agent": "youtube",
+                "original_agent": "youtube",
+                "command": parsed["command"],
+                "result": yt_payload,
+                "raw": yt_payload,
+            }
+            return True, self._attach_prompt_context(parsed, youtube_result)
 
         if original_agent == "folder" and any(
             keyword in task_lower for keyword in ["summarize", "summarise", "summary"]
@@ -839,6 +1329,9 @@ class SlashCommandHandler:
                 "search": "search_bluesky_posts",
                 "summary": "summarize_bluesky_posts",
                 "post": "post_bluesky_update",
+                "reply": "reply_to_bluesky_post",
+                "like": "like_bluesky_post",
+                "repost": "repost_bluesky_post",
             }
 
             tool_name = tool_map[mode]
@@ -846,6 +1339,19 @@ class SlashCommandHandler:
             logger.info(f"[SLASH COMMAND] Parameters: {params}")
 
             result = self.registry.execute_tool(tool_name, params, session_id=session_id)
+
+            # Format post results with friendly message
+            if mode == "post" and isinstance(result, dict):
+                if result.get("success") and not result.get("error"):
+                    # Successful post
+                    message_text = params.get("message", "")
+                    # Truncate long messages for display
+                    display_text = message_text if len(message_text) <= 100 else message_text[:97] + "..."
+                    result["message"] = f'Posted to Bluesky: "{display_text}"'
+                elif result.get("error"):
+                    # Post failed
+                    error_msg = result.get("error_message") or result.get("error") or "Unknown error"
+                    result["message"] = f"Failed to post to Bluesky: {error_msg}"
 
             return True, {
                 "type": "result",
@@ -855,6 +1361,23 @@ class SlashCommandHandler:
                 "params": params,
                 "result": result,
             }
+
+        # Special handling: /files for explanation tasks should route to explain agent
+        if agent_name == "file" and parsed["command"] in ["files", "file"]:
+            # Check if task is about explaining content (not file management)
+            explanation_keywords = ["summarize", "summarise", "summary", "explain", "describe", "what is", "tell me about"]
+            management_keywords = ["organize", "sort", "arrange", "zip", "compress", "archive", "screenshot", "capture", "snap", "show all", "list all", "pull up all", "find all"]
+
+            # Route to explain agent if contains explanation keywords and no management keywords
+            is_explanation = (
+                task_lower and
+                any(keyword in task_lower for keyword in explanation_keywords) and
+                not any(word in task_lower for word in management_keywords)
+            )
+
+            if is_explanation:
+                agent_name = "explain"
+                logger.info(f"[SLASH COMMAND] Routing /files explanation request to explain agent")
 
         # Special handling: /folder for explanation tasks should route to file agent
         if agent_name == "folder" and parsed["command"] in ["folder", "folders"]:
@@ -882,29 +1405,203 @@ class SlashCommandHandler:
         logger.info(f"[SLASH COMMAND] Task: {task}")
 
         try:
-            agent = self.registry.get_agent(agent_name)
-            if not agent:
+            # Use deterministic routing for all commands
+            demo_root_message = None
+            tool_name = None
+            params = {}
+            status_msg = None
+            routing_attempted = False
+            
+            # Route based on agent name
+            if agent_name == "file" and task:
+                routing_attempted = True
+                tool_name, params, demo_root_message = self._route_files_command(task)
+            elif agent_name == "folder" and task:
+                routing_attempted = True
+                tool_name, params, demo_root_message = self._route_folder_command(task)
+            elif agent_name == "google" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_google_command(task)
+            elif agent_name == "browser" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_browser_command(task)
+            elif agent_name == "presentation" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_present_command(task)
+            elif agent_name == "email" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_email_command(task)
+            elif agent_name == "writing" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_write_command(task)
+            elif agent_name == "maps" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_maps_command(task)
+            elif agent_name == "google_finance" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_stock_command(task)
+            elif agent_name == "imessage" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_messaging_command(task, "imessage")
+            elif agent_name == "whatsapp" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_messaging_command(task, "whatsapp")
+            elif agent_name == "discord" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_messaging_command(task, "discord")
+            elif agent_name == "reddit" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_messaging_command(task, "reddit")
+            elif agent_name == "twitter" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_messaging_command(task, "twitter")
+            # Note: Bluesky is handled above with _parse_bluesky_task, so skip here
+            elif agent_name == "explain" and task:
+                # Direct RAG pipeline execution for explain commands
+                result = self._execute_rag_pipeline(task, session_id)
                 return True, {
-                    "type": "error",
-                    "content": f"❌ Agent '{agent_name}' not found"
+                    "type": "result",
+                    "agent": "explain",
+                    "command": parsed["command"],
+                    "result": result,
                 }
+            elif agent_name == "report" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_report_command(task)
+            elif agent_name == "notifications" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_notify_command(task)
+            elif agent_name == "spotify" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_spotify_command(task)
+            elif agent_name == "weather" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_weather_command(task)
+            elif agent_name == "notes" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_notes_command(task)
+            elif agent_name == "reminders" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_reminders_command(task)
+            elif agent_name == "calendar" and task:
+                routing_attempted = True
+                tool_name, params, status_msg = self._route_calendar_command(task)
 
-            # Special handling for celebration agent when no task (direct execution)
-            if agent_name == "celebration" and (not task or not task.strip()):
-                result = agent.execute("trigger_confetti", {})
+            # Execute deterministic routing if we have a tool_name
+            if tool_name:
+                logger.info(f"[SLASH COMMAND] Deterministic routing: {tool_name} with params {params}")
+                try:
+                    result = self.registry.execute_tool(tool_name, params, session_id=session_id)
+                    
+                    # Add status message if present
+                    if status_msg and isinstance(result, dict):
+                        if result.get("message"):
+                            result["message"] = f"{status_msg}\n\n{result['message']}"
+                        else:
+                            result["message"] = status_msg
+                except Exception as e:
+                    logger.error(f"[SLASH COMMAND] Tool execution error: {e}", exc_info=True)
+                    # Fall back to orchestrator on tool execution error
+                    fallback_reason = (
+                        f"Deterministic tool '{tool_name}' failed with {e.__class__.__name__}"
+                        if tool_name else str(e)
+                    )
+                    return True, {
+                        "type": "retry_with_orchestrator",
+                        "content": f"⚠ Direct /{parsed['command']} execution encountered an issue. Let me try routing through the main assistant...",
+                        "original_message": message,
+                        "error": str(e),
+                        "reason": fallback_reason,
+                        "agent": agent_name,
+                    }
+            elif routing_attempted and tool_name is None:
+                # Routing function was called but returned None - use orchestrator
+                logger.info(f"[SLASH COMMAND] Routing returned None, using orchestrator")
+                return True, {
+                    "type": "retry_with_orchestrator",
+                    "content": None,  # Silent fallback
+                    "original_message": message,
+                    "reason": f"No deterministic tool matched /{parsed['command']} request.",
+                    "agent": agent_name,
+                }
             else:
-                # Execute through agent
-                # For now, we'll use the agent's primary tool
-                # In future, could add agent-level "handle_task" method
-                result = self._execute_agent_task(agent, agent_name, task)
+                # For commands without deterministic routing or special cases, use agent-based execution
+                agent = self.registry.get_agent(agent_name)
+                if not agent:
+                    return True, {
+                        "type": "error",
+                        "content": f"❌ Agent '{agent_name}' not found"
+                    }
+
+                # Special handling for celebration agent when no task (direct execution)
+                if agent_name == "celebration" and (not task or not task.strip()):
+                    result = agent.execute("trigger_confetti", {})
+                else:
+                    # Execute through agent using LLM routing
+                    result = self._execute_agent_task(agent, agent_name, task)
 
             formatted_result = result
 
-            if original_agent == "folder" and not result.get("error"):
-                reply_payload = self._format_folder_result(result, task, session_id=session_id)
-                if reply_payload:
-                    formatted_result = reply_payload
-                    formatted_result.setdefault("_raw_result", result)
+            if isinstance(result, dict) and not result.get("error"):
+                # Add demo root message if present
+                if demo_root_message:
+                    # Prepend demo root message to the result message
+                    if formatted_result.get("message"):
+                        formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+                    elif isinstance(formatted_result, dict) and not formatted_result.get("type") == "reply":
+                        # If no message yet, create one with demo root info
+                        formatted_result["message"] = demo_root_message
+                
+                # Format RAG pipeline results
+                if result.get("rag_pipeline"):
+                    reply_payload = self._format_rag_result(result, task, session_id=session_id)
+                    if reply_payload:
+                        formatted_result = reply_payload
+                        formatted_result.setdefault("_raw_result", result)
+                        # Add demo root message to formatted reply
+                        if demo_root_message and formatted_result.get("message"):
+                            formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+                elif original_agent == "folder":
+                    reply_payload = self._format_folder_result(result, task, session_id=session_id)
+                    if reply_payload:
+                        formatted_result = reply_payload
+                        formatted_result.setdefault("_raw_result", result)
+                        # Add demo root message to formatted reply
+                        if demo_root_message and formatted_result.get("message"):
+                            formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+                elif result.get("type") == "document_list":
+                    reply_payload = self._format_document_list_result(result, task, session_id=session_id)
+                    if reply_payload:
+                        formatted_result = reply_payload
+                        formatted_result.setdefault("_raw_result", result)
+                        # Add demo root message to formatted reply
+                        if demo_root_message and formatted_result.get("message"):
+                            formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+                if formatted_result is result:
+                    generic_reply = self._format_generic_reply(
+                        agent_name=agent_name,
+                        command=parsed["command"],
+                        task=task,
+                        result=result,
+                        session_id=session_id,
+                    )
+                    if generic_reply:
+                        formatted_result = generic_reply
+                        formatted_result.setdefault("_raw_result", result)
+                        # Add demo root message to generic reply
+                        if demo_root_message and formatted_result.get("message"):
+                            formatted_result["message"] = f"{demo_root_message}\n\n{formatted_result['message']}"
+            elif not isinstance(result, dict):
+                generic_reply = self._format_generic_reply(
+                    agent_name=agent_name,
+                    command=parsed["command"],
+                    task=task,
+                    result=result,
+                    session_id=session_id,
+                )
+                if generic_reply:
+                    generic_reply.setdefault("_raw_result", result)
+                    formatted_result = generic_reply
 
             return True, {
                 "type": "result",
@@ -916,16 +1613,45 @@ class SlashCommandHandler:
             }
 
         except Exception as e:
-            logger.error(f"[SLASH COMMAND] Error: {e}", exc_info=True)
-            return True, {
-                "type": "error",
-                "content": f"❌ Error executing command: {str(e)}"
-            }
+            logger.error(f"[SLASH COMMAND] Error executing /{parsed['command']}: {e}", exc_info=True)
+
+            # Check if this is a "tool not found" or "missing params" error that should retry
+            error_str = str(e).lower()
+            should_retry = any(phrase in error_str for phrase in [
+                "tool not found",
+                "missing parameter",
+                "permission denied",
+                "not found",
+                "does not exist"
+            ])
+
+            if should_retry:
+                # Return a friendly error suggesting the orchestrator will retry
+                return True, {
+                    "type": "retry_with_orchestrator",
+                    "content": f"⚠ Direct /{parsed['command']} execution encountered an issue. Let me try routing through the main assistant...",
+                    "original_message": message,
+                    "error": str(e),
+                    "reason": str(e),
+                    "agent": agent_name,
+                }
+            else:
+                # Return regular error
+                return True, {
+                    "type": "error",
+                    "content": f"❌ Error executing /{parsed['command']}: {str(e)}"
+                }
 
     def _parse_bluesky_task(self, task: str) -> Tuple[str, Dict[str, Any]]:
         """
         Parse a /bluesky command task to determine mode and parameters.
         Returns (mode, params) where mode is 'search', 'summary', or 'post'.
+
+        Intent detection:
+        1. Explicit verbs (post, say, tweet, announce) → post mode
+        2. Short free-form text (≤128 chars, no search/summary keywords) → post mode
+        3. Time/window hints (last, hour, day) → summary mode
+        4. Search keywords or longer text → search mode
         """
         if not task or not task.strip():
             raise ValueError("Provide a task, e.g. /bluesky search \"AI agents\" limit:10")
@@ -950,19 +1676,96 @@ class SlashCommandHandler:
                     remainder = remainder.replace(match.group(0), "")
             return remainder, extracted
 
-        # Posting
-        for prefix in ("post", "publish", "send"):
-            if lower.startswith(prefix + " "):
-                message = text[len(prefix):].strip()
+        # 1. Explicit posting verbs
+        posting_verbs = ["post", "publish", "send", "tweet", "say", "announce"]
+        for verb in posting_verbs:
+            if lower.startswith(verb + " ") or lower.startswith(verb + ":"):
+                # Strip the verb and any separator (space, colon, dash)
+                message = text[len(verb):].strip()
+                if message.startswith(":"):
+                    message = message[1:].strip()
+                if message.startswith("-"):
+                    message = message[1:].strip()
+
                 if not message:
-                    raise ValueError("Provide a message to post, e.g. /bluesky post \"Hello Bluesky\"")
+                    raise ValueError(f"Provide a message to post, e.g. /bluesky {verb} \"Hello Bluesky\"")
+
+                # Extract from quotes if present
                 quoted = _extract_quoted_text(message)
                 if quoted:
                     message = quoted
+
                 return "post", {"message": message.strip()}
 
-        # Summaries
-        if lower.startswith(("summarize", "summary", "analyze")):
+        # 1.5. Interaction verbs (reply, like, repost)
+        interaction_verbs = {
+            "reply": "reply",
+            "respond": "reply",
+            "like": "like",
+            "favorite": "like",
+            "repost": "repost",
+            "boost": "repost",
+            "reshare": "repost"
+        }
+
+        for verb, action in interaction_verbs.items():
+            if lower.startswith(verb + " ") or lower.startswith(verb + ":"):
+                # Strip the verb and any separator
+                remainder = text[len(verb):].strip()
+                if remainder.startswith(":"):
+                    remainder = remainder[1:].strip()
+                if remainder.startswith("-"):
+                    remainder = remainder[1:].strip()
+
+                if not remainder:
+                    raise ValueError(f"Provide a post URI to {verb}, e.g. /bluesky {verb} https://bsky.app/profile/user.bsky.social/post/abc123")
+
+                # For reply, we need both URI and message
+                if action == "reply":
+                    # Try to extract quoted message and URI
+                    quoted_match = re.search(r'"([^"]*)"\s+(.+)|\'([^\']*)\'\s+(.+)', remainder)
+                    if quoted_match:
+                        message = quoted_match.group(1) or quoted_match.group(3)
+                        uri = (quoted_match.group(2) or quoted_match.group(4)).strip()
+                    else:
+                        # Assume URI followed by message
+                        parts = remainder.split(None, 1)
+                        if len(parts) == 2:
+                            uri, message = parts
+                        else:
+                            raise ValueError(f"Provide both URI and message to reply, e.g. /bluesky reply https://bsky.app/profile/user.bsky.social/post/abc123 \"Your message\"")
+
+                    return "reply", {"uri": uri.strip(), "text": message.strip()}
+                else:
+                    # For like/repost, URI is sufficient
+                    uri = remainder.strip()
+                    return action, {"uri": uri}
+
+        # 2. Short free-form text heuristic (post mode)
+        # If text is short (≤128 chars) and doesn't contain explicit keywords, treat as post
+        search_keywords = ["search", "find", "lookup", "scan", "query"]
+        summary_keywords = ["summarize", "summarise", "summary", "analyze", "analyse", "last", "recent"]
+        has_search_keyword = any(kw in lower for kw in search_keywords)
+        has_summary_keyword = any(kw in lower for kw in summary_keywords)
+
+        if len(text) <= 128 and not has_search_keyword and not has_summary_keyword:
+            # Likely a post - short, natural language without explicit mode keywords
+            return "post", {"message": text}
+
+        # 3. Time/window hints - summary mode
+        last_tweets_match = re.search(r'\blast\s+(\d+)\s+(?:tweets?|posts?)', lower)
+        if last_tweets_match:
+            # Extract number of tweets/posts
+            num_items = int(last_tweets_match.group(1))
+            # Use summarize mode with the query
+            return "summary", {
+                "query": text,  # Pass full text so bluesky agent can parse it
+                "max_items": min(num_items, 10),
+                "lookback_hours": default_lookback
+            }
+
+        # Explicit summaries
+        if lower.startswith(("summarize", "summarise", "summary", "analyze", "analyse")):
             action_word = text.split(None, 1)[0]
             remainder = text[len(action_word):].strip()
 
@@ -1025,6 +1828,41 @@ class SlashCommandHandler:
 
         params = {"query": query, "max_posts": max_posts}
         return "search", params
+
+    def _format_rag_result(
+        self,
+        result: Dict[str, Any],
+        task: str,
+        session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Format RAG pipeline results for user-facing display.
+        """
+        try:
+            summary = result.get("summary") or result.get("message", "")
+            doc_title = result.get("doc_title", "Unknown Document")
+            word_count = result.get("word_count", 0)
+            
+            if not summary:
+                return None
+            
+            # Format as a readable summary
+            message = f"## Summary: {doc_title}\n\n{summary}"
+            if word_count > 0:
+                message += f"\n\n*Summary length: {word_count} words*"
+            
+            return {
+                "type": "rag_summary",
+                "message": message,
+                "summary": summary,
+                "doc_title": doc_title,
+                "doc_path": result.get("doc_path"),
+                "word_count": word_count,
+                "rag_pipeline": True  # Preserve RAG pipeline flag
+            }
+        except Exception as e:
+            logger.error(f"[SLASH COMMAND] Error formatting RAG result: {e}")
+            return None
 
     def _format_folder_result(
         self,
@@ -1192,6 +2030,87 @@ class SlashCommandHandler:
 
         return None
 
+    def _format_document_list_result(
+        self,
+        result: Dict[str, Any],
+        task: str,
+        session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert document list results into a reply payload for user-facing display.
+        """
+        try:
+            if result.get("error"):
+                return None
+
+            documents = result.get("documents", [])
+            total_count = result.get("total_count", 0)
+            has_more = result.get("has_more", False)
+            message = result.get("message", "")
+
+            if not documents:
+                # Handle empty results
+                return self._format_with_reply(
+                    message=message or "No documents found",
+                    details="Try /files refresh to index documents or specify a different filter.",
+                    artifacts=[],
+                    status="info",
+                    session_id=session_id
+                )
+
+            # Format the document list
+            detail_lines = []
+
+            # Add summary info
+            showing_count = len(documents)
+            detail_lines.append(f"**Documents ({showing_count}{'+' if has_more else ''} of {total_count}):**\n")
+
+            # Format each document
+            for i, doc in enumerate(documents, 1):
+                name = doc.get("name", "Unknown")
+                path = doc.get("path", "")
+                size_human = doc.get("size_human", "Unknown")
+                modified = doc.get("modified")
+
+                # Format modification date
+                if modified and hasattr(modified, 'strftime'):
+                    modified_str = modified.strftime("%Y-%m-%d %H:%M")
+                else:
+                    modified_str = "Unknown"
+
+                # Get preview snippet
+                preview = doc.get("preview", "").strip()
+                if preview:
+                    # Truncate preview if too long
+                    if len(preview) > 80:
+                        preview = preview[:77] + "..."
+                    preview = f" - {preview}"
+
+                # Format the document entry
+                detail_lines.append(f"{i}. **{name}**")
+                detail_lines.append(f"   📁 {path}")
+                detail_lines.append(f"   📊 {size_human} • 📅 {modified_str}{preview}")
+                detail_lines.append("")  # Empty line between documents
+
+            details = "\n".join(detail_lines)
+
+            # Add "Show more" hint if there are more results
+            if has_more:
+                details += f"\n*Showing first {showing_count} documents. Use filters to narrow down results.*"
+
+            return self._format_with_reply(
+                message=message,
+                details=details,
+                artifacts=[],
+                status="success",
+                session_id=session_id
+            )
+
+        except Exception as exc:
+            logger.warning(f"[SLASH COMMAND] Failed to format document list result: {exc}", exc_info=True)
+
+        return None
+
     def _format_with_reply(
         self,
         message: str,
@@ -1219,6 +2138,263 @@ class SlashCommandHandler:
             logger.warning(f"[SLASH COMMAND] Failed to call reply_to_user: {exc}")
             return None
 
+    def _build_query_plan(self, task_text: str, command: Optional[str]) -> Optional[SlashQueryPlan]:
+        if not getattr(self, "query_planner", None):
+            return None
+        try:
+            return self.query_planner.plan(task_text or "", command=command)
+        except Exception as exc:
+            logger.debug("[SLASH COMMAND] Query planner failed: %s", exc)
+            return None
+
+    def _ensure_graph_config(self) -> None:
+        """
+        Guarantee the graph subsystem is marked enabled so Cerebros always attempts
+        the reasoning pipeline before falling back to legacy search.
+        """
+        graph_cfg = self.config.setdefault("graph", {})
+        if not graph_cfg.get("enabled"):
+            logger.info("[SLASH COMMANDS][CEREBROS] Forcing graph subsystem enabled.")
+            graph_cfg["enabled"] = True
+
+        activity_cfg = self.config.setdefault("activity_graph", {})
+        if not activity_cfg:
+            logger.info("[SLASH COMMANDS][CEREBROS] Hydrating default activity_graph configuration.")
+        for key, value in DEFAULT_ACTIVITY_GRAPH_CONFIG.items():
+            if isinstance(value, dict):
+                target = activity_cfg.setdefault(key, {})
+                if isinstance(target, dict):
+                    for sub_key, sub_value in value.items():
+                        target.setdefault(sub_key, sub_value)
+                else:
+                    activity_cfg.setdefault(key, value)
+            else:
+                activity_cfg.setdefault(key, value)
+
+    def _run_cerebros_search(
+        self,
+        task_text: str,
+        plan_context: Optional[SlashQueryPlan],
+    ) -> Dict[str, Any]:
+        query = (task_text or "").strip()
+        graph_result = self._handle_cerebros_graph(task_text, plan_context)
+        if graph_result.get("status") == "success":
+            return graph_result
+
+        logger.warning(
+            "[SLASH COMMANDS][CEREBROS] Graph pipeline unavailable (%s); falling back to legacy search",
+            graph_result.get("message") or "unknown error",
+        )
+
+        search_result = self.cerebros_command.search(task_text, plan=plan_context)
+        if search_result.get("status") == "success":
+            payload = build_search_slash_cerebros_payload(
+                query=query,
+                search_result=search_result,
+                query_plan=plan_context,
+            )
+            return {"status": "success", "payload": payload}
+        return search_result
+
+    def _handle_cerebros_graph(
+        self,
+        task_text: str,
+        plan_context: Optional[SlashQueryPlan],
+    ) -> Dict[str, Any]:
+        query = (task_text or "").strip()
+        if not query:
+            return {"status": "error", "message": "Ask a question after /cerebros."}
+        try:
+            component_hint = self._component_id_from_plan(plan_context)
+            return {
+                "status": "success",
+                "payload": run_slash_cerebros_query(
+                    config=self.config,
+                    query=query,
+                    component_id=component_hint,
+                    query_plan=plan_context,
+                ),
+            }
+        except Exception as exc:
+            logger.exception("[SLASH COMMANDS][CEREBROS] Graph reasoner failed: %s", exc)
+            return {
+                "status": "error",
+                "message": "Graph reasoner request failed.",
+                "data": {"error": str(exc)},
+            }
+
+    def _component_id_from_plan(self, plan_context: Optional[SlashQueryPlan]) -> Optional[str]:
+        if not plan_context or not getattr(plan_context, "targets", None):
+            return None
+        for target in plan_context.targets:
+            target_type = (getattr(target, "target_type", "") or "").lower()
+            if target_type in {"component", "service"}:
+                identifier = (
+                    getattr(target, "identifier", None)
+                    or (target.metadata or {}).get("component_id")
+                    or target.raw
+                )
+                if identifier:
+                    return identifier
+        return None
+
+    def _handle_search_command(self, parsed_command: Dict[str, Any], session_id: Optional[str]) -> Dict[str, Any]:
+        command = parsed_command["command"]
+        task_text = parsed_command.get("task") or ""
+        plan_context: Optional[SlashQueryPlan] = None
+        if command == "cerebros":
+            plan_context = self._build_query_plan(task_text, command)
+        if command == "setup":
+            result = self.setup_command.run(task_text)
+        elif command == "index":
+            result = self.index_command.run(task_text)
+        elif command == "cerebros":
+            result = self._run_cerebros_search(task_text, plan_context)
+        else:
+            result = {"status": "error", "message": f"Unsupported command '{command}'."}
+
+        if command == "cerebros":
+            if result.get("status") == "success" and result.get("payload"):
+                reply_payload = result["payload"]
+            else:
+                reply_payload = self._format_search_command_reply(command, result, session_id)
+        else:
+            reply_payload = self._format_search_command_reply(command, result, session_id)
+        formatted = {
+            "type": "result",
+            "agent": command,
+            "original_agent": command,
+            "command": parsed_command["command"],
+            "result": reply_payload,
+            "raw": result.get("payload") if command == "cerebros" else result,
+        }
+        return self._attach_prompt_context(parsed_command, formatted)
+
+    def _format_search_command_reply(
+        self,
+        command: str,
+        result: Dict[str, Any],
+        session_id: Optional[str],
+    ) -> Dict[str, Any]:
+        message = result.get("message") or f"{command} completed."
+        details = ""
+        data = result.get("data")
+        if isinstance(data, str):
+            details = data
+        elif data:
+            try:
+                details = json.dumps(data, indent=2)
+            except TypeError:
+                details = str(data)
+        reply = self._format_with_reply(
+            message=message,
+            details=details,
+            artifacts=[],
+            status=result.get("status", "success"),
+            session_id=session_id,
+        )
+        if reply:
+            return reply
+        return {
+            "type": "reply",
+            "message": message,
+            "details": details,
+            "status": result.get("status", "success"),
+        }
+
+
+    def _attach_prompt_context(self, parsed_command: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attach tiered context overlays for commands that ship with subsystem guidance.
+        """
+        if not isinstance(payload, dict):
+            return payload
+
+        command_name = (parsed_command.get("command") or "").lower()
+        layers = self.prompt_context_loader.get_layers(command_name)
+        if not layers:
+            return payload
+
+        prompt_context = payload.setdefault("prompt_context", {})
+        for layer in layers:
+            tier_key = layer.get("tier", "tier2")
+            tier_bucket = prompt_context.setdefault(tier_key, [])
+            tier_bucket.append({
+                "source": layer.get("source"),
+                "content": layer.get("content"),
+            })
+        return payload
+
+    def _format_generic_reply(
+        self,
+        agent_name: str,
+        command: str,
+        task: str,
+        result: Any,
+        *,
+        session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a reply_to_user payload for generic agent results.
+        """
+        if not isinstance(result, dict):
+            message = str(result)
+            return self._format_with_reply(
+                message=message or f"Completed {command} command.",
+                details="",
+                artifacts=[],
+                session_id=session_id
+            )
+
+        if result.get("type") == "reply":
+            return result
+
+        message = (
+            result.get("message")
+            or result.get("summary")
+            or result.get("content")
+            or result.get("response")
+            or ""
+        )
+
+        if not message:
+            fallback_task = task or command or agent_name
+            message = f"Completed {fallback_task}."
+
+        details = ""
+        if isinstance(result.get("details"), str):
+            details = result["details"]
+
+        artifacts: List[str] = []
+        artifact_keys = [
+            "document_path",
+            "file_path",
+            "zip_path",
+            "output_path",
+            "maps_url",
+            "presentation_path",
+            "report_path",
+        ]
+        for key in artifact_keys:
+            value = result.get(key)
+            if isinstance(value, str):
+                artifacts.append(value)
+        
+        # Handle screenshot_paths (list of paths)
+        screenshot_paths = result.get("screenshot_paths")
+        if isinstance(screenshot_paths, list):
+            artifacts.extend(screenshot_paths)
+
+        status = "error" if result.get("error") else result.get("status", "success")
+
+        return self._format_with_reply(
+            message=message,
+            details=details,
+            artifacts=artifacts,
+            status=status,
+            session_id=session_id,
+        )
+
     def _extract_folder_path(self, task: str) -> Optional[str]:
         """Attempt to extract a folder path from the user's task string."""
         if not task:
@@ -1235,40 +2411,943 @@ class SlashCommandHandler:
 
         return None
 
+    def _route_files_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /files commands to appropriate tools.
+
+        Args:
+            task: User task string
+
+        Returns:
+            Tuple of (tool_name, parameters, demo_root_message)
+            demo_root_message is None if user specified a path, otherwise contains the demo root path message
+        """
+        task_lower = task.lower().strip()
+        demo_root = get_demo_documents_root(self.config)
+        user_specified_path = self._extract_folder_path(task)
+        demo_root_message = None
+        
+        # If no path specified and demo root exists, use it and prepare message
+        if not user_specified_path and demo_root:
+            demo_root_message = f"Working in {demo_root}..."
+
+        # RAG/summarize keywords
+        if any(kw in task_lower for kw in ["summarize", "summarise", "summary", "explain", "describe", "what is", "tell me about"]):
+            # Extract topic from task
+            import re
+            rag_keywords_pattern = r'\b(summarize|summarise|summary|explain|describe|what is|tell me about)\b'
+            topic = re.sub(rag_keywords_pattern, '', task, flags=re.IGNORECASE).strip()
+            topic = re.sub(r'\b(the|my|files|docs|documents|file|doc)\b', '', topic, flags=re.IGNORECASE).strip()
+
+            return "search_documents", {
+                "query": topic or task,
+                "user_request": task,
+                "source_path": demo_root
+            }, demo_root_message
+
+        # Organize files
+        if any(kw in task_lower for kw in ["organize", "sort", "arrange"]):
+            return "organize_files", {
+                "folder_path": demo_root or user_specified_path,
+                "organization_type": "type"
+            }, demo_root_message
+
+        # Create ZIP
+        if any(kw in task_lower for kw in ["zip", "compress", "archive"]):
+            return "create_zip_archive", {
+                "source_path": demo_root or user_specified_path,
+                "archive_name": "archive.zip"
+            }, demo_root_message
+
+        # Screenshot
+        if any(kw in task_lower for kw in ["screenshot", "capture", "snap"]):
+            screenshot_dir = get_screenshot_dir(self.config)
+            return "take_screenshot", {
+                "save_path": str(screenshot_dir)
+            }, None
+
+        # List documents (directory listing)
+        simple_list_keywords = ["list", "show", "browse"]
+        if (any(kw in task_lower for kw in simple_list_keywords) and
+            not any(kw in task_lower for kw in ["show all", "list all", "pull up all", "find all"]) and
+            not (task_lower.startswith("all ") and "files" in task_lower)) or not task_lower:
+            # Extract filter from task (e.g., "list guitar" -> filter="guitar")
+            import re
+            filter_text = task.strip()
+            if filter_text:
+                # Remove the listing keyword
+                for kw in simple_list_keywords:
+                    filter_text = re.sub(r'\b' + re.escape(kw) + r'\b', '', filter_text, flags=re.IGNORECASE).strip()
+                # Remove common words but preserve folder= syntax
+                filter_text = re.sub(r'\b(files|file|docs|documents|doc)\b', '', filter_text, flags=re.IGNORECASE).strip()
+                # Don't remove "folder" if it's part of "folder=" syntax
+
+            return "list_documents", {
+                "filter": filter_text or None,
+                "folder_path": None  # None for general listing to show all indexed documents
+            }, None  # Don't show demo message for general listing
+
+        # List/show all files matching query
+        listing_keywords = ["show all", "list all", "pull up all", "find all"]
+        if any(kw in task_lower for kw in listing_keywords) or \
+           (task_lower.startswith("all ") and "files" in task_lower):
+            # Extract query by removing listing keywords
+            import re
+            listing_pattern = r'\b(show all|list all|pull up all|find all|all)\b'
+            query = re.sub(listing_pattern, '', task, flags=re.IGNORECASE).strip()
+            query = re.sub(r'\b(files|file|docs|documents|doc)\b', '', query, flags=re.IGNORECASE).strip()
+            
+            return "list_related_documents", {
+                "query": query or task,
+                "max_results": 10
+            }, demo_root_message
+
+        # Default: search documents
+        return "search_documents", {
+            "query": task,
+            "user_request": task,
+            "source_path": demo_root
+        }, demo_root_message
+
+    def _route_folder_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /folder commands to appropriate tools.
+
+        Args:
+            task: User task string
+
+        Returns:
+            Tuple of (tool_name, parameters, demo_root_message)
+            demo_root_message is None if user specified a path, otherwise contains the demo root path message
+        """
+        task_lower = task.lower().strip()
+        demo_root = get_demo_documents_root(self.config)
+        user_specified_path = self._extract_folder_path(task)
+        folder_path = user_specified_path or demo_root
+        demo_root_message = None
+        
+        # If no path specified and demo root exists, use it and prepare message
+        if not user_specified_path and demo_root:
+            demo_root_message = f"Working in {demo_root}..."
+
+        # List files
+        if any(kw in task_lower for kw in ["list", "show", "display"]) or not task_lower:
+            return "folder_list", {"folder_path": folder_path}, demo_root_message
+
+        # Organize files
+        if any(kw in task_lower for kw in ["organize", "sort", "arrange"]):
+            return "folder_organize_by_type", {"folder_path": folder_path, "dry_run": True}, demo_root_message
+
+        # Rename/normalize
+        if any(kw in task_lower for kw in ["rename", "normalize", "alpha"]):
+            return "folder_normalize_names", {"folder_path": folder_path, "dry_run": True}, demo_root_message
+
+        # Default: list
+        return "folder_list", {"folder_path": folder_path}, demo_root_message
+
+    def _route_google_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /google or /search commands to google_search tool.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Extract query - remove command-like prefixes
+        query = task.strip()
+        query = re.sub(r'^(search|find|lookup|query)\s+', '', query, flags=re.IGNORECASE)
+        
+        # Extract number of results if specified
+        num_results = _extract_count(task, default=5)
+        
+        return "google_search", {
+            "query": query,
+            "num_results": num_results
+        }, None
+
+    def _route_browser_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /browse commands to browser tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Check for URL patterns
+        url_pattern = re.compile(r'https?://[^\s]+|www\.[^\s]+|[a-z0-9-]+\.[a-z]{2,}/[^\s]*')
+        url_match = url_pattern.search(task)
+        
+        if url_match:
+            url = url_match.group(0)
+            # Normalize URL
+            if not url.startswith('http'):
+                url = 'https://' + url
+            
+            # Check for screenshot request
+            if any(kw in task_lower for kw in ["screenshot", "capture", "snap"]):
+                return "take_web_screenshot", {
+                    "url": url,
+                    "full_page": "full" in task_lower or "entire" in task_lower
+                }, None
+            
+            # Check for extract content
+            if any(kw in task_lower for kw in ["extract", "get content", "read", "content"]):
+                return "extract_page_content", {
+                    "url": url
+                }, None
+            
+            # Default: navigate to URL
+            return "navigate_to_url", {
+                "url": url
+            }, None
+        
+        # Check for search request
+        if any(kw in task_lower for kw in ["search", "find", "lookup"]):
+            query = re.sub(r'^(search|find|lookup)\s+', '', task, flags=re.IGNORECASE).strip()
+            return "google_search", {
+                "query": query,
+                "num_results": _extract_count(task, default=5)
+            }, None
+        
+        # Check for close browser
+        if any(kw in task_lower for kw in ["close", "quit", "exit"]):
+            return "close_browser", {}, None
+        
+        # Default: treat as search query
+        return "google_search", {
+            "query": task,
+            "num_results": 5
+        }, None
+
+    def _route_present_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /present commands to presentation tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Extract title and content from task
+        # Pattern: "Create a Keynote about X" or "Make a presentation with Y"
+        title_match = re.search(r'(?:about|on|for|titled?)\s+([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
+        title = title_match.group(1).strip() if title_match else "Presentation"
+        
+        # Note: Pages is disabled, always use Keynote
+        # Check for Pages document requests and redirect to Keynote
+        if any(kw in task_lower for kw in ["pages", "document", "doc"]):
+            # Extract content description
+            content_desc = re.sub(r'^(create|make|generate)\s+(?:a\s+)?pages?\s+(?:document|doc)?\s*', '', task_lower, flags=re.IGNORECASE)
+            content_desc = re.sub(r'\s+with\s+.+$', '', content_desc).strip()
+            
+            return "create_keynote", {
+                "title": title,
+                "content": content_desc or task
+            }, None
+        
+        # Check for Keynote/slides
+        if any(kw in task_lower for kw in ["keynote", "slides", "presentation", "deck"]):
+            # Extract content description
+            content_desc = re.sub(r'^(create|make|generate)\s+(?:a\s+)?(?:keynote|slides?|presentation|deck)?\s*', '', task_lower, flags=re.IGNORECASE)
+            content_desc = re.sub(r'\s+about\s+.+$', '', content_desc).strip()
+            
+            # Check if we need slide deck content first
+            if len(content_desc) > 200 or any(kw in task_lower for kw in ["detailed", "comprehensive", "multiple"]):
+                # Use create_slide_deck_content first, then create_keynote
+                # For now, route to create_keynote with content
+                return "create_keynote", {
+                    "title": title,
+                    "content": content_desc or task
+                }, None
+            
+            return "create_keynote", {
+                "title": title,
+                "content": content_desc or task
+            }, None
+        
+        # Default: Keynote
+        return "create_keynote", {
+            "title": title,
+            "content": task
+        }, None
+
+    def _route_email_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Route /email commands to email tools.
+
+        Simple queries (single tool, clear parameters) use deterministic routing for performance.
+        Complex queries (summarization, multi-step workflows) delegate to orchestrator for LLM planning.
+
+        Args:
+            task: User task string
+
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+            Returns (None, {}, None) for complex queries that need LLM planning via orchestrator
+        """
+        task_lower = task.lower().strip()
+
+        # COMPLEX QUERIES: Delegate to orchestrator for LLM-driven planning
+        # These require multi-step workflows (read + summarize) that benefit from LLM planning
+
+        # Summarization queries - require reading emails first, then summarizing
+        if any(kw in task_lower for kw in ["summarize", "summary", "summarise"]):
+            logger.info(f"[SLASH COMMAND] Email summarization query detected, delegating to orchestrator: {task}")
+
+            # Extract intent hints for the planner
+            intent_hints = {
+                "action": "summarize",
+                "workflow": "email_summarization"
+            }
+
+            # Extract count (e.g., "last 3 emails", "5 emails")
+            count = _extract_count(task, default=None)
+            if count:
+                intent_hints["count"] = count
+                logger.info(f"[SLASH COMMAND] Extracted count hint: {count}")
+
+            # Extract sender (e.g., "from john@example.com", "by John Doe")
+            sender_match = re.search(r'(?:from|by|sent by)\s+([^\s]+@[^\s]+|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', task)
+            if sender_match:
+                sender = sender_match.group(1).strip()
+                intent_hints["sender"] = sender
+                logger.info(f"[SLASH COMMAND] Extracted sender hint: {sender}")
+
+            # Extract time window (e.g., "last hour", "past 2 hours")
+            time_window = _extract_time_window(task)
+            if time_window:
+                intent_hints["time_window"] = time_window
+                logger.info(f"[SLASH COMMAND] Extracted time window hint: {time_window}")
+
+            # Extract focus keywords (e.g., "action items", "deadlines")
+            focus_keywords = ["action items", "deadlines", "important", "urgent", "key decisions", "updates"]
+            for keyword in focus_keywords:
+                if keyword in task_lower:
+                    intent_hints["focus"] = keyword
+                    logger.info(f"[SLASH COMMAND] Extracted focus hint: {keyword}")
+                    break
+
+            logger.info(f"[SLASH COMMAND] [EMAIL WORKFLOW] Intent hints extracted: {intent_hints}")
+
+            # Return None to trigger orchestrator routing, which will use LLM to plan:
+            # 1. Read emails (read_latest_emails, read_emails_by_sender, or read_emails_by_time)
+            # 2. Summarize emails (summarize_emails)
+            # The hints dictionary will be accessible to the planner as parsed["intent_hints"]
+            return None, {"intent_hints": intent_hints}, None
+        
+        # Reply queries - complex, need to find original email first
+        if any(kw in task_lower for kw in ["reply", "respond"]):
+            logger.info(f"[SLASH COMMAND] Email reply query detected, delegating to orchestrator: {task}")
+            # Return None to let LLM handle finding the original email and composing reply
+            return None, {}, None
+        
+        # SIMPLE QUERIES: Deterministic routing for performance
+        
+        # Read latest emails (simple, single tool)
+        if any(kw in task_lower for kw in ["read", "show", "get", "latest", "recent"]) and "summarize" not in task_lower:
+            count = _extract_count(task, default=10)
+            return "read_latest_emails", {
+                "count": min(count, 50),  # Cap at 50
+                "mailbox": "INBOX"
+            }, None
+        
+        # Read by sender (simple, single tool, but only if not summarizing)
+        sender_match = re.search(r'(?:from|by)\s+([^\s]+@[^\s]+|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', task_lower)
+        if sender_match and "summarize" not in task_lower:
+            sender = sender_match.group(1).strip()
+            count = _extract_count(task, default=10)
+            return "read_emails_by_sender", {
+                "sender": sender,
+                "count": min(count, 50)
+            }, None
+        
+        # Read by time (simple, single tool, but only if not summarizing)
+        time_window = _extract_time_window(task)
+        if (time_window or any(kw in task_lower for kw in ["hour", "minute", "past", "last"])) and "summarize" not in task_lower:
+            if time_window:
+                return "read_emails_by_time", {
+                    **time_window,
+                    "mailbox": "INBOX"
+                }, None
+            else:
+                # If time keywords present but no number extracted, delegate to orchestrator for LLM reasoning
+                # This avoids hardcoding a default value
+                logger.info(f"[SLASH COMMAND] Time keywords detected but no number found, delegating to orchestrator: {task}")
+                return None, {}, None
+        
+        # Compose/draft email (simple, single tool if parameters are clear)
+        if any(kw in task_lower for kw in ["compose", "draft", "write", "create", "send"]):
+            # Extract recipient, subject, body
+            recipient_match = re.search(r'(?:to|for)\s+([^\s]+@[^\s]+)', task_lower)
+            recipient = recipient_match.group(1) if recipient_match else None
+            
+            subject_match = re.search(r'(?:subject|about|regarding)\s+["\']?([^"\']+)["\']?', task_lower)
+            subject = subject_match.group(1) if subject_match else "Email"
+            
+            body_match = re.search(r'(?:body|message|content|saying)\s+["\'](.+)["\']', task_lower)
+            body = body_match.group(1) if body_match else task
+            
+            send = "send" in task_lower and "draft" not in task_lower
+            
+            return "compose_email", {
+                "subject": subject,
+                "body": body,
+                "recipient": recipient,
+                "send": send
+            }, None
+        
+        # Default: read latest (simple fallback)
+        return "read_latest_emails", {
+            "count": 10,
+            "mailbox": "INBOX"
+        }, None
+
+    def _route_write_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /write commands to writing tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Meeting notes
+        if any(kw in task_lower for kw in ["meeting", "notes", "minutes", "transcript"]):
+            title_match = re.search(r'(?:for|about|titled?)\s+([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
+            title = title_match.group(1).strip() if title_match else "Meeting Notes"
+            
+            return "create_meeting_notes", {
+                "content": task,
+                "meeting_title": title,
+                "include_action_items": True
+            }, None
+        
+        # Report
+        if any(kw in task_lower for kw in ["report", "detailed", "comprehensive", "analysis"]):
+            title_match = re.search(r'(?:report|analysis|on|about)\s+([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
+            title = title_match.group(1).strip() if title_match else "Report"
+            
+            # Determine report style
+            style = "business"
+            if "academic" in task_lower or "research" in task_lower:
+                style = "academic"
+            elif "technical" in task_lower or "spec" in task_lower:
+                style = "technical"
+            elif "executive" in task_lower or "summary" in task_lower:
+                style = "executive"
+            
+            return "create_detailed_report", {
+                "content": task,
+                "title": title,
+                "report_style": style
+            }, None
+        
+        # Slide deck content
+        if any(kw in task_lower for kw in ["slides", "presentation", "deck", "keynote"]):
+            title_match = re.search(r'(?:slides?|presentation|deck|keynote)\s+(?:about|on|for)?\s*([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
+            title = title_match.group(1).strip() if title_match else "Presentation"
+            
+            num_slides_match = re.search(r'(\d+)\s+slides?', task_lower)
+            num_slides = int(num_slides_match.group(1)) if num_slides_match else None
+            
+            return "create_slide_deck_content", {
+                "content": task,
+                "title": title,
+                "num_slides": num_slides
+            }, None
+        
+        # Synthesize content (default)
+        title_match = re.search(r'(?:about|on|for|titled?)\s+([^,]+?)(?:\s+with|\s+containing|$)', task_lower)
+        title = title_match.group(1).strip() if title_match else "Content"
+        
+        return "synthesize_content", {
+            "source_contents": [task],
+            "topic": title,
+            "synthesis_style": "comprehensive"
+        }, None
+
+    def _route_maps_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /maps commands to maps tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Extract origin and destination
+        # Pattern: "from X to Y" or "X to Y"
+        origin_dest_match = re.search(r'(?:from|between)\s+([^,]+?)\s+to\s+([^,]+)', task_lower)
+        if not origin_dest_match:
+            origin_dest_match = re.search(r'^([^,]+?)\s+to\s+([^,]+)', task_lower)
+        
+        if origin_dest_match:
+            origin = origin_dest_match.group(1).strip()
+            destination = origin_dest_match.group(2).strip()
+            
+            # Extract stops
+            fuel_stops_match = re.search(r'(\d+)\s*(?:fuel|gas|gasoline)\s*stops?', task_lower)
+            num_fuel_stops = int(fuel_stops_match.group(1)) if fuel_stops_match else 0
+            
+            food_stops_match = re.search(r'(\d+)\s*(?:food|meal|lunch|dinner|breakfast|restaurant)\s*stops?', task_lower)
+            num_food_stops = int(food_stops_match.group(1)) if food_stops_match else 0
+            
+            # Extract departure time
+            time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM))|(\d{1,2}\s*(?:am|pm|AM|PM))', task_lower)
+            departure_time = time_match.group(0) if time_match else None
+            
+            # Check for Google Maps preference
+            use_google_maps = "google" in task_lower and "maps" in task_lower
+            
+            return "plan_trip_with_stops", {
+                "origin": origin,
+                "destination": destination,
+                "num_fuel_stops": num_fuel_stops,
+                "num_food_stops": num_food_stops,
+                "departure_time": departure_time,
+                "use_google_maps": use_google_maps,
+                "open_maps": True
+            }, None
+        
+        # Simple route opening
+        if "open" in task_lower or "show" in task_lower:
+            # Try to extract origin/destination from simpler patterns
+            simple_match = re.search(r'([^,]+?)\s+to\s+([^,]+)', task_lower)
+            if simple_match:
+                return "open_maps_with_route", {
+                    "origin": simple_match.group(1).strip(),
+                    "destination": simple_match.group(2).strip(),
+                    "start_navigation": "start" in task_lower or "navigate" in task_lower
+                }, None
+        
+        # If we can't parse, return None to use orchestrator
+        return None, {}, None
+
+    def _route_stock_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /stock commands to stock tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Extract ticker
+        ticker = _extract_ticker(task)
+        if not ticker:
+            # Try to find company name and convert to ticker
+            # This is complex, so for now return None to use orchestrator
+            return None, {}, None
+        
+        # Check for chart request
+        if any(kw in task_lower for kw in ["chart", "graph", "history", "performance", "trend"]):
+            # Extract period
+            period = "1mo"  # default
+            if "day" in task_lower or "today" in task_lower:
+                period = "1d"
+            elif "week" in task_lower:
+                period = "5d"
+            elif "month" in task_lower:
+                period = "1mo"
+            elif "year" in task_lower:
+                period = "1y"
+            
+            # For charts, we'd need get_stock_chart - if not available, use get_stock_price
+            # Check if tool exists by trying to route to it
+            return "get_stock_price", {
+                "symbol": ticker
+            }, None
+        
+        # Default: get stock price
+        return "get_stock_price", {
+            "symbol": ticker
+        }, None
+
+    def _route_messaging_command(self, task: str, platform: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route messaging commands (imessage/whatsapp/discord/reddit/twitter/bluesky).
+        
+        Args:
+            task: User task string
+            platform: Platform name (imessage, whatsapp, discord, reddit, twitter, bluesky)
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        task_lower = task.lower().strip()
+        
+        # Bluesky already has its own routing, but handle post case here too
+        if platform == "bluesky":
+            # Check for post/say verbs
+            if any(kw in task_lower for kw in ["post", "say", "tweet", "publish", "send"]):
+                message = _strip_command_verbs(task, ["post", "say", "tweet", "publish", "send"])
+                quoted = _extract_quoted_text(message)
+                if quoted:
+                    message = quoted
+                return "post_bluesky_update", {
+                    "message": message or task
+                }, None
+        
+        # For other platforms, detect read vs send
+        # Read operations
+        if any(kw in task_lower for kw in ["read", "show", "get", "list", "summarize"]):
+            # Platform-specific read tools would go here
+            # For now, return None to use orchestrator
+            return None, {}, None
+        
+        # Send operations
+        if any(kw in task_lower for kw in ["send", "post", "message", "text"]):
+            # Extract recipient and message
+            recipient_match = re.search(r'(?:to|for)\s+([^\s]+)', task_lower)
+            recipient = recipient_match.group(1) if recipient_match else None
+            
+            message = _strip_command_verbs(task, ["send", "post", "message", "text"])
+            message = re.sub(r'^(?:to|for)\s+[^\s]+\s+', '', message, flags=re.IGNORECASE).strip()
+            quoted = _extract_quoted_text(message)
+            if quoted:
+                message = quoted
+            
+            # Platform-specific send tools
+            if platform == "imessage":
+                return "send_imessage", {
+                    "message": message or task,
+                    "recipient": recipient
+                }, None
+        
+        # Default: return None to use orchestrator
+        return None, {}, None
+
+    def _route_report_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /report commands to report tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg) or (None, {}, None) to use orchestrator
+        """
+        task_lower = task.lower()
+        
+        # Detect local file requests - keywords: "files", "my [topic] files", "local files"
+        # Pattern: "my [topic] files" or "all my [topic] files" or "[topic] files"
+        local_files_pattern = r'(?:all\s+)?(?:my\s+)?([^,]+?)\s+files'
+        if re.search(local_files_pattern, task_lower) or 'local files' in task_lower:
+            # Route to orchestrator - it will plan: create_local_document_report → compose_email
+            logger.info(f"[SLASH COMMAND] Detected local files request, routing to orchestrator: {task}")
+            return None, {}, None
+        
+        # Detect stock report requests without "files" keyword
+        # Pattern: "stock report", "report on [company] stock", etc.
+        if 'stock' in task_lower and 'files' not in task_lower:
+            # Could route to create_stock_report, but let orchestrator handle it for flexibility
+            # (orchestrator can plan create_stock_report → compose_email if needed)
+            logger.info(f"[SLASH COMMAND] Detected stock report request, routing to orchestrator: {task}")
+            return None, {}, None
+        
+        # For simple content-based reports, use create_detailed_report
+        # Extract topic/title - remove action words and email-related phrases
+        # Pattern: extract topic after "report on/about" but before "and email", "files", etc.
+        title_match = re.search(
+            r'(?:report|on|about)\s+([^,]+?)(?:\s+(?:and|with|containing|files|email)|$)',
+            task_lower
+        )
+        if title_match:
+            title = title_match.group(1).strip()
+            # Clean up title - remove common action words
+            title = re.sub(r'^(all|my|the|a|an)\s+', '', title)
+            title = title.strip()
+        else:
+            title = "Report"
+        
+        return "create_detailed_report", {
+            "content": task,
+            "title": title,
+            "report_style": "business"
+        }, None
+
+    def _route_notify_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Deterministically route /notify commands to notification tools.
+        
+        Args:
+            task: User task string
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+        """
+        # Extract title and message
+        # Pattern: "Task complete: Stock report is ready"
+        colon_match = re.search(r'^([^:]+):\s*(.+)$', task)
+        if colon_match:
+            title = colon_match.group(1).strip()
+            message = colon_match.group(2).strip()
+        else:
+            # Try "alert X" or "notification X"
+            alert_match = re.search(r'^(?:alert|notification)\s+(.+)$', task, flags=re.IGNORECASE)
+            if alert_match:
+                title = "Notification"
+                message = alert_match.group(1).strip()
+            else:
+                title = "Notification"
+                message = task
+        
+        # Extract sound
+        sound_match = re.search(r'sound\s+(\w+)', task.lower())
+        sound = sound_match.group(1).capitalize() if sound_match else None
+        
+        # Extract subtitle
+        subtitle_match = re.search(r'subtitle[:\s]+([^,]+)', task.lower())
+        subtitle = subtitle_match.group(1).strip() if subtitle_match else None
+        
+        return "send_notification", {
+            "title": title,
+            "message": message,
+            "sound": sound,
+            "subtitle": subtitle
+        }, None
+
+    def _route_spotify_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """
+        Route /spotify or /music commands to Spotify tools.
+
+        Routing Logic (Priority Order):
+        1. Pause/Stop → pause_music (exact match: "pause", "stop")
+        2. Skip Forward → next_track (phrases like "skip", "skip this", "next song")
+        3. Skip Back → previous_track (phrases like "previous", "back one track", "rewind", "restart song")
+        4. Status → get_spotify_status (questions like "what's playing?", "status", "what song is this?")
+        5. Album/Artist Play → play_album/play_artist (contains "album"/"artist" keyword)
+        6. Song Play → play_song (contains play/start/resume + a title or descriptive text)
+        7. Simple Play → play_music (just "play"/"start"/"resume" without extra context)
+        8. Default → play_music
+
+        Content Extraction:
+        - Album commands: Extract text after "album" keyword
+        - Artist commands: Extract text after "artist" keyword
+        - Song commands: Remove natural language prefixes ("that song called", "queue up", "put on", etc.)
+        - Synonyms like "queue up", "spin up", "put on" are normalized to "play" before parsing
+
+        Examples:
+        - "/spotify pause" → ("pause_music", {}, None)
+        - "/spotify skip" → ("next_track", {}, None)
+        - "/spotify back one track" → ("previous_track", {}, None)
+        - "/spotify play album Abbey Road" → ("play_album", {"album_name": "Abbey Road"}, None)
+        - "/spotify play artist The Beatles" → ("play_artist", {"artist_name": "The Beatles"}, None)
+        - "/spotify play Viva la Vida" → ("play_song", {"song_name": "Viva la Vida"}, None)
+        - "/spotify queue up that song where mj moonwalks" → ("play_song", {"song_name": "that song where mj moonwalks"}, None)
+        - "/spotify status" → ("get_spotify_status", {}, None)
+        - "/spotify what's playing" → ("get_spotify_status", {}, None)
+        
+        Args:
+            task: User task string (e.g., "play Viva la Vida", "skip", "status")
+            
+        Returns:
+            Tuple of (tool_name, parameters, status_msg)
+            - tool_name: "play_music" | "pause_music" | "next_track" | "previous_track" | "get_spotify_status" | "play_song" | "play_album" | "play_artist"
+            - parameters: Dict with tool-specific params (e.g., {"song_name": "..."} for play_song)
+            - status_msg: Optional status message (None for Spotify commands)
+        """
+        raw_lower = task.lower().strip()
+        raw_original = task.strip()
+
+        # Priority 1: Pause/stop (exact matches)
+        if re.match(r'^(pause|stop)$', raw_lower):
+            return "pause_music", {}, None
+
+        # Priority 2: Skip forward (next track)
+        next_patterns = [
+            r'^(next|skip|skip song|skip track|skip this|skip it|skip forward|skip ahead|next song|next track)$',
+            r'^(skip to next)( song| track)?$',
+            r'^(go to next)( song| track)?$',
+        ]
+        for pattern in next_patterns:
+            if re.match(pattern, raw_lower):
+                return "next_track", {}, None
+        if any(word in raw_lower for word in ["skip", "next"]) and any(token in raw_lower for token in ["song", "track"]):
+            if not any(exclusion in raw_lower for exclusion in ["previous", "prev", "back"]):
+                return "next_track", {}, None
+
+        # Priority 3: Skip backward (previous track / rewind / restart)
+        previous_patterns = [
+            r'^(previous|prev|back)$',
+            r'^(previous|prev|back)\s+(song|track)$',
+            r'^back one\s+(song|track)$',
+            r'^go back( one)?( song| track)?$',
+            r'^(rewind|rewind song|rewind track)$',
+            r'^(restart|restart song|restart track)$',
+        ]
+        for pattern in previous_patterns:
+            if re.match(pattern, raw_lower):
+                return "previous_track", {}, None
+        if any(word in raw_lower for word in ["previous", "prev", "back", "rewind", "restart"]) and any(token in raw_lower for token in ["song", "track"]):
+            return "previous_track", {}, None
+
+        # Normalize synonyms that imply "play"
+        replacements = [
+            ("queue up", "play"),
+            ("queue", "play"),
+            ("cue up", "play"),
+            ("put on", "play"),
+            ("spin up", "play"),
+            ("throw on", "play"),
+            ("start up", "play"),
+            ("fire up", "play"),
+            ("bump", "play"),
+            ("blast", "play"),
+            ("jam out to", "play"),
+            ("jam out", "play"),
+            ("jam to", "play"),
+            ("jam", "play"),
+        ]
+        normalized_lower = raw_lower
+        normalized_original = raw_original
+        for phrase, replacement in replacements:
+            pattern = re.compile(r'\b' + re.escape(phrase) + r'\b', re.IGNORECASE)
+            normalized_lower = pattern.sub(replacement, normalized_lower)
+            normalized_original = pattern.sub(replacement, normalized_original)
+
+        task_lower = re.sub(r"\s+", " ", normalized_lower).strip()
+        task_original = re.sub(r"\s+", " ", normalized_original).strip()
+
+        # Priority 4: Status / "what's playing?" queries
+        status_patterns = [
+            r"^(what|which|who)\s+(is|'s|are)\s+(playing|current)",
+            r"^(what|which|who)\s+(playing|current)",
+            r"^(what|which)\s+(song|track)\s+(is|'s)\s+(this|that|currently)",
+            r"^(what|which)\s+(song|track)\s+is\s+playing",
+            r"^status$",
+            r"^current\s+(track|song|playing)",
+            r"^now\s+playing",
+        ]
+        for pattern in status_patterns:
+            if re.match(pattern, task_lower):
+                return "get_spotify_status", {}, None
+
+        if "playing" in task_lower:
+            question_words = ["what", "which", "who", "current", "now"]
+            words_before_playing = task_lower.split("playing")[0].strip().split()
+            if words_before_playing:
+                last_words = words_before_playing[-2:] if len(words_before_playing) >= 2 else words_before_playing
+                if any(qw in last_words for qw in question_words):
+                    return "get_spotify_status", {}, None
+            if "what" in task_lower and "playing" in task_lower:
+                what_pos = task_lower.find("what")
+                playing_pos = task_lower.find("playing")
+                if what_pos < playing_pos:
+                    return "get_spotify_status", {}, None
+
+        # Priority 5: Album/artist play requests
+        play_keywords = ["play", "start", "resume", "continue"]
+        play_match = re.search(r'\b(' + '|'.join(play_keywords) + r')\b', task_lower)
+
+        if play_match:
+            play_pos = play_match.end()
+            after_play = task_original[play_pos:].strip()
+
+            album_match = re.search(r'\balbum\b', after_play, re.IGNORECASE)
+            if album_match:
+                album_pos = album_match.end()
+                album_name = after_play[album_pos:].strip()
+                if album_name:
+                    return "play_album", {"album_name": album_name}, None
+
+            artist_match = re.search(r'\bartist\b', after_play, re.IGNORECASE)
+            if artist_match:
+                artist_pos = artist_match.end()
+                artist_name = after_play[artist_pos:].strip()
+                if artist_name:
+                    return "play_artist", {"artist_name": artist_name}, None
+
+        # Priority 6: Song play requests
+        if play_match:
+            play_pos = play_match.end()
+            after_play = task_original[play_pos:].strip()
+
+            natural_lang_patterns = [
+                r"^that\s+song\s+called\s+",
+                r"^the\s+song\s+called\s+",
+                r"^the\s+song\s+",
+                r"^song\s+",
+                r"^track\s+",
+                r"^play\s+me\s+",
+                r"^play\s+us\s+",
+            ]
+            for pattern in natural_lang_patterns:
+                after_play = re.sub(pattern, "", after_play, flags=re.IGNORECASE).strip()
+
+            if after_play and len(after_play) > 2:
+                return "play_song", {"song_name": after_play}, None
+
+        # Priority 7: Simple play
+        if play_match:
+            return "play_music", {}, None
+
+        # Priority 8: Default fallback
+        return "play_music", {}, None
+
     def _get_llm_response_for_blocked_search(self, query: str, agent) -> str:
         """
-        Get LLM response when Google search is blocked.
-        
-        Uses LLM knowledge to provide helpful information about the query.
-        
+        Get an LLM response when DuckDuckGo search is unavailable.
+
+        Uses general knowledge to provide helpful information about the query.
+
         Args:
             query: The search query
             agent: Agent instance (to get config for API key)
-            
+
         Returns:
             Response string from LLM
         """
         try:
             from langchain_openai import ChatOpenAI
             from langchain_core.messages import SystemMessage, HumanMessage
-            
-            # Get API key
+            from ...utils import get_temperature_for_model
+
+            # Get API key and config
             api_key = None
+            config = {}
             if hasattr(agent, 'config'):
-                api_key = agent.config.get("openai", {}).get("api_key")
+                config = agent.config
+                api_key = config.get("openai", {}).get("api_key")
             if not api_key:
                 import os
                 api_key = os.getenv("OPENAI_API_KEY")
-            
+
             if not api_key:
                 return f"I searched Google for '{query}', but Google appears to be blocking automated requests. Please try using /browse for browser-based search or visit Google Trends: https://trends.google.com"
-            
-            llm = ChatOpenAI(model="gpt-4o", temperature=0.7, api_key=api_key)
+
+            model = config.get("openai", {}).get("model", "gpt-4o")
+            temperature = get_temperature_for_model(config, default_temperature=0.7) if config else 0.7
+            # Override for o-series models
+            if model.startswith(("o1", "o3", "o4")):
+                temperature = 1.0
+
+            llm = ChatOpenAI(model=model, temperature=temperature, api_key=api_key)
             
             # Create prompt for LLM to provide information
             prompt = f"""The user asked: "{query}"
 
-Google search is currently blocked/not returning results. Based on your knowledge, please provide helpful information about this topic. 
+DuckDuckGo search is currently blocked/not returning results. Based on your knowledge, please provide helpful information about this topic. 
 
 If the query is about trending topics or current events, provide general information about what's typically trending, or explain that real-time trending data requires access to Google Trends or other live sources.
 
@@ -1284,11 +3363,14 @@ Be helpful and informative, but note that this is based on general knowledge rat
             
         except Exception as e:
             logger.warning(f"[SLASH COMMAND] Failed to get LLM response for blocked search: {e}")
-            return f"I searched Google for '{query}', but Google appears to be blocking automated requests. Please try using /browse for browser-based search or visit Google Trends: https://trends.google.com"
+            return (
+                f"I attempted a DuckDuckGo search for '{query}', but automated access appears to be blocked. "
+                "Please try using /browse for browser-based search or visit https://duckduckgo.com directly."
+            )
 
     def _summarize_google_results(self, search_results: List[Dict], query: str, agent) -> Optional[str]:
         """
-        Summarize Google search results using LLM.
+        Summarize DuckDuckGo search results using LLM.
         
         Args:
             search_results: List of search result dictionaries
@@ -1301,20 +3383,29 @@ Be helpful and informative, but note that this is based on general knowledge rat
         try:
             from langchain_openai import ChatOpenAI
             from langchain_core.messages import SystemMessage, HumanMessage
-            
-            # Get API key
+            from ...utils import get_temperature_for_model
+
+            # Get API key and config
             api_key = None
+            config = {}
             if hasattr(agent, 'config'):
-                api_key = agent.config.get("openai", {}).get("api_key")
+                config = agent.config
+                api_key = config.get("openai", {}).get("api_key")
             if not api_key:
                 import os
                 api_key = os.getenv("OPENAI_API_KEY")
-            
+
             if not api_key:
                 logger.warning("[SLASH COMMAND] No OpenAI API key found for summarization")
                 return None
-            
-            llm = ChatOpenAI(model="gpt-4o", temperature=0.0, api_key=api_key)
+
+            model = config.get("openai", {}).get("model", "gpt-4o")
+            temperature = get_temperature_for_model(config, default_temperature=0.0) if config else 0.0
+            # Override for o-series models
+            if model.startswith(("o1", "o3", "o4")):
+                temperature = 1.0
+
+            llm = ChatOpenAI(model=model, temperature=temperature, api_key=api_key)
             
             # Format results for LLM
             results_text = "\n\n".join([
@@ -1325,7 +3416,7 @@ Be helpful and informative, but note that this is based on general knowledge rat
             ])
             
             # Create summarization prompt
-            summary_prompt = f"""Based on the following Google search results for "{query}", provide a concise summary of what's trending or what the key information is.
+            summary_prompt = f"""Based on the following DuckDuckGo search results for "{query}", provide a concise summary of what's trending or what the key information is.
 
 Search Results:
 {results_text}
@@ -1371,14 +3462,25 @@ Please provide a clear, concise summary that answers the user's query. Focus on 
         tool_names = [tool.name for tool in tools]
 
         # Use LLM to determine which tool and parameters
-        # Get API key from agent's config if available
+        # Get API key and config from agent if available
+        from src.utils import get_temperature_for_model
+
         api_key = None
+        config = {}
         if hasattr(agent, 'config'):
-            api_key = agent.config.get("openai", {}).get("api_key")
+            config = agent.config
+            api_key = config.get("openai", {}).get("api_key")
         if not api_key:
             import os
             api_key = os.getenv("OPENAI_API_KEY")
-        llm = ChatOpenAI(model="gpt-4o", temperature=0.0, api_key=api_key)
+
+        model = config.get("openai", {}).get("model", "gpt-4o") if config else "gpt-4o"
+        temperature = get_temperature_for_model(config, default_temperature=0.0) if config else 0.0
+        # Override for o-series models
+        if model.startswith(("o1", "o3", "o4")):
+            temperature = 1.0
+
+        llm = ChatOpenAI(model=model, temperature=temperature, api_key=api_key)
 
         tool_descriptions = []
         for tool in tools:
@@ -1461,7 +3563,7 @@ Use LLM reasoning to parse values from the task description."""
                         "num_results": 0,
                         "total_results": 0,
                         "search_type": result.get("search_type", "web"),
-                        "note": "Both Google search methods failed, but I've provided information based on your query."
+                        "note": "Both DuckDuckGo search attempts failed, but I've provided information based on your query."
                     }
 
             return result
@@ -1498,7 +3600,7 @@ Use LLM reasoning to parse values from the task description."""
                             "num_results": 0,
                             "total_results": 0,
                             "search_type": result.get("search_type", "web"),
-                            "note": "Google search was blocked, but I've provided information based on your query."
+                            "note": "DuckDuckGo search was blocked, but I've provided information based on your query."
                         }
                 
                 return result
@@ -1508,17 +3610,358 @@ Use LLM reasoning to parse values from the task description."""
                     "error_message": f"No tools available in {agent_name} agent"
                 }
 
+    def _execute_rag_pipeline(self, task: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Execute RAG pipeline for summarize/explain requests.
+
+        Now delegates to the ExplainPipeline service for better reusability and telemetry.
+
+        Args:
+            task: User task (e.g., "Summarize the Ed Sheeran files")
+            session_id: Optional session ID
+
+        Returns:
+            Result dictionary with synthesized summary and telemetry
+        """
+        return self.explain_pipeline.execute(task, session_id)
+
+    def _route_weather_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """Route /weather commands to appropriate weather agent tools."""
+        task_lower = task.lower().strip()
+
+        # Extract location (quoted or first capitalized words)
+        location = _extract_quoted_text(task)
+        if not location:
+            words = task.split()
+            cap_words = []
+            for word in words:
+                if word and word[0].isupper() and word.lower() not in ["today", "tomorrow", "week", "now", "current"]:
+                    cap_words.append(word)
+                elif cap_words:
+                    break
+            if cap_words:
+                location = " ".join(cap_words)
+
+        # Extract timeframe
+        timeframe = "today"
+        if "tomorrow" in task_lower:
+            timeframe = "tomorrow"
+        elif "week" in task_lower or "7 day" in task_lower or "7day" in task_lower:
+            timeframe = "week"
+        elif "3 day" in task_lower or "3day" in task_lower:
+            timeframe = "3day"
+        elif "now" in task_lower or "current" in task_lower:
+            timeframe = "now"
+
+        params = {"timeframe": timeframe}
+        if location:
+            params["location"] = location
+
+        return "get_weather_forecast", params, None
+
+    def _route_notes_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """Route /notes commands to appropriate notes agent tools."""
+        task_lower = task.lower().strip()
+
+        if any(keyword in task_lower for keyword in ["create", "new", "make"]):
+            title = _extract_quoted_text(task)
+            body_match = re.search(r'(?:with body|with|body)\s+["\']?(.+?)["\']?\s*$', task, re.IGNORECASE | re.DOTALL)
+            body = body_match.group(1).strip().strip('"\'') if body_match else ""
+            folder = "Notes"
+            folder_match = re.search(r'(?:in folder|folder|in)\s+["\']?([^"\']+)["\']?', task, re.IGNORECASE)
+            if folder_match:
+                folder = folder_match.group(1).strip()
+            if title and body:
+                return "create_note", {"title": title, "body": body, "folder": folder}, None
+
+        elif any(keyword in task_lower for keyword in ["append", "add to", "update"]):
+            note_title = _extract_quoted_text(task)
+            content_match = re.search(r'with\s+["\']?(.+?)["\']?\s*$', task, re.IGNORECASE | re.DOTALL)
+            content = content_match.group(1).strip().strip('"\'') if content_match else ""
+            if note_title and content:
+                return "append_note", {"note_title": note_title, "content": content}, None
+
+        elif any(keyword in task_lower for keyword in ["read", "get", "show", "retrieve"]):
+            note_title = _extract_quoted_text(task)
+            if note_title:
+                return "get_note", {"note_title": note_title}, None
+
+        return None, {}, None
+
+    def _route_reminders_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """Route /reminders commands to appropriate reminders agent tools."""
+        task_lower = task.lower().strip()
+
+        if "complete" in task_lower or "done" in task_lower:
+            reminder_title = _extract_quoted_text(task)
+            if reminder_title:
+                return "complete_reminder", {"reminder_title": reminder_title}, None
+
+        # create_reminder
+        title = _extract_quoted_text(task)
+        due_time = None
+        time_match = re.search(r'(?:at|tomorrow at|today at|in)\s+(.+?)(?:\s+in list|\s*$)', task, re.IGNORECASE)
+        if time_match:
+            due_time = time_match.group(1).strip()
+        elif "tomorrow" in task_lower:
+            due_time = "tomorrow"
+        elif "today" in task_lower:
+            due_time = "today"
+
+        if title:
+            params = {"title": title}
+            if due_time:
+                params["due_time"] = due_time
+            return "create_reminder", params, None
+
+        return None, {}, None
+
+    def _route_calendar_command(self, task: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """Route /calendar commands to appropriate calendar agent tools."""
+        task_lower = task.lower().strip()
+
+        # prepare_meeting_brief - keywords: "prep", "brief", "docs for"
+        if any(keyword in task_lower for keyword in ["prep", "brief", "docs for", "prepare"]):
+            # Extract event title
+            event_title = None
+            
+            # Try to extract from "prep for X" or "brief for X" or "docs for X"
+            for pattern in [
+                r'(?:prep|brief|prepare|docs for)\s+(?:for\s+)?["\']?([^"\']+)["\']?',
+                r'(?:prep|brief|prepare|docs for)\s+(?:the\s+)?(.+?)(?:\s+meeting|\s*$)',
+            ]:
+                match = re.search(pattern, task, re.IGNORECASE)
+                if match:
+                    event_title = match.group(1).strip().strip('"\'')
+                    break
+            
+            # Fallback: extract quoted text or use remaining text
+            if not event_title:
+                event_title = _extract_quoted_text(task)
+                if not event_title:
+                    # Use text after keywords
+                    for keyword in ["prep", "brief", "prepare", "docs for"]:
+                        if keyword in task_lower:
+                            parts = task_lower.split(keyword, 1)
+                            if len(parts) > 1:
+                                event_title = parts[1].strip().strip('"\'')
+                                # Remove common trailing words
+                                event_title = re.sub(r'\s+(meeting|event|call)$', '', event_title, flags=re.IGNORECASE)
+                                break
+
+            if event_title:
+                # Check for save_to_note flag
+                save_to_note = any(keyword in task_lower for keyword in ["save", "note", "store"])
+                return "prepare_meeting_brief", {
+                    "event_title": event_title,
+                    "save_to_note": save_to_note
+                }, None
+
+        # list_calendar_events - keywords: "list", "upcoming", "events", "show"
+        elif any(keyword in task_lower for keyword in ["list", "upcoming", "events", "show", "what"]):
+            days_ahead = 7
+            # Try to extract number of days
+            days_match = re.search(r'(\d+)\s*(?:days?|weeks?)', task_lower)
+            if days_match:
+                days = int(days_match.group(1))
+                if "week" in days_match.group(0):
+                    days = days * 7
+                days_ahead = min(max(1, days), 30)
+            return "list_calendar_events", {"days_ahead": days_ahead}, None
+
+        # get_calendar_event_details - keywords: "details", "info", "about"
+        elif any(keyword in task_lower for keyword in ["details", "info", "about", "get"]):
+            event_title = _extract_quoted_text(task)
+            if not event_title:
+                # Extract from "details for X" or "info about X"
+                for pattern in [
+                    r'(?:details|info|about|get)\s+(?:for|about)\s+["\']?([^"\']+)["\']?',
+                    r'(?:details|info|about|get)\s+["\']?([^"\']+)["\']?',
+                ]:
+                    match = re.search(pattern, task, re.IGNORECASE)
+                    if match:
+                        event_title = match.group(1).strip().strip('"\'')
+                        break
+                if not event_title:
+                    # Use remaining text after keywords
+                    for keyword in ["details", "info", "about"]:
+                        if keyword in task_lower:
+                            parts = task_lower.split(keyword, 1)
+                            if len(parts) > 1:
+                                event_title = parts[1].strip().strip('"\'')
+                                break
+
+            if event_title:
+                return "get_calendar_event_details", {"event_title": event_title}, None
+
+        # Default: if no clear intent, return None to let agent handle it
+        return None, {}, None
+
+
+def parse_recurring_task_spec(task_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse a recurring task specification from natural language.
+
+    Args:
+        task_text: Task specification text
+
+    Returns:
+        Dictionary with parsed schedule and action info, or None if invalid
+
+    Examples:
+        "Create a weekly screen time report and email it every Friday"
+        "Generate a daily summary every day at 9am"
+        "Send me a weekly summary every Monday at 10am"
+    """
+    import re
+    from datetime import datetime
+
+    task_lower = task_text.lower()
+
+    # Extract action type
+    action_kind = None
+    if "screen time" in task_lower:
+        action_kind = "screen_time_report"
+    elif "summary" in task_lower or "report" in task_lower:
+        action_kind = "file_summary_report"
+    else:
+        # Default to general report
+        action_kind = "general_report"
+
+    # Extract schedule type and timing
+    schedule_type = None
+    weekday = None
+    time_str = "09:00"  # Default to 9am
+
+    # Weekly schedule
+    if "weekly" in task_lower or "every week" in task_lower:
+        schedule_type = "weekly"
+
+        # Extract day of week
+        weekday_map = {
+            "monday": 0, "mon": 0,
+            "tuesday": 1, "tue": 1, "tues": 1,
+            "wednesday": 2, "wed": 2,
+            "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+            "friday": 4, "fri": 4,
+            "saturday": 5, "sat": 5,
+            "sunday": 6, "sun": 6
+        }
+
+        for day_name, day_num in weekday_map.items():
+            if day_name in task_lower:
+                weekday = day_num
+                break
+
+        # Default to Friday if weekly but no day specified
+        if weekday is None:
+            weekday = 4  # Friday
+
+    # Daily schedule
+    elif "daily" in task_lower or "every day" in task_lower:
+        schedule_type = "daily"
+
+    else:
+        # Try to extract day of week for implicit weekly
+        weekday_map = {
+            "monday": 0, "mon": 0,
+            "tuesday": 1, "tue": 1, "tues": 1,
+            "wednesday": 2, "wed": 2,
+            "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+            "friday": 4, "fri": 4,
+            "saturday": 5, "sat": 5,
+            "sunday": 6, "sun": 6
+        }
+
+        for day_name, day_num in weekday_map.items():
+            if day_name in task_lower:
+                schedule_type = "weekly"
+                weekday = day_num
+                break
+
+    if not schedule_type:
+        return None
+
+    # Extract time
+    time_patterns = [
+        r'at (\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)',  # "at 9am", "at 2:30pm"
+        r'(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)',     # "9am", "2:30pm"
+        r'at (\d{1,2}):(\d{2})',                     # "at 09:00", "at 14:30"
+    ]
+
+    for pattern in time_patterns:
+        match = re.search(pattern, task_lower)
+        if match:
+            hour = int(match.group(1))
+            minute = int(match.group(2)) if match.lastindex >= 2 and match.group(2) else 0
+            meridiem = match.group(3) if match.lastindex >= 3 else None
+
+            if meridiem:
+                if meridiem == "pm" and hour != 12:
+                    hour += 12
+                elif meridiem == "am" and hour == 12:
+                    hour = 0
+
+            time_str = f"{hour:02d}:{minute:02d}"
+            break
+
+    # Extract delivery mode
+    delivery_mode = None
+    send = False
+
+    if "email" in task_lower or "send" in task_lower:
+        delivery_mode = "email"
+        send = True
+
+    # Create friendly name
+    if action_kind == "screen_time_report":
+        name = f"Weekly Screen Time Report"
+    else:
+        name = f"Scheduled {schedule_type.capitalize()} Report"
+
+    return {
+        "name": name,
+        "schedule": {
+            "type": schedule_type,
+            "weekday": weekday,
+            "time": time_str,
+            "tz": "America/Los_Angeles"  # TODO: Use user's timezone from config
+        },
+        "action": {
+            "kind": action_kind,
+            "delivery": {
+                "mode": delivery_mode,
+                "send": send,
+                "recipient": "default"
+            }
+        }
+    }
+
 
 # Convenience function
-def create_slash_command_handler(agent_registry, session_manager=None):
+def create_slash_command_handler(
+    agent_registry,
+    session_manager=None,
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    slack_metadata_service: Optional[SlackMetadataService] = None,
+    git_metadata_service: Optional[GitMetadataService] = None,
+):
     """
     Create a slash command handler.
 
     Args:
         agent_registry: AgentRegistry instance
         session_manager: Optional SessionManager for /clear command
+        config: Configuration dictionary for demo constraints
 
     Returns:
         SlashCommandHandler instance
     """
-    return SlashCommandHandler(agent_registry, session_manager)
+    return SlashCommandHandler(
+        agent_registry,
+        session_manager,
+        config,
+        slack_metadata_service=slack_metadata_service,
+        git_metadata_service=git_metadata_service,
+    )

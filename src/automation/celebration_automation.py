@@ -5,6 +5,7 @@ Celebration Automation - Trigger celebratory confetti effects on macOS using App
 import subprocess
 import logging
 from typing import Dict, Any
+from ..utils.message_personality import get_confetti_message
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class CelebrationAutomation:
                 return {
                     "success": True,
                     "action": "confetti",
-                    "message": "Confetti celebration triggered! 🎉",
+                    "message": get_confetti_message(),
                     "status": "celebrated"
                 }
             else:

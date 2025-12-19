@@ -26,6 +26,14 @@ class ConfigManager:
         self.config_path = Path(config_path)
         # Use use_global_manager=False to avoid circular dependency during init
         self.config = _load_config(str(self.config_path), use_global_manager=False)
+        
+        # Validate performance config
+        try:
+            from .utils.config_validator import validate_config
+            self.config = validate_config(self.config)
+        except Exception as e:
+            logger.warning(f"[CONFIG MANAGER] Performance config validation failed: {e}")
+        
         self._verify_api_key()
         logger.info("[CONFIG MANAGER] ConfigManager initialized")
     
@@ -105,6 +113,10 @@ class ConfigManager:
         self._verify_api_key()
         logger.info("[CONFIG MANAGER] Config reloaded from file")
         return self.config
+
+    def get_config_path(self) -> Path:
+        """Return the path to the active config file."""
+        return self.config_path
     
     def update_components(self, agent_registry_ref=None, agent_ref=None, orchestrator_ref=None):
         """

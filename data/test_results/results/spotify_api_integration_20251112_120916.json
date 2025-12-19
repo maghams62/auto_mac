@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_uri_detection",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.000595749996136874
+  },
+  "timestamp": "2025-11-12T12:09:16.506668",
+  "test_name": "spotify_api_integration"
+}

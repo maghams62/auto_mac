@@ -1,0 +1,188 @@
+openapi: 3.0.3
+info:
+  title: Payments Service API
+  description: Core payment processing endpoints
+  version: "2.1.0"
+  x-component: "comp:payments"
+  x-service: "svc:payments"
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+
+paths:
+  /payments/charge:
+    post:
+      operationId: createCharge
+      summary: Create a new charge
+      description: |
+        Processes a payment charge against a customer's payment method.
+        Supports idempotency via the X-Idempotency-Key header.
+      x-component: "comp:payments"
+      tags:
+        - Payments
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: false
+          description: Unique key for idempotent requests
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - currency
+                - payment_method_id
+              properties:
+                amount:
+                  type: integer
+                  description: Amount in cents (v2.1 - changed from dollars)
+                  minimum: 1
+                  example: 2500
+                currency:
+                  type: string
+                  description: ISO 4217 currency code
+                  pattern: "^[A-Z]{3}$"
+                  example: "USD"
+                payment_method_id:
+                  type: string
+                  description: ID of the stored payment method
+                  example: "pm_1234567890"
+                description:
+                  type: string
+                  description: Optional charge description
+                  maxLength: 500
+                metadata:
+                  type: object
+                  description: Custom key-value metadata (v2.1 - new field)
+                  additionalProperties:
+                    type: string
+                capture:
+                  type: boolean
+                  description: Whether to capture immediately (v2.1 - new field)
+                  default: true
+      responses:
+        "200":
+          description: Charge created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Charge"
+        "400":
+          description: Invalid request parameters
+        "402":
+          description: Payment failed
+        "429":
+          description: Rate limit exceeded
+
+  /payments/refund:
+    post:
+      operationId: createRefund
+      summary: Create a refund
+      description: |
+        Refunds a previously successful charge. Partial refunds are supported.
+      x-component: "comp:payments"
+      tags:
+        - Payments
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          description: Required for refund idempotency
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - charge_id
+              properties:
+                charge_id:
+                  type: string
+                  description: ID of the charge to refund
+                  example: "ch_1234567890"
+                amount:
+                  type: integer
+                  description: Amount to refund in cents (partial refund if less than original)
+                  minimum: 1
+                reason:
+                  type: string
+                  enum:
+                    - duplicate
+                    - fraudulent
+                    - requested_by_customer
+                  description: Reason for the refund
+      responses:
+        "200":
+          description: Refund created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refund"
+        "400":
+          description: Invalid request
+        "404":
+          description: Charge not found
+
+components:
+  schemas:
+    Charge:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "ch_1234567890"
+        amount:
+          type: integer
+          description: Amount in cents
+        currency:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - succeeded
+            - failed
+            - captured
+        captured:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Refund:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "rf_1234567890"
+        charge_id:
+          type: string
+        amount:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - succeeded
+            - failed
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+

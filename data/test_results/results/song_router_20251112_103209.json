@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_route_with_context_history",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0013975830224808306
+  },
+  "timestamp": "2025-11-12T10:32:09.999803",
+  "test_name": "song_router"
+}

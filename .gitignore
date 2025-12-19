@@ -22,8 +22,7 @@ wheels/
 
 # Virtual Environment
 venv/
-ENV/
-env/
+
 
 # IDE
 .vscode/
@@ -34,15 +33,21 @@ env/
 
 # Environment variables
 .env
-.env.local
+.env.*
 
 # Data files
 data/embeddings/*.index
 data/embeddings/*.pkl
 data/logs/*.log
+data/logs/slash/
 data/screenshots/*.png
 data/presentations/*.key
 data/reports/*.html
+qdrant_storage/
+data/branch_watcher_state.json
+data/trajectories/
+data/vector_index/
+slack_events.json
 
 # Keep directory structure but ignore contents
 !data/embeddings/.gitkeep
@@ -65,3 +70,30 @@ _archive/
 
 # Logs
 *.log
+data/app.log
+
+# Session data and cache
+data/sessions/
+data/cache/
+data/state/youtube_videos/
+data/bluesky_state.json
+data/spotify_tokens.json
+data/live/
+data/logs/
+data/reports/
+data/state/
+data/pr_events.json
+data/neo4j/
+
+# Test results
+data/test_results/results/
+mail_diagnostic_results.json
+
+# IDE
+.cursor/
+
+# Local virtualenvs
+venv-slash-tests/
+
+# Local clones
+docs-portal/

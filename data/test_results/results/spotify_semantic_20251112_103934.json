@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "pass_count": 1,
+  "fail_count": 0,
+  "test_function": "test_slash_command_routing",
+  "outcome": "passed",
+  "details": {
+    "longrepr": "None",
+    "duration": 0.0008751249988563359
+  },
+  "timestamp": "2025-11-12T10:39:34.800633",
+  "test_name": "spotify_semantic"
+}

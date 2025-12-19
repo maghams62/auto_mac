@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from rich.prompt import Prompt
 from rich.table import Table
 from rich import box
+from ..utils.message_personality import get_task_completed_message
 
 
 console = Console()
@@ -36,7 +37,7 @@ class ChatUI:
     def show_welcome(self):
         """Display welcome message."""
         welcome_text = """
-# Mac Automation Assistant
+# Cerebro OS
 
 AI-powered automation with multi-agent coordination and LLM-driven decisions.
 
@@ -604,7 +605,7 @@ AI-powered automation with multi-agent coordination and LLM-driven decisions.
         status = payload.get("status", "success")
         icon, style = status_map.get(status, ("✅", "green"))
 
-        message_text = payload.get("message") or "Task completed."
+        message_text = payload.get("message") or get_task_completed_message()
         self.show_message(f"{icon} {message_text}", style=style)
 
         details_text = (payload.get("details") or "").strip()

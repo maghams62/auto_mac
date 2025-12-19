@@ -26,20 +26,38 @@ class WorkflowOrchestrator:
             config: Configuration dictionary
         """
         self.config = config
+        self._indexer = None  # Lazy-loaded DocumentIndexer
+        self._search = None  # Lazy-loaded SemanticSearch
 
-        # Initialize components
+        # Initialize lightweight components immediately
         logger.info("Initializing workflow components...")
 
         self.planner = LLMPlanner(config)
-        self.indexer = DocumentIndexer(config)
         self.parser = DocumentParser(config)
-        self.search = SemanticSearch(self.indexer, config)
         self.mail_composer = MailComposer(config)
         self.screenshotter = DocumentScreenshot(config)
         self.keynote_composer = KeynoteComposer(config)
         self.pages_composer = PagesComposer(config)
 
-        logger.info("Workflow components initialized")
+        logger.info("Workflow components initialized (DocumentIndexer will be lazy-loaded)")
+    
+    @property
+    def indexer(self):
+        """Lazy-load DocumentIndexer on first access to improve startup time."""
+        if self._indexer is None:
+            logger.info("[PERF] Initializing DocumentIndexer (lazy load)")
+            self._indexer = DocumentIndexer(self.config)
+            logger.info("[PERF] DocumentIndexer initialized")
+        return self._indexer
+    
+    @property
+    def search(self):
+        """Lazy-load SemanticSearch on first access (depends on indexer)."""
+        if self._search is None:
+            logger.info("[PERF] Initializing SemanticSearch (lazy load)")
+            self._search = SemanticSearch(self.indexer, self.config)
+            logger.info("[PERF] SemanticSearch initialized")
+        return self._search
 
     def execute(self, user_input: str) -> Dict[str, Any]:
         """
@@ -180,7 +198,6 @@ class WorkflowOrchestrator:
                     file_path=file_path,
                     page_numbers=page_numbers,
                     search_text=search_text,
-                    output_dir="data/screenshots"
                 )
 
                 if screenshot_files:
@@ -464,7 +481,7 @@ class WorkflowOrchestrator:
         self, params: Dict[str, Any], result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Execute workflow for creating a Pages document.
+        Execute workflow for creating a Keynote presentation from document content.
 
         Args:
             params: Parameters from intent parsing
@@ -549,29 +566,54 @@ class WorkflowOrchestrator:
                 'status': 'success',
             })
 
-            # Step 6: Create Pages document
-            logger.info("Step 6: Creating Pages document")
-            pages_success = self.pages_composer.create_document(
+            # Step 6: Create Keynote presentation
+            logger.info("Step 6: Creating Keynote presentation")
+            
+            # Convert document sections to Keynote slides format
+            slides = []
+            for section in document_data.get('sections', []):
+                slide_title = section.get('heading', '')
+                slide_content = section.get('content', '')
+                if slide_title or slide_content:
+                    slides.append({
+                        'title': slide_title or 'Content',
+                        'content': slide_content
+                    })
+            
+            # If no sections, create a single slide from the title and content
+            if not slides:
+                slides.append({
+                    'title': document_data['title'],
+                    'content': extracted_content[:1000]  # First 1000 chars as fallback
+                })
+            
+            # Determine output path
+            output_path = document_action.get('output_path')
+            if not output_path:
+                import os
+                output_path = os.path.expanduser(f"~/Documents/{document_data['title']}.key")
+            
+            keynote_success = self.keynote_composer.create_presentation(
                 title=document_data['title'],
-                sections=document_data['sections'],
-                output_path=document_action.get('output_path'),
+                slides=slides,
+                output_path=output_path,
             )
 
-            if not pages_success:
-                result['error'] = "Failed to create Pages document"
+            if not keynote_success:
+                result['error'] = "Failed to create Keynote presentation"
                 result['steps'].append({
-                    'step': 'create_pages',
+                    'step': 'create_keynote',
                     'status': 'failed',
                 })
                 return result
 
             result['steps'].append({
-                'step': 'create_pages',
+                'step': 'create_keynote',
                 'status': 'success',
             })
 
             result['success'] = True
-            result['summary'] = f"Created Pages document '{document_data['title']}' with {len(document_data['sections'])} sections from '{file_name}'"
+            result['summary'] = f"Created Keynote presentation '{document_data['title']}' with {len(slides)} slides from '{file_name}'"
 
             return result
 

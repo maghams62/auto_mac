@@ -1,0 +1,107 @@
+{
+  "session_id": "1f1c1d33-0c2f-42b8-8ba3-0c501951f23d",
+  "status": "active",
+  "created_at": "2025-11-11T20:01:27.616735",
+  "last_active_at": "2025-11-11T20:02:16.155346",
+  "interactions": [
+    {
+      "interaction_id": "int_1",
+      "timestamp": "2025-11-11T20:02:16.155346",
+      "user_request": "bluesky \"Say hi\"",
+      "agent_response": {
+        "goal": "Post a message on Bluesky",
+        "steps_executed": 2,
+        "results": {
+          "1": {
+            "success": true,
+            "uri": "at://did:plc:3bcf4lr4364zvkndrntd67hx/app.bsky.feed.post/3m5freborfx23",
+            "cid": "bafyreiee3rappm4lh2ntpuwowpgphktmjbk3j6if7eepqld5a33nrot36e",
+            "url": "https://bsky.app/profile/ychack.bsky.social/post/3m5freborfx23",
+            "message": "📱 Bluesky post is live! Your message is shared!",
+            "tool": "post_bluesky_update"
+          },
+          "2": {
+            "type": "reply",
+            "message": "Your message 'Say hi' has been posted to Bluesky.",
+            "details": "",
+            "artifacts": [],
+            "status": "success",
+            "error": false,
+            "tool": "reply_to_user"
+          }
+        },
+        "status": "success",
+        "reply_step_id": 2,
+        "message": "Your message 'Say hi' has been posted to Bluesky."
+      },
+      "plan": [
+        {
+          "id": 1,
+          "action": "post_bluesky_update",
+          "parameters": {
+            "message": "Say hi"
+          },
+          "dependencies": [],
+          "reasoning": "Publish the user-provided message to Bluesky",
+          "expected_output": "Dictionary confirming the post has been published"
+        },
+        {
+          "id": 2,
+          "action": "reply_to_user",
+          "parameters": {
+            "message": "Your message 'Say hi' has been posted to Bluesky.",
+            "status": "success"
+          },
+          "dependencies": [
+            1
+          ],
+          "reasoning": "Confirm to the user that the Bluesky post was successful",
+          "expected_output": "User-facing confirmation message"
+        }
+      ],
+      "step_results": {
+        "1": {
+          "success": true,
+          "uri": "at://did:plc:3bcf4lr4364zvkndrntd67hx/app.bsky.feed.post/3m5freborfx23",
+          "cid": "bafyreiee3rappm4lh2ntpuwowpgphktmjbk3j6if7eepqld5a33nrot36e",
+          "url": "https://bsky.app/profile/ychack.bsky.social/post/3m5freborfx23",
+          "message": "📱 Bluesky post is live! Your message is shared!",
+          "tool": "post_bluesky_update"
+        },
+        "2": {
+          "type": "reply",
+          "message": "Your message 'Say hi' has been posted to Bluesky.",
+          "details": "",
+          "artifacts": [],
+          "status": "success",
+          "error": false,
+          "tool": "reply_to_user"
+        }
+      },
+      "metadata": {
+        "goal": "Post a message on Bluesky",
+        "status": "completed"
+      }
+    }
+  ],
+  "shared_context": {
+    "vision_session_count": 0
+  },
+  "user_context": {
+    "preferences": {},
+    "frequently_used_tools": [],
+    "common_patterns": []
+  },
+  "metadata": {
+    "total_requests": 1,
+    "total_steps_executed": 2,
+    "agents_used": [
+      "bluesky"
+    ],
+    "tools_used": [
+      "post_bluesky_update",
+      "reply_to_user",
+      "search_bluesky_posts"
+    ]
+  }
+}

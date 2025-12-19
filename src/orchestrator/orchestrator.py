@@ -36,7 +36,7 @@ class LangGraphOrchestrator:
         self.document_indexer = document_indexer
 
         # Generate tool catalog
-        self.tool_catalog = generate_tool_catalog()
+        self.tool_catalog = generate_tool_catalog(config=config)
         self.tool_specs = get_tool_specs_as_dicts(self.tool_catalog)
 
         # Initialize components

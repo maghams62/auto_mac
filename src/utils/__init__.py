@@ -6,7 +6,7 @@ import os
 import logging
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv, find_dotenv
 
 
@@ -65,6 +65,14 @@ def load_config(config_path: str = "config.yaml", use_global_manager: bool = Tru
 
     # Expand environment variables
     config = _expand_env_vars(config)
+    
+    # Validate and normalize performance configuration
+    try:
+        from .config_validator import validate_config
+        config = validate_config(config)
+    except Exception as e:
+        # Don't fail if validation fails, just log warning
+        logger.warning(f"[CONFIG] Performance config validation failed: {e}")
 
     return config
 
@@ -84,10 +92,16 @@ def _expand_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
     elif isinstance(config, list):
         return [_expand_env_vars(item) for item in config]
     elif isinstance(config, str):
-        # Replace ${VAR} or $VAR with environment variable
+        # Replace ${VAR} or ${VAR:-default} with environment variable
         if config.startswith('${') and config.endswith('}'):
-            var_name = config[2:-1]
-            return os.getenv(var_name, config)
+            var_content = config[2:-1]
+            # Handle ${VAR:-default} syntax
+            if ':-' in var_content:
+                var_name, default_value = var_content.split(':-', 1)
+                return os.getenv(var_name, default_value)
+            else:
+                var_name = var_content
+                return os.getenv(var_name, config)
         return config
     else:
         return config
@@ -151,6 +165,111 @@ def setup_logging(config: Dict[str, Any]):
     logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
+def get_temperature_for_model(config: Dict[str, Any], default_temperature: float = 0.7, 
+                              log_selection: bool = False, session_id: Optional[str] = None,
+                              interaction_id: Optional[str] = None, component: str = "unknown") -> float:
+    """
+    Get appropriate temperature for the configured model.
+
+    o-series models (o1, o3, o4) only support temperature=1.
+    Other models use the config temperature or the provided default.
+
+    Args:
+        config: Configuration dictionary
+        default_temperature: Default temperature to use if not in config (only for non-o-series)
+        log_selection: Whether to log the model selection decision
+        session_id: Session identifier for logging
+        interaction_id: Interaction identifier for logging
+        component: Component making the selection
+
+    Returns:
+        Temperature value appropriate for the model
+    """
+    openai_config = config.get("openai", {})
+    model = openai_config.get("model", "gpt-4o")
+
+    # o-series models only support temperature=1
+    if model and model.startswith(("o1", "o3", "o4")):
+        temperature = 1.0
+        reasoning = f"o-series model {model} requires temperature=1.0"
+    else:
+        temperature = openai_config.get("temperature", default_temperature)
+        reasoning = f"Using config temperature={temperature} for model {model}"
+    
+    # Log model selection if requested
+    if log_selection:
+        from .model_selection_logger import log_model_selection
+        log_model_selection(
+            model=model,
+            temperature=temperature,
+            reasoning=reasoning,
+            config=config,
+            session_id=session_id,
+            interaction_id=interaction_id,
+            component=component
+        )
+    
+    return temperature
+
+
+def get_llm_params(config: Dict[str, Any], default_temperature: float = 0.7, max_tokens: int = 2000,
+                   log_selection: bool = False, session_id: Optional[str] = None,
+                   interaction_id: Optional[str] = None, component: str = "unknown") -> Dict[str, Any]:
+    """
+    Get LLM parameters compatible with the configured model.
+
+    o-series models (o1, o3, o4) have special requirements:
+    - Only support temperature=1
+    - Use max_completion_tokens instead of max_tokens
+
+    Args:
+        config: Configuration dictionary
+        default_temperature: Default temperature for non-o-series models
+        max_tokens: Maximum tokens (will be converted to max_completion_tokens for o-series)
+        log_selection: Whether to log the model selection decision
+        session_id: Session identifier for logging
+        interaction_id: Interaction identifier for logging
+        component: Component making the selection
+
+    Returns:
+        Dictionary of parameters to pass to ChatOpenAI()
+    """
+    openai_config = config.get("openai", {})
+    model = openai_config.get("model", "gpt-4o")
+
+    params = {
+        "model": model,
+        "api_key": openai_config.get("api_key"),
+    }
+
+    # o-series models have special requirements
+    if model and model.startswith(("o1", "o3", "o4")):
+        params["temperature"] = 1.0
+        params["max_completion_tokens"] = max_tokens
+        reasoning = f"o-series model {model} requires temperature=1.0 and max_completion_tokens={max_tokens}"
+    else:
+        params["temperature"] = openai_config.get("temperature", default_temperature)
+        params["max_tokens"] = max_tokens
+        reasoning = f"Using model {model} with temperature={params['temperature']}, max_tokens={max_tokens}"
+    
+    # Log model selection if requested
+    if log_selection:
+        from .model_selection_logger import log_model_selection
+        log_model_selection(
+            model=model,
+            temperature=params["temperature"],
+            max_tokens=params.get("max_tokens"),
+            max_completion_tokens=params.get("max_completion_tokens"),
+            reasoning=reasoning,
+            config=config,
+            session_id=session_id,
+            interaction_id=interaction_id,
+            component=component
+        )
+
+    return params
+
+
 def ensure_directories():
     """Create necessary directories if they don't exist."""
     directories = [
@@ -161,3 +280,46 @@ def ensure_directories():
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
 
+
+# Export structured logger
+from .logger import StructuredLogger, setup_structured_logging, get_logger, RequestContext
+from .screenshot import get_screenshot_dir, DEFAULT_SCREENSHOT_DIR
+
+# Export writing UI formatter
+from .writing_ui_formatter import (
+    format_report_for_ui,
+    format_slides_for_ui,
+    format_synthesis_for_ui,
+    format_quick_summary_for_ui,
+    format_email_for_ui,
+    format_writing_output,
+)
+
+# Export JSON parser
+from .json_parser import (
+    parse_json_with_retry,
+    validate_json_structure,
+)
+
+__all__ = [
+    'load_config',
+    'save_config',
+    'setup_logging',
+    'get_temperature_for_model',
+    'get_llm_params',
+    'ensure_directories',
+    'StructuredLogger',
+    'setup_structured_logging',
+    'get_logger',
+    'RequestContext',
+    'format_report_for_ui',
+    'format_slides_for_ui',
+    'format_synthesis_for_ui',
+    'format_quick_summary_for_ui',
+    'format_email_for_ui',
+    'format_writing_output',
+    'parse_json_with_retry',
+    'validate_json_structure',
+    'get_screenshot_dir',
+    'DEFAULT_SCREENSHOT_DIR',
+]

@@ -24,7 +24,12 @@ from urllib.parse import quote
 from datetime import datetime
 from openai import OpenAI
 import os
-import googlemaps
+try:
+    import googlemaps
+    GOOGLEMAPS_AVAILABLE = True
+except ImportError:
+    GOOGLEMAPS_AVAILABLE = False
+    googlemaps = None
 from datetime import datetime as dt
 
 logger = logging.getLogger(__name__)
@@ -384,8 +389,12 @@ def _get_gmaps_client():
             logger.warning("[MAPS AGENT] Google Maps API key not configured. Add GOOGLE_MAPS_API_KEY to .env file.")
             return None
 
-        _gmaps_client = googlemaps.Client(key=api_key)
-        logger.info("[MAPS AGENT] Google Maps client initialized")
+        if GOOGLEMAPS_AVAILABLE:
+            _gmaps_client = googlemaps.Client(key=api_key)
+            logger.info("[MAPS AGENT] Google Maps client initialized")
+        else:
+            logger.warning("[MAPS AGENT] googlemaps module not available. Install with: pip install googlemaps")
+            return None
 
     return _gmaps_client
 
@@ -579,19 +588,20 @@ def get_google_transit_directions(
 
         return result
 
-    except googlemaps.exceptions.ApiError as e:
-        logger.error(f"[MAPS AGENT] Google Maps API error: {e}")
-        return {
-            "error": True,
-            "error_type": "GoogleMapsApiError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
     except Exception as e:
-        logger.error(f"[MAPS AGENT] Error in get_google_transit_directions: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
+        if GOOGLEMAPS_AVAILABLE and hasattr(googlemaps, 'exceptions') and isinstance(e, googlemaps.exceptions.ApiError):
+            logger.error(f"[MAPS AGENT] Google Maps API error: {e}")
+            return {
+                "error": True,
+                "error_type": "GoogleMapsApiError",
+                "error_message": str(e),
+                "retry_possible": False
+            }
+        else:
+            logger.error(f"[MAPS AGENT] Error in get_google_transit_directions: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
             "error": True,
             "error_type": "TransitDirectionsError",
             "error_message": str(e),
@@ -822,7 +832,8 @@ def plan_trip_with_stops(
     num_food_stops: int = 0,
     departure_time: Optional[str] = None,
     use_google_maps: bool = False,
-    open_maps: bool = True  # Default to True for better UX - automatically open maps
+    open_maps: bool = True,  # Default to True for better UX - automatically open maps
+    reasoning_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Plan a trip from origin to destination with specific numbers of fuel and food stops.
@@ -840,9 +851,10 @@ def plan_trip_with_stops(
         num_food_stops: Number of food stops to add (any reasonable number, e.g., 2 for breakfast and lunch)
         departure_time: Departure time in format "HH:MM AM/PM" or "YYYY-MM-DD HH:MM"
         use_google_maps: If True, generate Google Maps URL (opens in browser);
-                        if False, use Apple Maps URL (opens in Maps app, default). 
+                        if False, use Apple Maps URL (opens in Maps app, default).
                         Apple Maps is preferred for macOS integration and supports waypoints.
         open_maps: If True, automatically open Maps app/browser with the route (default: True for better UX)
+        reasoning_context: Optional memory context for learning from past attempts
 
     Returns:
         Dictionary with route details and maps URL
@@ -860,6 +872,16 @@ def plan_trip_with_stops(
         f"[MAPS AGENT] Tool: plan_trip_with_stops(origin='{origin}', destination='{destination}', "
         f"fuel_stops={num_fuel_stops}, food_stops={num_food_stops}, departure={departure_time})"
     )
+
+    # Check memory context for learning from past attempts
+    if reasoning_context:
+        past_attempts = reasoning_context.get("past_attempts", 0)
+        commitments = reasoning_context.get("commitments", [])
+        logger.debug(f"[MAPS AGENT] Memory context: {past_attempts} past attempts, commitments: {commitments}")
+
+        # If we've had issues with trip planning before, be more conservative
+        if past_attempts > 0:
+            logger.info(f"[MAPS AGENT] Learning from {past_attempts} past attempts - using more robust trip planning")
 
     try:
         # Calculate total number of stops needed

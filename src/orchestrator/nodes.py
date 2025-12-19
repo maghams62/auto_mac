@@ -28,11 +28,13 @@ class PlannerNode:
     """Planner node that creates execution plans."""
 
     def __init__(self, config: Dict[str, Any]):
+        from ..utils import get_temperature_for_model
+
         self.config = config
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.2,  # Lower temperature for structured planning
+            temperature=get_temperature_for_model(config, default_temperature=0.2),
             api_key=openai_config.get("api_key")
         )
 
@@ -174,11 +176,13 @@ class EvaluatorNode:
     """Evaluator node that validates plans and checks step results."""
 
     def __init__(self, config: Dict[str, Any]):
+        from ..utils import get_temperature_for_model
+
         self.config = config
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.0,  # Deterministic evaluation
+            temperature=get_temperature_for_model(config, default_temperature=0.0),
             api_key=openai_config.get("api_key")
         )
 
@@ -619,11 +623,13 @@ class SynthesisNode:
     """Synthesis node that creates final result."""
 
     def __init__(self, config: Dict[str, Any]):
+        from ..utils import get_temperature_for_model
+
         self.config = config
         openai_config = config.get("openai", {})
         self.llm = ChatOpenAI(
             model=openai_config.get("model", "gpt-4o"),
-            temperature=0.3,
+            temperature=get_temperature_for_model(config, default_temperature=0.3),
             api_key=openai_config.get("api_key")
         )
 

@@ -7,15 +7,21 @@ Separation of Concerns:
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+import re
+import asyncio
+from typing import Dict, Any, List, Optional, Set, Tuple
 from enum import Enum
+from collections import defaultdict
 
 from ..agent import ALL_AGENT_TOOLS
 from ..agent.verifier import OutputVerifier
 from .tools_catalog import build_tool_parameter_index
+from ..utils.trajectory_logger import get_trajectory_logger
+import time
 
 
 logger = logging.getLogger(__name__)
+PLACEHOLDER_PATTERN = re.compile(r"\$step\d+[^\s]+")
 
 
 class ExecutionStatus(Enum):
@@ -56,6 +62,28 @@ class PlanExecutor:
         """
         self.config = config
         self.enable_verification = enable_verification
+        
+        # Performance configuration
+        perf_config = config.get("performance", {})
+        parallel_config = perf_config.get("parallel_execution", {})
+        self.parallel_enabled = parallel_config.get("enabled", True)
+        self.max_parallel_steps = parallel_config.get("max_parallel_steps", 5)
+        self.max_parallel_llm_calls = parallel_config.get("max_parallel_llm_calls", 3)
+        self.dependency_analysis = parallel_config.get("dependency_analysis", True)
+        
+        # Semaphore to limit concurrent LLM calls (for verification, etc.)
+        import asyncio
+        self._llm_semaphore = asyncio.Semaphore(self.max_parallel_llm_calls)
+        
+        # Global rate limiter for all LLM calls
+        from src.utils.rate_limiter import get_rate_limiter
+        self.rate_limiter = get_rate_limiter(config=config)
+        
+        background_config = perf_config.get("background_tasks", {})
+        self.background_verification = background_config.get("verification", True)
+        
+        logger.info(f"[EXECUTOR] Parallel execution: {self.parallel_enabled}, Max parallel steps: {self.max_parallel_steps}, Max parallel LLM calls: {self.max_parallel_llm_calls}")
+        logger.info(f"[EXECUTOR] Background verification: {self.background_verification}")
 
         # Initialize tools (all agent tools)
         self.tools = {tool.name: tool for tool in ALL_AGENT_TOOLS}
@@ -68,15 +96,428 @@ class PlanExecutor:
             from ..agent.verifier import OutputVerifier
             self.verifier = OutputVerifier(config)
             logger.info("Output verification enabled")
+        
+        # Initialize trajectory logger
+        self.trajectory_logger = get_trajectory_logger(config)
+    
+    def _analyze_dependencies(self, plan: List[Dict[str, Any]]) -> Dict[int, Set[int]]:
+        """
+        Analyze step dependencies to enable parallel execution.
+        
+        Args:
+            plan: List of plan steps
+            
+        Returns:
+            Dictionary mapping step_id to set of dependency step_ids
+        """
+        dependencies = {}
+        
+        for step in plan:
+            step_id = step.get("id", -1)
+            
+            # Explicit dependencies from plan
+            explicit_deps = set(step.get("dependencies", []))
+            
+            # Implicit dependencies from parameter references ($stepN.field)
+            implicit_deps = set()
+            parameters = step.get("parameters", {})
+            
+            def find_step_refs(obj):
+                """Recursively find step references in parameters."""
+                if isinstance(obj, str):
+                    matches = PLACEHOLDER_PATTERN.findall(obj)
+                    for match in matches:
+                        # Extract step number from $step3.output or similar
+                        step_num_str = match.split('.')[0].replace('$step', '')
+                        try:
+                            implicit_deps.add(int(step_num_str))
+                        except ValueError:
+                            pass
+                elif isinstance(obj, dict):
+                    for val in obj.values():
+                        find_step_refs(val)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_step_refs(item)
+            
+            find_step_refs(parameters)
+            
+            # Combine explicit and implicit dependencies
+            all_deps = explicit_deps | implicit_deps
+            dependencies[step_id] = all_deps
+            
+            if all_deps:
+                logger.debug(f"[EXECUTOR] Step {step_id} depends on: {all_deps}")
+        
+        return dependencies
+    
+    def _group_steps_by_level(
+        self, 
+        plan: List[Dict[str, Any]], 
+        dependencies: Dict[int, Set[int]]
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Group steps into execution levels where each level can run in parallel.
+        
+        Args:
+            plan: List of plan steps
+            dependencies: Step dependencies from _analyze_dependencies
+            
+        Returns:
+            List of step groups (levels), where steps in same level can run in parallel
+        """
+        # Map step IDs to steps
+        step_map = {step.get("id"): step for step in plan}
+        
+        # Calculate execution level for each step
+        step_levels = {}
+        
+        def get_level(step_id: int) -> int:
+            """Get execution level for a step (recursive with memoization)."""
+            if step_id in step_levels:
+                return step_levels[step_id]
+            
+            deps = dependencies.get(step_id, set())
+            if not deps:
+                # No dependencies = level 0
+                step_levels[step_id] = 0
+                return 0
+            
+            # Level is 1 + max level of dependencies
+            max_dep_level = max(get_level(dep_id) for dep_id in deps if dep_id in step_map)
+            level = max_dep_level + 1
+            step_levels[step_id] = level
+            return level
+        
+        # Calculate levels for all steps
+        for step in plan:
+            get_level(step.get("id"))
+        
+        # Group steps by level
+        levels = defaultdict(list)
+        for step in plan:
+            level = step_levels[step.get("id")]
+            levels[level].append(step)
+        
+        # Convert to sorted list of levels
+        sorted_levels = [levels[i] for i in sorted(levels.keys())]
+        
+        logger.info(f"[EXECUTOR] Grouped {len(plan)} steps into {len(sorted_levels)} execution levels")
+        for i, level_steps in enumerate(sorted_levels):
+            step_ids = [s.get("id") for s in level_steps]
+            logger.info(f"[EXECUTOR] Level {i}: {len(level_steps)} steps (IDs: {step_ids})")
+        
+        # Log parallel execution grouping decision
+        # Note: session_id and interaction_id would need to be passed through, but for now we'll use "unknown"
+        # This will be improved when we add session context to executor
+        if len(sorted_levels) > 1 or any(len(level) > 1 for level in sorted_levels):
+            self.trajectory_logger.log_trajectory(
+                session_id="unknown",  # TODO: Pass session_id through executor
+                interaction_id=None,
+                phase="execution",
+                component="executor",
+                decision_type="parallel_execution_grouping",
+                input_data={
+                    "total_steps": len(plan),
+                    "dependencies": {k: list(v) for k, v in dependencies.items()}
+                },
+                output_data={
+                    "execution_levels": len(sorted_levels),
+                    "levels": [
+                        {
+                            "level": i,
+                            "step_ids": [s.get("id") for s in level_steps],
+                            "parallel_count": len(level_steps)
+                        }
+                        for i, level_steps in enumerate(sorted_levels)
+                    ],
+                    "max_parallel": max(len(level) for level in sorted_levels) if sorted_levels else 1
+                },
+                reasoning=f"Grouped {len(plan)} steps into {len(sorted_levels)} execution levels for parallel execution",
+                success=True
+            )
+        
+        return sorted_levels
+    
+    async def _execute_step_async(
+        self,
+        step: Dict[str, Any],
+        state: Dict[str, Any],
+        session_id: Optional[str] = None,
+        interaction_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a single step asynchronously.
+        
+        Args:
+            step: Step to execute
+            state: Current execution state
+            session_id: Session identifier for trajectory logging
+            interaction_id: Interaction identifier for trajectory logging
+            
+        Returns:
+            Step result dictionary
+        """
+        # Use asyncio to run synchronous _execute_step in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._execute_step, step, state, session_id, interaction_id)
+    
+    async def _verify_step_async(
+        self,
+        goal: str,
+        step: Dict[str, Any],
+        step_result: Dict[str, Any],
+        state: Dict[str, Any],
+        session_id: Optional[str] = None,
+        interaction_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Verify step output asynchronously.
+        
+        Limits concurrent LLM calls using max_parallel_llm_calls semaphore.
+        
+        Args:
+            goal: Original user goal
+            step: Step definition
+            step_result: Step execution result
+            state: Execution state
+            
+        Returns:
+            Verification result dictionary
+        """
+        if not self.verifier:
+            return {"valid": True, "issues": [], "suggestions": [], "confidence": 1.0}
+        
+        # Limit concurrent LLM calls using semaphore and rate limiter
+        async with self._llm_semaphore:
+            # Acquire rate limit slot (estimate 1000 tokens for verification)
+            await self.rate_limiter.acquire(estimated_tokens=1000)
+            
+            # Use asyncio to run synchronous verification in thread pool
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self.verifier.verify_step_output,
+                goal,
+                step,
+                step_result,
+                {"previous_steps": state["step_results"]}
+            )
+            
+            # Record actual usage if available (verifier doesn't return token count, so we estimate)
+            # In a real implementation, we'd track token usage from LLM responses
+            self.rate_limiter.record_usage(actual_tokens=1000)  # Conservative estimate
+            
+            return result
 
+    async def execute_plan_async(
+        self,
+        plan: List[Dict[str, Any]],
+        goal: str,
+        context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        interaction_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a plan with parallel execution where possible (async).
+        
+        Args:
+            plan: List of plan steps to execute
+            goal: Original user goal (for verification)
+            context: Additional execution context
+            
+        Returns:
+            Execution result dictionary
+        """
+        logger.info(f"[EXECUTOR] Executing plan with {len(plan)} steps (async/parallel)")
+        
+        # Initialize execution state
+        state = {
+            "goal": goal,
+            "plan": plan,
+            "context": context or {},
+            "step_results": {},
+            "verification_results": {},
+            "current_step": 0,
+            "status": ExecutionStatus.IN_PROGRESS
+        }
+        
+        # Analyze dependencies and group steps
+        if self.dependency_analysis and len(plan) > 1:
+            dependencies = self._analyze_dependencies(plan)
+            step_levels = self._group_steps_by_level(plan, dependencies)
+        else:
+            # Fallback: treat as sequential
+            step_levels = [[step] for step in plan]
+        
+        # Track overall execution type
+        try:
+            from ..utils.performance_monitor import get_performance_monitor
+            if len(step_levels) > 1 or any(len(level) > 1 for level in step_levels):
+                # Will track actual speedup during execution
+                pass
+            else:
+                get_performance_monitor().record_sequential_execution()
+        except Exception:
+            pass
+        
+        total_completed = 0
+        verification_tasks = []
+        
+        # Track execution time for parallel speedup calculation
+        import time
+        execution_start = time.time()
+        sequential_estimate = 0.0  # Estimate sequential time
+        
+        # Execute steps level by level
+        for level_idx, level_steps in enumerate(step_levels):
+            logger.info(f"[EXECUTOR] Executing level {level_idx} with {len(level_steps)} steps")
+            
+            # Track level execution time
+            level_start = time.time()
+            
+            # Execute steps in this level in parallel
+            tasks = []
+            for step in level_steps:
+                step_id = step.get("id")
+                
+                # Check dependencies
+                if not self._check_dependencies(step, state):
+                    logger.warning(f"Step {step_id}: Dependencies not met, skipping")
+                    state["step_results"][step_id] = {
+                        "error": True,
+                        "skipped": True,
+                        "error_message": "Dependencies not met"
+                    }
+                    continue
+                
+                # Create execution task
+                task = self._execute_step_async(step, state, session_id, interaction_id)
+                tasks.append((step_id, step, task))
+            
+            # Wait for all steps in this level to complete
+            if tasks:
+                results = await asyncio.gather(*[task for _, _, task in tasks], return_exceptions=True)
+                
+                # Track parallel execution metrics
+                level_time = time.time() - level_start
+                if len(level_steps) > 1:
+                    # Multiple steps in parallel - estimate sequential time
+                    sequential_estimate += level_time * len(level_steps)  # Assume each step takes level_time
+                    try:
+                        from ..utils.performance_monitor import get_performance_monitor
+                        get_performance_monitor().record_parallel_execution(
+                            sequential_time=level_time * len(level_steps),
+                            parallel_time=level_time
+                        )
+                    except Exception:
+                        pass
+                else:
+                    sequential_estimate += level_time
+                
+                # Process results
+                for (step_id, step, _), result in zip(tasks, results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Step {step_id} failed with exception: {result}")
+                        state["step_results"][step_id] = {
+                            "error": True,
+                            "error_message": str(result),
+                            "output": None
+                        }
+                    else:
+                        state["step_results"][step_id] = result
+                        total_completed += 1
+                    
+                    self._log_step_outcome(step_id, step, state["step_results"][step_id])
+                    
+                    # Check for critical failures
+                    if state["step_results"][step_id].get("error"):
+                        error_result = state["step_results"][step_id]
+                        if error_result.get("retry_possible"):
+                            return {
+                                "status": ExecutionStatus.NEEDS_REPLAN,
+                                "steps_completed": total_completed,
+                                "steps_total": len(plan),
+                                "step_results": state["step_results"],
+                                "verification_results": state["verification_results"],
+                                "final_output": None,
+                                "error": error_result.get("error_message"),
+                                "needs_replan": True,
+                                "replan_reason": f"Step {step_id} failed: {error_result.get('error_message')}"
+                            }
+                    
+                    # Start background verification if enabled
+                    if self.verifier and self._should_verify_step(step) and not state["step_results"][step_id].get("error"):
+                        if self.background_verification:
+                            # Create verification task to run in background
+                            verify_task = asyncio.create_task(
+                                self._verify_step_async(goal, step, state["step_results"][step_id], state, session_id, interaction_id)
+                            )
+                            verification_tasks.append((step_id, verify_task))
+                        else:
+                            # Run verification synchronously
+                            verification = await self._verify_step_async(
+                                goal, step, state["step_results"][step_id], state, session_id, interaction_id
+                            )
+                            state["verification_results"][step_id] = verification
+                            
+                            # Log verification result
+                            if verification:
+                                self.trajectory_logger.log_trajectory(
+                                    session_id=session_id or "unknown",
+                                    interaction_id=interaction_id,
+                                    phase="execution",
+                                    component="executor",
+                                    decision_type="step_verification",
+                                    input_data={
+                                        "step_id": step_id,
+                                        "action": step.get("action"),
+                                        "step_result": step_result
+                                    },
+                                    output_data=verification,
+                                    reasoning=f"Verified step {step_id} output",
+                                    confidence=verification.get("confidence", 0.5),
+                                    success=verification.get("valid", False)
+                                )
+        
+        # Wait for all background verification tasks to complete
+        if verification_tasks:
+            logger.info(f"[EXECUTOR] Waiting for {len(verification_tasks)} background verification tasks")
+            verifications = await asyncio.gather(*[task for _, task in verification_tasks], return_exceptions=True)
+            
+            for (step_id, _), verification in zip(verification_tasks, verifications):
+                if isinstance(verification, Exception):
+                    logger.error(f"Verification for step {step_id} failed: {verification}")
+                else:
+                    state["verification_results"][step_id] = verification
+        
+        # All steps completed
+        logger.info(f"[EXECUTOR] Plan execution complete: {total_completed}/{len(plan)} steps succeeded")
+        
+        final_output = state["step_results"].get(plan[-1].get("id")) if plan else None
+        
+        return {
+            "status": ExecutionStatus.SUCCESS,
+            "steps_completed": len(plan),
+            "steps_total": len(plan),
+            "step_results": state["step_results"],
+            "verification_results": state["verification_results"],
+            "final_output": final_output,
+            "error": None,
+            "needs_replan": False,
+            "replan_reason": None
+        }
+    
     def execute_plan(
         self,
         plan: List[Dict[str, Any]],
         goal: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        interaction_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Execute a plan.
+        Execute a plan (with optional parallel execution).
 
         Args:
             plan: List of plan steps to execute
@@ -97,7 +538,13 @@ class PlanExecutor:
                 "replan_reason": Optional[str]
             }
         """
-        logger.info(f"Executing plan with {len(plan)} steps")
+        # Use async execution if parallel is enabled
+        if self.parallel_enabled and len(plan) > 1:
+            logger.info(f"[EXECUTOR] Using parallel execution for {len(plan)} steps")
+            # Run async version in sync context
+            return asyncio.run(self.execute_plan_async(plan, goal, context))
+        
+        logger.info(f"Executing plan with {len(plan)} steps (sequential)")
 
         # Initialize execution state
         state = {
@@ -109,6 +556,10 @@ class PlanExecutor:
             "current_step": 0,
             "status": ExecutionStatus.IN_PROGRESS
         }
+
+        success_steps = 0
+        failed_steps = 0
+        skipped_steps = 0
 
         # Execute steps
         for i, step in enumerate(plan):
@@ -123,16 +574,17 @@ class PlanExecutor:
                     "skipped": True,
                     "error_message": "Dependencies not met"
                 }
+                skipped_steps += 1
                 continue
 
             # Execute the step
-            step_result = self._execute_step(step, state)
+            step_result = self._execute_step(step, state, session_id, interaction_id)
             state["step_results"][step_id] = step_result
+            step_success = self._log_step_outcome(step_id, step, step_result)
 
             # Check if step failed
             if step_result.get("error"):
                 logger.error(f"Step {step_id} failed: {step_result.get('error_message')}")
-
                 # Use Critic Agent to reflect on failure and suggest fixes
                 reflection = self._reflect_on_failure(step, step_result, state)
                 if reflection:
@@ -201,9 +653,20 @@ class PlanExecutor:
                         "replan_reason": f"Step {step_id} output doesn't match user intent: {verification.get('issues')}"
                     }
 
-            logger.info(f"Step {step_id} completed successfully")
+            if step_success:
+                success_steps += 1
+            else:
+                failed_steps += 1
 
         # All steps completed
+        logger.info(
+            "[EXECUTOR] Plan execution summary: total=%d, succeeded=%d, failed=%d, skipped=%d",
+            len(plan),
+            success_steps,
+            failed_steps,
+            skipped_steps,
+        )
+
         final_output = state["step_results"].get(plan[-1].get("id", len(plan) - 1)) if plan else None
 
         return {
@@ -221,7 +684,9 @@ class PlanExecutor:
     def _execute_step(
         self,
         step: Dict[str, Any],
-        state: Dict[str, Any]
+        state: Dict[str, Any],
+        session_id: Optional[str] = None,
+        interaction_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a single step.
@@ -229,114 +694,288 @@ class PlanExecutor:
         Args:
             step: Step to execute
             state: Current execution state
+            session_id: Session identifier for trajectory logging
+            interaction_id: Interaction identifier for trajectory logging
 
         Returns:
             Step result dictionary
         """
         action = step.get("action")
+        step_id = step.get("id")
         parameters = step.get("parameters") or {}
+        execution_start = time.time()
+        
         if not isinstance(parameters, dict):
-            return {
+            error_result = {
                 "error": True,
                 "error_type": "InvalidParameters",
                 "error_message": f"Parameters for '{action}' must be an object/dict, got {type(parameters).__name__}",
                 "retry_possible": False
             }
+            
+            # Log error trajectory
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="step_execution",
+                input_data={
+                    "step_id": step_id,
+                    "action": action,
+                    "parameters_type": type(parameters).__name__
+                },
+                output_data=error_result,
+                reasoning=f"Invalid parameters type for {action}",
+                success=False,
+                error=error_result
+            )
+            
+            return error_result
 
-        # Resolve parameter references
-        resolved_params = self._resolve_parameters(parameters, state)
+        # Resolve parameter references (pass action name for special handling)
+        resolved_params = self._resolve_parameters(parameters, state, action)
         logger.info(f"[EXECUTOR] {action} parameters -> raw={parameters}, resolved={resolved_params}")
+        
+        # Log parameter resolution
+        if parameters != resolved_params:
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="parameter_resolution",
+                input_data={
+                    "step_id": step_id,
+                    "action": action,
+                    "raw_parameters": parameters
+                },
+                output_data={
+                    "resolved_parameters": resolved_params
+                },
+                reasoning=f"Resolved parameter references for step {step_id}",
+                success=True
+            )
 
         # Get the tool
         tool = self.tools.get(action)
         if not tool:
-            return {
+            error_result = {
                 "error": True,
                 "error_type": "ToolNotFound",
                 "error_message": f"Tool '{action}' not found",
                 "retry_possible": False
             }
+            
+            # Log error trajectory
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="step_execution",
+                input_data={
+                    "step_id": step_id,
+                    "action": action
+                },
+                output_data=error_result,
+                reasoning=f"Tool {action} not found in tool registry",
+                success=False,
+                error=error_result
+            )
+            
+            return error_result
 
         # Validate required parameters before invocation
         validation_error = self._validate_parameters(action, resolved_params)
         if validation_error:
             logger.error(f"[EXECUTOR] Parameter validation failed for {action}: {validation_error['error_message']}")
+            
+            # Log validation error trajectory
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="parameter_validation",
+                input_data={
+                    "step_id": step_id,
+                    "action": action,
+                    "parameters": resolved_params
+                },
+                output_data=validation_error,
+                reasoning=f"Parameter validation failed for {action}",
+                success=False,
+                error=validation_error
+            )
+            
             return validation_error
 
         # Execute the tool
         try:
             logger.info(f"Calling tool {action} with params: {resolved_params}")
             result = tool.invoke(resolved_params)
+            execution_latency_ms = (time.time() - execution_start) * 1000
             logger.info(f"Tool {action} returned: {type(result)}")
             
             # Ensure result is always a dictionary (defensive programming)
             if not isinstance(result, dict):
                 logger.warning(f"Tool {action} returned non-dict result: {type(result)}, wrapping")
-                return {"output": result, "error": False}
+                result = {"output": result, "error": False}
             
             # Validate error structure if error is present
             if result.get("error") and not result.get("error_type"):
                 logger.warning(f"Tool {action} returned error=True but missing error_type, adding default")
                 result["error_type"] = "UnknownError"
             
+            # Log step execution trajectory
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="step_execution",
+                input_data={
+                    "step_id": step_id,
+                    "action": action,
+                    "parameters": resolved_params
+                },
+                output_data={
+                    "success": not result.get("error", False),
+                    "output_type": type(result.get("output")).__name__ if result.get("output") else None,
+                    "error": result.get("error_message") if result.get("error") else None
+                },
+                reasoning=f"Executed step {step_id}: {action}",
+                success=not result.get("error", False),
+                latency_ms=execution_latency_ms,
+                error={
+                    "type": result.get("error_type"),
+                    "message": result.get("error_message")
+                } if result.get("error") else None
+            )
+            
             return result
 
         except Exception as e:
+            execution_latency_ms = (time.time() - execution_start) * 1000
             logger.error(f"Tool {action} raised exception: {e}", exc_info=True)
-            return {
+            
+            error_result = {
                 "error": True,
                 "error_type": "ToolExecutionError",
                 "error_message": str(e),
                 "retry_possible": True
             }
+            
+            # Log error trajectory
+            self.trajectory_logger.log_trajectory(
+                session_id=session_id or "unknown",
+                interaction_id=interaction_id,
+                phase="execution",
+                component="executor",
+                decision_type="step_execution",
+                input_data={
+                    "step_id": step_id,
+                    "action": action,
+                    "parameters": resolved_params
+                },
+                output_data=error_result,
+                reasoning=f"Exception during step {step_id} execution: {str(e)}",
+                success=False,
+                latency_ms=execution_latency_ms,
+                error={
+                    "type": type(e).__name__,
+                    "message": str(e)
+                }
+            )
+            
+            return error_result
+
+    def _log_step_outcome(self, step_id: Any, step: Dict[str, Any], result: Dict[str, Any]) -> bool:
+        """
+        Emit rich logging for step outcomes so CLI/UI discrepancies are easier to spot.
+
+        Returns True when the step is considered successful.
+        """
+        action = step.get("action", "unknown")
+        status = result.get("status") or ("error" if result.get("error") else "success")
+        success = not result.get("error") and status not in {"error", "failed", "failure"}
+        icon = "✅" if success else "❌"
+
+        summary_parts: List[str] = []
+        message = result.get("message")
+        if message:
+            summary_parts.append(f"message={self._compact_text(message)}")
+
+        error_message = result.get("error_message")
+        if error_message:
+            summary_parts.append(f"error={self._compact_text(error_message)}")
+        elif result.get("error"):
+            summary_parts.append("error flag set (no error_message)")
+
+        if result.get("skipped"):
+            summary_parts.append("skipped=True")
+
+        logger.info(
+            "[EXECUTOR] %s Step %s [%s] status=%s%s",
+            icon,
+            step_id,
+            action,
+            status,
+            f" | {' | '.join(summary_parts)}" if summary_parts else "",
+        )
+
+        if action == "reply_to_user":
+            details = result.get("details", "") or ""
+            if not (message or "").strip():
+                logger.warning("[EXECUTOR] reply_to_user produced an empty message payload")
+
+            combined_text = f"{message or ''} {details}"
+            unresolved = PLACEHOLDER_PATTERN.findall(combined_text)
+            if unresolved:
+                logger.warning(
+                    "[EXECUTOR] reply_to_user contains unresolved placeholders: %s",
+                    sorted(set(unresolved)),
+                )
+
+            if details:
+                logger.debug(
+                    "[EXECUTOR] reply_to_user details preview: %s",
+                    self._compact_text(details, limit=200),
+                )
+
+        return success
+
+    @staticmethod
+    def _compact_text(text: str, limit: int = 160) -> str:
+        """Compact text for logging by stripping whitespace and truncating."""
+        cleaned = " ".join(text.split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return f"{cleaned[:limit - 3]}..."
 
     def _resolve_parameters(
         self,
         parameters: Dict[str, Any],
-        state: Dict[str, Any]
+        state: Dict[str, Any],
+        action: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Resolve parameter references like $step1.output.
+        Resolve parameter references like $step1.output and template strings like "Found {$step1.count} items".
+
+        Uses shared template resolver for consistency across all executors.
 
         Args:
             parameters: Parameters with potential references
             state: Current execution state
+            action: Optional action name (for special handling)
 
         Returns:
             Parameters with references resolved
         """
-        resolved = {}
+        from ..utils.template_resolver import resolve_parameters as resolve_params
 
-        for key, value in parameters.items():
-            if isinstance(value, str) and value.startswith("$step"):
-                # Parse reference: $step1.field.subfield
-                parts = value[1:].split(".")  # Remove $ and split
-                step_ref = parts[0]  # "step1"
-                field_path = parts[1:]  # ["field", "subfield"]
-
-                # Extract step ID
-                step_id = int(step_ref.replace("step", ""))
-
-                # Get step result
-                step_result = state["step_results"].get(step_id)
-                if step_result:
-                    # Navigate field path
-                    current_value = step_result
-                    for field in field_path:
-                        if isinstance(current_value, dict):
-                            current_value = current_value.get(field)
-                        else:
-                            current_value = None
-                            break
-
-                    resolved[key] = current_value
-                else:
-                    logger.warning(f"Reference {value} points to non-existent step {step_id}")
-                    resolved[key] = None
-            else:
-                resolved[key] = value
-
-        return resolved
+        return resolve_params(parameters, state["step_results"], action)
 
     def _validate_parameters(
         self,
@@ -383,6 +1022,141 @@ class PlanExecutor:
                 "retry_possible": False,
                 "missing_parameters": missing_sorted,
             }
+
+        # Special validation for compose_email attachments
+        if tool_name == "compose_email" and "attachments" in parameters:
+            attachments = parameters.get("attachments")
+            if attachments:
+                if not isinstance(attachments, list):
+                    return {
+                        "error": True,
+                        "error_type": "InvalidAttachments",
+                        "error_message": (
+                            "compose_email 'attachments' parameter must be a list of file paths. "
+                            f"Got {type(attachments).__name__} instead."
+                        ),
+                        "retry_possible": False,
+                        "suggestion": "Use create_pages_doc to save report content to a file, then pass the file path in attachments."
+                    }
+                
+                for att in attachments:
+                    if not isinstance(att, str):
+                        return {
+                            "error": True,
+                            "error_type": "InvalidAttachments",
+                            "error_message": (
+                                "All items in 'attachments' must be strings (file paths). "
+                                f"Found {type(att).__name__} in the list."
+                            ),
+                            "retry_possible": False,
+                            "suggestion": "Ensure all attachments are file paths, not content/data objects."
+                        }
+                    
+                    # Check if this is a step reference (e.g., $step1.zip_path)
+                    is_step_reference = att.startswith("$step") and "." in att
+                    
+                    # Check if string looks like TEXT CONTENT rather than a file path
+                    # Heuristics: contains newlines, is very long, or doesn't look like a path
+                    if len(att) > 500 or '\n' in att or '\r' in att:
+                        return {
+                            "error": True,
+                            "error_type": "InvalidAttachments",
+                            "error_message": (
+                                "Attachment appears to be TEXT CONTENT rather than a file path. "
+                                f"The attachment string is {len(att)} characters long and contains newlines. "
+                                "compose_email 'attachments' parameter requires FILE PATHS, not content."
+                            ),
+                            "retry_possible": True,
+                            "suggestion": (
+                                "To email a report: "
+                                "1. Use create_detailed_report to generate report content (returns report_content as TEXT) "
+                                "2. Use create_pages_doc(content=$stepN.report_content) to save it to a file (returns pages_path) "
+                                "3. Use compose_email(attachments=[$stepN.pages_path]) with the FILE PATH"
+                            ),
+                            "detected_content_preview": att[:200] + "..." if len(att) > 200 else att
+                        }
+                    
+                    # Validate step references - check if they reference valid step result fields
+                    if is_step_reference:
+                        # Extract step ID and field path
+                        try:
+                            parts = att[1:].split(".")  # Remove $ and split
+                            step_ref = parts[0]  # "step1"
+                            field_path = parts[1:]  # ["zip_path"] or ["files", "0", "path"]
+                            
+                            # Extract step number
+                            step_id = int(step_ref.replace("step", ""))
+                            
+                            # Validate that the field path is a known file path field
+                            valid_file_path_fields = [
+                                "zip_path", "pages_path", "file_path", "keynote_path",
+                                "files", "path"  # For nested references like files[0].path
+                            ]
+                            
+                            first_field = field_path[0] if field_path else None
+                            if first_field not in valid_file_path_fields:
+                                return {
+                                    "error": True,
+                                    "error_type": "InvalidStepReference",
+                                    "error_message": (
+                                        f"Invalid step reference in attachment: '{att}'. "
+                                        f"The field '{first_field}' is not a known file path field."
+                                    ),
+                                    "retry_possible": True,
+                                    "suggestion": (
+                                        f"Use a valid file path field from step {step_id}. "
+                                        "Common file path fields: zip_path (from create_zip_archive), "
+                                        "pages_path (from create_pages_doc), file_path (from file operations), "
+                                        "or files[0].path (from list_related_documents)."
+                                    ),
+                                    "valid_fields": valid_file_path_fields
+                                }
+                        except (ValueError, IndexError) as e:
+                            # Invalid step reference format
+                            return {
+                                "error": True,
+                                "error_type": "InvalidStepReference",
+                                "error_message": (
+                                    f"Invalid step reference format in attachment: '{att}'. "
+                                    "Step references must be in the format $stepN.field or $stepN.field.subfield"
+                                ),
+                                "retry_possible": True,
+                                "suggestion": (
+                                    "Use step references like: $step1.zip_path, $step2.pages_path, "
+                                    "or $step1.files[0].path (for array access)"
+                                ),
+                                "examples": [
+                                    "$step1.zip_path",
+                                    "$step2.pages_path",
+                                    "$step1.files[0].path"
+                                ]
+                            }
+                    
+                    # Check if it's a hardcoded path that doesn't look like an absolute path or step reference
+                    elif not att.startswith("/") and not att.startswith("$step") and not att.startswith("~"):
+                        # This might be a hallucinated file path
+                        return {
+                            "error": True,
+                            "error_type": "InvalidFilePath",
+                            "error_message": (
+                                f"Attachment path '{att}' appears to be a relative path or invented filename. "
+                                "File paths must be absolute paths or step references (e.g., $stepN.zip_path)."
+                            ),
+                            "retry_possible": True,
+                            "suggestion": (
+                                "Never invent file names. Always use file paths from previous step results. "
+                                "Examples:\n"
+                                "- If you created a ZIP: use $stepN.zip_path\n"
+                                "- If you created a document: use $stepN.pages_path\n"
+                                "- If you listed files: use $stepN.files[0].path\n"
+                                "- If you have an absolute path: use the full path starting with /"
+                            ),
+                            "common_patterns": {
+                                "create_zip_archive": "$stepN.zip_path",
+                                "create_pages_doc": "$stepN.pages_path",
+                                "list_related_documents": "$stepN.files[0].path"
+                            }
+                        }
 
         return None
 

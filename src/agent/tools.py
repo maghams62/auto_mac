@@ -11,6 +11,7 @@ import logging
 from src.documents import DocumentIndexer, DocumentParser, SemanticSearch
 from src.automation import MailComposer, KeynoteComposer, PagesComposer
 from src.utils import load_config
+from src.config import get_config_context
 
 logger = logging.getLogger(__name__)
 config = load_config()
@@ -221,11 +222,23 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
     Returns:
         Dictionary with screenshot_paths and pages_captured
     """
-    logger.info(f"Tool: take_screenshot(doc_path='{doc_path}', pages={pages})")
+    logger.info(f"[TOOLS] Tool: take_screenshot(doc_path='{doc_path}', pages={pages})")
 
     try:
         import fitz  # PyMuPDF
-        import tempfile
+        from pathlib import Path
+        from datetime import datetime
+        from src.utils.screenshot import get_screenshot_dir
+        from src.utils import load_config
+
+        # Get screenshot directory from config
+        config = load_config()
+        screenshot_dir = get_screenshot_dir(config, ensure_exists=True)
+        
+        # Get document name for filename
+        doc_path_obj = Path(doc_path)
+        doc_stem = doc_path_obj.stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         doc = fitz.open(doc_path)
         screenshot_paths = []
@@ -236,26 +249,46 @@ def take_screenshot(doc_path: str, pages: List[int]) -> Dict[str, Any]:
                 page = doc[page_num - 1]
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
 
-                # Save to temp file
-                temp_file = tempfile.NamedTemporaryFile(
-                    delete=False, suffix='.png', prefix=f'page{page_num}_'
-                )
-                pix.save(temp_file.name)
-                screenshot_paths.append(temp_file.name)
+                # Generate predictable filename
+                filename = f"{doc_stem}_p{page_num}_{timestamp}.png"
+                output_path = screenshot_dir / filename
+                
+                # Save to screenshot directory
+                pix.save(str(output_path))
+                
+                # Return path relative to project root for security checks
+                project_root = Path(__file__).resolve().parent.parent.parent
+                try:
+                    relative_path = output_path.resolve().relative_to(project_root)
+                    screenshot_paths.append(str(relative_path))
+                except ValueError:
+                    # If not relative to project root, use absolute path
+                    screenshot_paths.append(str(output_path.resolve()))
+                
                 pages_captured.append(page_num)
-                logger.info(f"Screenshot saved: {temp_file.name}")
+                logger.info(f"[TOOLS] Screenshot saved: {output_path} (page {page_num} of {doc_path_obj.name})")
             else:
-                logger.warning(f"Page {page_num} out of range (total: {len(doc)})")
+                logger.warning(f"[TOOLS] Page {page_num} out of range (total: {len(doc)})")
 
         doc.close()
 
+        if not screenshot_paths:
+            logger.warning(f"[TOOLS] No screenshots were captured from {doc_path}")
+            return {
+                "error": True,
+                "error_type": "ScreenshotError",
+                "error_message": "No valid pages were captured",
+                "retry_possible": False
+            }
+
+        logger.info(f"[TOOLS] Successfully captured {len(screenshot_paths)} screenshot(s) from {doc_path_obj.name}")
         return {
             "screenshot_paths": screenshot_paths,
             "pages_captured": pages_captured
         }
 
     except Exception as e:
-        logger.error(f"Error in take_screenshot: {e}")
+        logger.error(f"[TOOLS] Error in take_screenshot: {e}", exc_info=True)
         return {
             "error": True,
             "error_type": "ScreenshotError",
@@ -286,6 +319,27 @@ def compose_email(
         Dictionary with status ('sent' or 'draft')
     """
     logger.info(f"Tool: compose_email(subject='{subject}', recipient='{recipient}', send={send})")
+
+    # CRITICAL: Validate attachments are file paths, not content strings
+    if attachments:
+        import os
+        for att_path in attachments:
+            if att_path and isinstance(att_path, str):
+                # Detect if someone is passing report/document CONTENT instead of a file path
+                if len(att_path) > 500 or '\n\n' in att_path or att_path.count('\n') > 10:
+                    logger.error(f"[COMPOSE_EMAIL] ⚠️  PLANNING ERROR: Attachment appears to be TEXT CONTENT, not a FILE PATH!")
+                    logger.error(f"[COMPOSE_EMAIL] ⚠️  First 200 chars: {att_path[:200]}...")
+                    return {
+                        "error": True,
+                        "error_type": "PlanningError",
+                        "error_message": (
+                            "Attachment validation failed: You provided TEXT CONTENT instead of a FILE PATH. "
+                            "To email a report, you must first save it to a file using create_pages_doc. "
+                            "Correct workflow: create_detailed_report → create_pages_doc → compose_email(attachments=['$stepN.pages_path'])"
+                        ),
+                        "retry_possible": True,
+                        "hint": "Use create_pages_doc to save report_content to a file, then attach the pages_path"
+                    }
 
     try:
         success = mail_composer.compose_email(
@@ -361,26 +415,36 @@ def create_keynote(
                         "content": para.strip()
                     })
 
+        # Determine output path and ensure the parent directory exists
+        import os
+        final_path = output_path or f"~/Documents/{title}.key"
+        final_path = os.path.expanduser(final_path)
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=final_path
         )
 
         if success:
-            # Construct the path if not provided
-            if output_path:
-                final_path = output_path
+            # KeynoteComposer already verifies the file exists, but double-check here
+            if os.path.exists(final_path) and os.path.isfile(final_path):
+                logger.info(f"✅ Keynote file verified at: {final_path}")
+                return {
+                    "keynote_path": final_path,
+                    "slide_count": len(slides) + 1,  # +1 for title slide
+                    "message": "Keynote presentation created successfully"
+                }
             else:
-                import os
-                final_path = os.path.expanduser(f"~/Documents/{title}.key")
-
-            return {
-                "keynote_path": final_path,
-                "slide_count": len(slides) + 1,  # +1 for title slide
-                "message": "Keynote presentation created successfully"
-            }
+                logger.error(f"❌ Keynote reported success but file not found: {final_path}")
+                return {
+                    "error": True,
+                    "error_type": "KeynoteError",
+                    "error_message": f"Keynote file not saved to {final_path} - file not found after creation",
+                    "retry_possible": True
+                }
         else:
             return {
                 "error": True,
@@ -428,34 +492,35 @@ def create_keynote_with_images(
             })
 
         # Determine output path - generate default if not provided
-        if not output_path:
-            import os
-            output_path = os.path.expanduser(f"~/Documents/{title}.key")
+        import os
+        resolved_path = output_path or f"~/Documents/{title}.key"
+        resolved_path = os.path.expanduser(resolved_path)
+        os.makedirs(os.path.dirname(resolved_path), exist_ok=True)
 
         # Call the actual keynote composer with slides
         success = keynote_composer.create_presentation(
             title=title,
             slides=slides,
-            output_path=output_path
+            output_path=resolved_path
         )
 
         if success:
-            # Verify the file actually exists
-            import os
-            if os.path.exists(output_path):
+            # KeynoteComposer already verifies the file exists, but double-check here
+            if os.path.exists(resolved_path) and os.path.isfile(resolved_path):
+                logger.info(f"✅ Keynote file with images verified at: {resolved_path}")
                 return {
-                    "keynote_path": output_path,
+                    "keynote_path": resolved_path,
                     "slide_count": len(slides) + 1,  # +1 for title slide
                     "message": f"Keynote presentation created with {len(slides)} image slides"
                 }
-            else:
-                logger.error(f"Keynote reported success but file not found: {output_path}")
-                return {
-                    "error": True,
-                    "error_type": "KeynoteError",
-                    "error_message": f"Keynote file not saved to {output_path}",
-                    "retry_possible": False
-                }
+
+            logger.error(f"Keynote reported success but file not found after waiting: {resolved_path}")
+            return {
+                "error": True,
+                "error_type": "KeynoteError",
+                "error_message": f"Keynote file not saved to {resolved_path}",
+                "retry_possible": False
+            }
         else:
             return {
                 "error": True,
@@ -481,7 +546,8 @@ def create_pages_doc(
     output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Generate a Pages document from content.
+    DISABLED: Pages document creation is unreliable and unsafe.
+    Use create_keynote or create_local_document_report instead.
 
     Args:
         title: Document title
@@ -489,38 +555,20 @@ def create_pages_doc(
         output_path: Save location (None = default)
 
     Returns:
-        Dictionary with pages_path and page_count
+        Error dictionary indicating Pages is disabled
     """
-    logger.info(f"Tool: create_pages_doc(title='{title}')")
-
-    try:
-        result = pages_composer.create_document(
-            title=title,
-            content=content,
-            output_path=output_path
-        )
-
-        if result:
-            return {
-                "pages_path": result.get("file_path", "Unknown"),
-                "message": "Pages document created successfully"
-            }
-        else:
-            return {
-                "error": True,
-                "error_type": "PagesError",
-                "error_message": "Failed to create Pages document",
-                "retry_possible": True
-            }
-
-    except Exception as e:
-        logger.error(f"Error in create_pages_doc: {e}")
-        return {
-            "error": True,
-            "error_type": "PagesError",
-            "error_message": str(e),
-            "retry_possible": False
-        }
+    logger.warning(f"Tool: create_pages_doc called but is disabled (title='{title}')")
+    
+    return {
+        "error": True,
+        "error_type": "PagesDisabled",
+        "error_message": "Pages document creation is disabled due to reliability issues. Use create_keynote for presentations or create_local_document_report for PDF reports instead.",
+        "retry_possible": False,
+        "suggested_alternatives": [
+            "create_keynote - for presentations",
+            "create_local_document_report - for PDF reports"
+        ]
+    }
 
 
 @tool
@@ -554,15 +602,13 @@ def organize_files(
     """
     try:
         from ..automation.file_organizer import FileOrganizer
-        from ..utils import load_config
         from ..documents.search import SemanticSearch
         from ..documents import DocumentIndexer
 
-        config = load_config()
-        organizer = FileOrganizer(config)
-
-        # Get source directory from config
-        source_directory = config.get('document_directory', './test_data')
+        context = get_config_context()
+        config = context.data
+        accessor = context.accessor
+        organizer = FileOrganizer(config, accessor)
 
         # Initialize search engine for content analysis
         search_engine = None
@@ -578,10 +624,17 @@ def organize_files(
         result = organizer.organize_files(
             category=category,
             target_folder=target_folder,
-            source_directory=source_directory,
             search_engine=search_engine,
             move=move_files
         )
+
+        if result.get('error'):
+            return {
+                "error": True,
+                "error_type": result.get('error_type', 'OrganizationError'),
+                "error_message": result.get('error_message', 'File organization failed'),
+                "retry_possible": False
+            }
 
         if result['success']:
             return {

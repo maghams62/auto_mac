@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_album_tool_execution",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_spotify_api_integration.TestSpotifyAgentIntegration object at 0x10499fe50>\nmock_service = <MagicMock name='SpotifyPlaybackService' id='5493157712'>\n\n    @patch('src.integrations.spotify_playback_service.SpotifyPlaybackService')\n    def test_album_tool_execution(self, mock_service):\n        \"\"\"Test play_album tool execution.\"\"\"\n        from src.agent.spotify_agent import play_album\n    \n        # Mock service and result\n        mock_service_instance = Mock()\n        mock_result = Mock()\n        mock_result.to_dict.return_value = {\n            \"success\": True,\n            \"action\": \"play_album\",\n            \"message\": \"Album started\"\n        }\n        mock_service_instance.play_album.return_value = mock_result\n        mock_service.return_value = mock_service_instance\n    \n>       with patch('src.agent.spotify_agent.load_config', return_value={\"test\": \"config\"}):\n\ntests/test_spotify_api_integration.py:220: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n../../anaconda3/lib/python3.11/unittest/mock.py:1443: in __enter__\n    original, local = self.get_original()\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <unittest.mock._patch object at 0x147760c50>\n\n    def get_original(self):\n        target = self.getter()\n        name = self.attribute\n    \n        original = DEFAULT\n        local = False\n    \n        try:\n            original = target.__dict__[name]\n        except (AttributeError, KeyError):\n            original = getattr(target, name, DEFAULT)\n        else:\n            local = True\n    \n        if name in _builtins and isinstance(target, ModuleType):\n            self.create = True\n    \n        if not self.create and original is DEFAULT:\n>           raise AttributeError(\n                \"%s does not have the attribute %r\" % (target, name)\n            )\nE           AttributeError: <module 'src.agent.spotify_agent' from '/Users/siddharthsuresh/Downloads/auto_mac/src/agent/spotify_agent.py'> does not have the attribute 'load_config'\n\n../../anaconda3/lib/python3.11/unittest/mock.py:1416: AttributeError",
+    "duration": 0.007673584012081847
+  },
+  "timestamp": "2025-11-12T12:08:24.756658",
+  "test_name": "spotify_api_integration"
+}

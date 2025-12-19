@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "pass_count": 0,
+  "fail_count": 1,
+  "test_function": "test_scroll_down_action_execution",
+  "outcome": "failed",
+  "details": {
+    "longrepr": "self = <test_execution_router.TestExecutionRouter testMethod=test_scroll_down_action_execution>\n\n    def test_scroll_down_action_execution(self):\n        \"\"\"Test scroll down action execution.\"\"\"\n        from src.automation.vision_spotify_automation import VisionSpotifyAutomation\n    \n        # Mock the vision automation\n>       with patch('src.automation.vision_spotify_automation.VisionAgent') as mock_vision_agent:\n\ntests/test_execution_router.py:331: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n../../anaconda3/lib/python3.11/unittest/mock.py:1443: in __enter__\n    original, local = self.get_original()\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <unittest.mock._patch object at 0x1568ba8d0>\n\n    def get_original(self):\n        target = self.getter()\n        name = self.attribute\n    \n        original = DEFAULT\n        local = False\n    \n        try:\n            original = target.__dict__[name]\n        except (AttributeError, KeyError):\n            original = getattr(target, name, DEFAULT)\n        else:\n            local = True\n    \n        if name in _builtins and isinstance(target, ModuleType):\n            self.create = True\n    \n        if not self.create and original is DEFAULT:\n>           raise AttributeError(\n                \"%s does not have the attribute %r\" % (target, name)\n            )\nE           AttributeError: <module 'src.automation.vision_spotify_automation' from '/Users/siddharthsuresh/Downloads/auto_mac/src/automation/vision_spotify_automation.py'> does not have the attribute 'VisionAgent'\n\n../../anaconda3/lib/python3.11/unittest/mock.py:1416: AttributeError",
+    "duration": 0.003843957994831726
+  },
+  "timestamp": "2025-11-12T10:42:10.744576",
+  "test_name": "execution_router"
+}

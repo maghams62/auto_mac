@@ -1,0 +1,146 @@
+[
+  {
+    "id": "slack_message:#payments-team:1765011600.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#payments-team",
+    "channel_id": "C0123PAYMENTS",
+    "thread_ts": "1765011600.000000",
+    "message_ts": "1765011600.000000",
+    "user": "alice",
+    "timestamp": "2025-12-06T09:00:00+00:00",
+    "text_raw": "Vat enforcement landing now. Please validate downstream clients but no user noise so far.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "slack_message:#payments-team:1765017000.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#payments-team",
+    "channel_id": "C0123PAYMENTS",
+    "thread_ts": "1765017000.000000",
+    "message_ts": "1765017000.000000",
+    "user": "pm",
+    "timestamp": "2025-12-06T10:30:00+00:00",
+    "text_raw": "Docs PR is queued. Billing service confirmed incompatibilities resolved.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "slack_message:#support:1765000800.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#support",
+    "channel_id": "C123SUPPORT",
+    "thread_ts": "1765000800.000000",
+    "message_ts": "1765000800.000000",
+    "user": "csm",
+    "timestamp": "2025-12-06T06:00:00+00:00",
+    "text_raw": "Merchants on plan B seeing 429s after quota change. Need hotfix asap.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "billing_support_spike"
+    ]
+  },
+  {
+    "id": "slack_message:#incidents:1765002600.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#incidents",
+    "channel_id": "C0A0DNAHK2R",
+    "thread_ts": "1765002600.000000",
+    "message_ts": "1765002600.000000",
+    "user": "support",
+    "timestamp": "2025-12-06T06:30:00+00:00",
+    "text_raw": "Escalated to Sev2. Customers referencing ticket INC-4412 and INC-4413.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "billing_support_spike"
+    ]
+  },
+  {
+    "id": "slack_message:#support:1765004400.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#support",
+    "channel_id": "C123SUPPORT",
+    "thread_ts": "1765004400.000000",
+    "message_ts": "1765004400.000000",
+    "user": "se",
+    "timestamp": "2025-12-06T07:00:00+00:00",
+    "text_raw": "Need billing-service patch that respects new quota config by noon PT.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "billing_support_spike"
+    ]
+  },
+  {
+    "id": "slack_message:#incidents:1765013400.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#incidents",
+    "channel_id": "C0A0DNAHK2R",
+    "thread_ts": "1765013400.000000",
+    "message_ts": "1765013400.000000",
+    "user": "ops",
+    "timestamp": "2025-12-06T09:30:00+00:00",
+    "text_raw": "Template version requirement broke ServiceB + ServiceC notifications.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "notifications_template_break"
+    ]
+  },
+  {
+    "id": "slack_message:#security-team:1765015200.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#security-team",
+    "channel_id": "C0456AUTH",
+    "thread_ts": "1765015200.000000",
+    "message_ts": "1765015200.000000",
+    "user": "dave",
+    "timestamp": "2025-12-06T10:00:00+00:00",
+    "text_raw": "Compliance insisted on template_version. Need downstream owners aligned.",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "notifications_template_break"
+    ]
+  },
+  {
+    "id": "slack_message:#payments-team:1765020600.000000",
+    "source_type": "slack_message",
+    "workspace": "demo",
+    "channel": "#payments-team",
+    "channel_id": "C0123PAYMENTS",
+    "thread_ts": "1765020600.000000",
+    "message_ts": "1765020600.000000",
+    "user": "docs",
+    "timestamp": "2025-12-06T11:30:00+00:00",
+    "text_raw": "Docs still say free tier is 1000 calls. Need final copy review?",
+    "service_ids": [],
+    "component_ids": [],
+    "related_apis": [],
+    "labels": [
+      "docs_drift_only"
+    ]
+  }
+]

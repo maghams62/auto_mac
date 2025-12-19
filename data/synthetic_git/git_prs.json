@@ -1,0 +1,95 @@
+[
+  {
+    "id": "git_pr:core-api:2041",
+    "source_type": "git_pr",
+    "repo": "core-api",
+    "repo_url": "https://github.com/acme/core-api",
+    "branch": "main",
+    "pr_number": 2041,
+    "author": "alice",
+    "timestamp": "2025-12-05T19:00:00+00:00",
+    "title": "feat!: enforce vat_code in core API",
+    "body": "Breaking change for EU merchants. Downstream services must send vat_code.",
+    "merged": true,
+    "files_changed": [
+      "core-api/src/payments.py",
+      "core-api/openapi/payments.yaml"
+    ],
+    "text_for_embedding": "PR #2041: feat!: enforce vat_code in core API",
+    "service_ids": [
+      "core-api-service"
+    ],
+    "component_ids": [
+      "core.payments"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "labels": [
+      "breaking_change",
+      "core_api_vat_break"
+    ]
+  },
+  {
+    "id": "git_pr:billing-service:3120",
+    "source_type": "git_pr",
+    "repo": "billing-service",
+    "repo_url": "https://github.com/acme/billing-service",
+    "branch": "main",
+    "pr_number": 3120,
+    "author": "carol",
+    "timestamp": "2025-12-06T08:00:00+00:00",
+    "title": "fix: stop hard-coding free tier quota",
+    "body": "Pull quota from config service so UI + backend align.",
+    "merged": false,
+    "files_changed": [
+      "billing-service/src/pricing/plan_config.py",
+      "billing-service/src/checkout.py"
+    ],
+    "text_for_embedding": "PR #3120: fix: stop hard-coding free tier quota",
+    "service_ids": [
+      "billing-service"
+    ],
+    "component_ids": [
+      "billing.checkout"
+    ],
+    "changed_apis": [
+      "/v1/payments/create"
+    ],
+    "labels": [
+      "support_escalation",
+      "billing_support_spike"
+    ]
+  },
+  {
+    "id": "git_pr:notifications-service:4102",
+    "source_type": "git_pr",
+    "repo": "notifications-service",
+    "repo_url": "https://github.com/acme/notifications-service",
+    "branch": "main",
+    "pr_number": 4102,
+    "author": "dave",
+    "timestamp": "2025-12-06T03:30:00+00:00",
+    "title": "feat: template version enforcement",
+    "body": "Enforce template_version to unblock compliance auditing.",
+    "merged": true,
+    "files_changed": [
+      "notifications-service/src/notifications.py",
+      "notifications-service/src/scheduler.py"
+    ],
+    "text_for_embedding": "PR #4102: feat: template version enforcement",
+    "service_ids": [
+      "notifications-service"
+    ],
+    "component_ids": [
+      "notifications.dispatch"
+    ],
+    "changed_apis": [
+      "/v1/notifications/send"
+    ],
+    "labels": [
+      "cross_system",
+      "notifications_template_break"
+    ]
+  }
+]
